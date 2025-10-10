@@ -7,6 +7,7 @@ typedef struct _COMM_CONTEXT {
 	HANDLE			m_UserProcessId;
 	PFLT_PORT		m_ClientPort; 
 	LONG			m_RefCount;
+    BOOLEAN			m_Removed; /* TRUE when removed/unloading */
 }COMM_CONTEXT, *PCOMM_CONTEXT;
 
 
@@ -26,6 +27,13 @@ VOID
 Comm_PortDisconnect(
 	__in PVOID ConnectionCookie
 );
+
+/* Reference helpers used by PortCtx module; callers should use these when
+ * accessing a PCOMM_CONTEXT across possible concurrent disconnect/unload.
+ */
+BOOLEAN PortCtx_Reference(PCOMM_CONTEXT ctx);
+VOID PortCtx_Dereference(PCOMM_CONTEXT ctx);
+
  
 NTSTATUS
 Comm_MessageNotify(

@@ -93,12 +93,25 @@ Comm_PortDisconnect(
 ) {
 	PCOMM_CONTEXT pPortCtx = (PCOMM_CONTEXT)ConnectionCookie;
 	if (!pPortCtx) return;
+	/* Try to take a reference; if the context is already removed/unloading
+	 * PortCtx_Reference will return FALSE and we bail out. This avoids
+	 * reading m_Removed directly and ensures we actually hold a ref.
+	 */
+	if (!PortCtx_Reference(pPortCtx)) {
+		return;
+	}
 
 	Log(L"client process %d disconnected with port context 0x%p\n",
 		pPortCtx->m_UserProcessId, pPortCtx);
 
-	// Remove and free via PortCtx module
-	PortCtx_RemoveAndFree(pPortCtx);
+	/* Unlink from module list and drop list ownership. This will call
+	 * PortCtx_Dereference for the list's ref; we still hold our caller ref
+	 * and must drop it below.
+	 */
+	PortCtx_Remove(pPortCtx);
+
+	/* Drop our reference */
+	PortCtx_Dereference(pPortCtx);
 }
 
 
@@ -119,19 +132,38 @@ Comm_MessageNotify(
 	(OutputBuffer);
 	(OutputBufferSize);
 	(ReturnOutputBufferLength);
+	/* Initialize caller-ref variables early so cleanup always sees defined
+	 * values even when we jump to cleanup before the later assignment.
+	 */
+	PCOMM_CONTEXT pPortCtxCallerRef = NULL;
+	BOOLEAN haveRef = FALSE;
 	// Validate input
 	if (!InputBuffer || InputBufferSize < sizeof(UMHH_COMMAND_MESSAGE)) {
-		return STATUS_INVALID_PARAMETER;
+		status = STATUS_INVALID_PARAMETER;
+		goto cleanup;
 	}
 
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)InputBuffer;
+
+	/* If a caller wants to use the connection cookie, take a reference at
+	 * the top of this function to guard against concurrent disconnect/unload.
+	 * PortCtx_Reference returns TRUE if we hold a ref.
+	 */
+	pPortCtxCallerRef = (PCOMM_CONTEXT)ConnectionCookie;
+	haveRef = FALSE;
+	if (pPortCtxCallerRef) {
+		haveRef = PortCtx_Reference(pPortCtxCallerRef);
+		if (!haveRef) pPortCtxCallerRef = NULL;
+	}
+
 	switch (msg->m_Cmd) {
 	case CMD_ADD_HOOK: {
 		// Expect at least an 8-byte hash. Remainder may contain a null-terminated
 		// UTF-16LE NT path string (optional). Layout: [8-byte hash][WCHAR path...\0]
 		if (InputBufferSize < (sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1)) {
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return STATUS_BUFFER_TOO_SMALL;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
 		}
 		ULONGLONG hash = 0;
 		RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
@@ -150,17 +182,20 @@ Comm_MessageNotify(
 		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
 			*(NTSTATUS*)OutputBuffer = st;
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
-			return STATUS_SUCCESS;
+			status = STATUS_SUCCESS;
+			goto cleanup;
 		}
 		else {
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return STATUS_BUFFER_TOO_SMALL;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
 		}
 	}
 	case CMD_REMOVE_HOOK: {
 		if (InputBufferSize < (sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1)) {
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return STATUS_BUFFER_TOO_SMALL;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
 		}
 		ULONGLONG hash = 0;
 		RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
@@ -168,11 +203,13 @@ Comm_MessageNotify(
 		if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
 			*(BOOLEAN*)OutputBuffer = removed;
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
-			return STATUS_SUCCESS;
+			status = STATUS_SUCCESS;
+			goto cleanup;
 		}
 		else {
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return STATUS_BUFFER_TOO_SMALL;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
 		}
 	}
 	case CMD_CHECK_HOOK_LIST: {
@@ -180,7 +217,8 @@ Comm_MessageNotify(
 		if (InputBufferSize < (sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1)) {
 			// client didn't send full hash
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return STATUS_BUFFER_TOO_SMALL;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
 		}
 		ULONGLONG hash = 0;
 		// m_Data is declared as size 1; copy the following bytes
@@ -194,11 +232,13 @@ Comm_MessageNotify(
 		if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
 			*(BOOLEAN*)OutputBuffer = found;
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
-			return STATUS_SUCCESS;
+			status = STATUS_SUCCESS;
+			goto cleanup;
 		}
 		else {
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return STATUS_BUFFER_TOO_SMALL;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
 		}
 	}
 	case CMD_GET_IMAGE_PATH_BY_PID: {
@@ -208,6 +248,8 @@ Comm_MessageNotify(
 	default:
 		break;
 	}
-
-	return status;
+	
+cleanup:
+    if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
+    return status;
 }

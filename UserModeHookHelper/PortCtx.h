@@ -30,6 +30,16 @@
 NTSTATUS PortCtx_Init(VOID);
 VOID PortCtx_Uninit(VOID);
 PCOMM_CONTEXT PortCtx_CreateAndInsert(HANDLE UserProcessId, PFLT_PORT ClientPort);
-VOID PortCtx_RemoveAndFree(PCOMM_CONTEXT ctx);
+/* Unlink the context from the module list (if linked) and drop the list's
+ * ownership reference. The actual free happens when refcount reaches zero.
+ */
+VOID PortCtx_Remove(PCOMM_CONTEXT ctx);
+
+/* Reference helpers. Call PortCtx_Reference before using a PCOMM_CONTEXT to
+ * ensure it won't be freed while in use. PortCtx_Reference returns TRUE if
+ * the caller now holds a reference. Call PortCtx_Dereference when done.
+ */
+BOOLEAN PortCtx_Reference(PCOMM_CONTEXT ctx);
+VOID PortCtx_Dereference(PCOMM_CONTEXT ctx);
 
 #endif
