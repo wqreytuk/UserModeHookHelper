@@ -91,15 +91,12 @@ VOID
 Comm_PortDisconnect(
 	__in PVOID ConnectionCookie
 ) {
-	PCOMM_CONTEXT pPortCtx = (PCOMM_CONTEXT)ConnectionCookie;
-	if (!pPortCtx) return;
-	/* Try to take a reference; if the context is already removed/unloading
-	 * PortCtx_Reference will return FALSE and we bail out. This avoids
-	 * reading m_Removed directly and ensures we actually hold a ref.
+	/* Use lookup+reference to avoid races where ConnectionCookie may be a
+	 * dangling pointer. This atomically verifies the entry is still in the
+	 * list and takes a ref.
 	 */
-	if (!PortCtx_Reference(pPortCtx)) {
-		return;
-	}
+	PCOMM_CONTEXT pPortCtx = PortCtx_FindAndReferenceByCookie(ConnectionCookie);
+	if (!pPortCtx) return;
 
 	Log(L"client process %d disconnected with port context 0x%p\n",
 		pPortCtx->m_UserProcessId, pPortCtx);
@@ -149,12 +146,7 @@ Comm_MessageNotify(
 	 * the top of this function to guard against concurrent disconnect/unload.
 	 * PortCtx_Reference returns TRUE if we hold a ref.
 	 */
-	pPortCtxCallerRef = (PCOMM_CONTEXT)ConnectionCookie;
-	haveRef = FALSE;
-	if (pPortCtxCallerRef) {
-		haveRef = PortCtx_Reference(pPortCtxCallerRef);
-		if (!haveRef) pPortCtxCallerRef = NULL;
-	}
+	pPortCtxCallerRef = PortCtx_FindAndReferenceByCookie(ConnectionCookie);
 
 	switch (msg->m_Cmd) {
 	case CMD_ADD_HOOK: {

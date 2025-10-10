@@ -83,3 +83,21 @@ VOID PortCtx_Dereference(PCOMM_CONTEXT ctx) {
         ExFreePoolWithTag(ctx, tag_ctx);
     }
 }
+
+PCOMM_CONTEXT PortCtx_FindAndReferenceByCookie(PVOID ConnectionCookie) {
+    if (!ConnectionCookie) return NULL;
+    PCOMM_CONTEXT found = NULL;
+    ExAcquireResourceSharedLite(&s_PortCtxListLock, TRUE);
+    for (PLIST_ENTRY e = s_PortCtxList.Flink; e != &s_PortCtxList; e = e->Flink) {
+        PCOMM_CONTEXT ctx = CONTAINING_RECORD(e, COMM_CONTEXT, m_entry);
+        if (ctx == (PCOMM_CONTEXT)ConnectionCookie) {
+            if (!ctx->m_Removed) {
+                InterlockedIncrement(&ctx->m_RefCount);
+                found = ctx;
+            }
+            break;
+        }
+    }
+    ExReleaseResourceLite(&s_PortCtxListLock);
+    return found;
+}

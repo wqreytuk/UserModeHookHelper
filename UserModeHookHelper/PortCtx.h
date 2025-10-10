@@ -42,4 +42,10 @@ VOID PortCtx_Remove(PCOMM_CONTEXT ctx);
 BOOLEAN PortCtx_Reference(PCOMM_CONTEXT ctx);
 VOID PortCtx_Dereference(PCOMM_CONTEXT ctx);
 
+/* Lookup + reference: finds the COMM_CONTEXT matching a connection cookie
+ * (the pointer stored as ConnectionCookie) and takes a reference while the
+ * list lock is held. Returns NULL if not found or already removed.
+ */
+PCOMM_CONTEXT PortCtx_FindAndReferenceByCookie(PVOID ConnectionCookie);
+
 #endif
