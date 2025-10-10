@@ -1,6 +1,7 @@
 #include "PortCtx.h"
 #include "Tag.h"
 #include "Trace.h"
+#include "ListLib.h"
 
 static LIST_ENTRY s_PortCtxList;
 static ERESOURCE s_PortCtxListLock;
@@ -88,8 +89,8 @@ PCOMM_CONTEXT PortCtx_FindAndReferenceByCookie(PVOID ConnectionCookie) {
     if (!ConnectionCookie) return NULL;
     PCOMM_CONTEXT found = NULL;
     ExAcquireResourceSharedLite(&s_PortCtxListLock, TRUE);
-    for (PLIST_ENTRY e = s_PortCtxList.Flink; e != &s_PortCtxList; e = e->Flink) {
-        PCOMM_CONTEXT ctx = CONTAINING_RECORD(e, COMM_CONTEXT, m_entry);
+    PCOMM_CONTEXT ctx = NULL;
+    LIST_FOR_EACH_ENTRY(ctx, &s_PortCtxList, m_entry, COMM_CONTEXT) {
         if (ctx == (PCOMM_CONTEXT)ConnectionCookie) {
             if (!ctx->m_Removed) {
                 InterlockedIncrement(&ctx->m_RefCount);

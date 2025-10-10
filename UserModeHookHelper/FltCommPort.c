@@ -5,6 +5,10 @@
 #include "PortCtx.h"
 #include "DriverCtx.h"
 
+#ifndef UMHH_MSG_HEADER_SIZE
+#define UMHH_MSG_HEADER_SIZE FIELD_OFFSET(UMHH_COMMAND_MESSAGE, m_Data)
+#endif
+
 // Hook list operations are implemented in HookList.c
 
 
@@ -133,9 +137,8 @@ Comm_MessageNotify(
 	 * values even when we jump to cleanup before the later assignment.
 	 */
 	PCOMM_CONTEXT pPortCtxCallerRef = NULL;
-	BOOLEAN haveRef = FALSE;
 	// Validate input
-	if (!InputBuffer || InputBufferSize < sizeof(UMHH_COMMAND_MESSAGE)) {
+	if (!InputBuffer || InputBufferSize < (ULONG)UMHH_MSG_HEADER_SIZE) {
 		status = STATUS_INVALID_PARAMETER;
 		goto cleanup;
 	}
@@ -152,7 +155,7 @@ Comm_MessageNotify(
 	case CMD_ADD_HOOK: {
 		// Expect at least an 8-byte hash. Remainder may contain a null-terminated
 		// UTF-16LE NT path string (optional). Layout: [8-byte hash][WCHAR path...\0]
-		if (InputBufferSize < (sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1)) {
+		if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 			status = STATUS_BUFFER_TOO_SMALL;
 			goto cleanup;
@@ -162,10 +165,10 @@ Comm_MessageNotify(
 		PCWSTR path = NULL;
 		// Compute number of bytes available for the path after the 8-byte hash
 		SIZE_T pathBytes = 0;
-		// m_Data is a 1-byte array at the end of UMHH_COMMAND_MESSAGE; the total payload
-		// bytes available after the header is InputBufferSize - (sizeof(UMHH_COMMAND_MESSAGE) - 1)
-		if (InputBufferSize > (sizeof(UMHH_COMMAND_MESSAGE) - 1 + sizeof(ULONGLONG))) {
-			pathBytes = InputBufferSize - (sizeof(UMHH_COMMAND_MESSAGE) - 1) - sizeof(ULONGLONG);
+		// m_Data is a flexible payload array; the total payload bytes available after
+		// the header is InputBufferSize - UMHH_MSG_HEADER_SIZE
+		if (InputBufferSize > ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
+			pathBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE - sizeof(ULONGLONG);
 			if (pathBytes >= sizeof(WCHAR)) {
 				path = (PCWSTR)(msg->m_Data + sizeof(ULONGLONG));
 			}
@@ -206,7 +209,7 @@ Comm_MessageNotify(
 	}
 	case CMD_CHECK_HOOK_LIST: {
 		// Expect an 8-byte hash payload
-		if (InputBufferSize < (sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1)) {
+		if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
 			// client didn't send full hash
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 			status = STATUS_BUFFER_TOO_SMALL;
@@ -234,14 +237,61 @@ Comm_MessageNotify(
 		}
 	}
 	case CMD_GET_IMAGE_PATH_BY_PID: {
-		// existing behavior will be handled later; fall through to default for now
+		// Expect a 4-byte PID payload
+		if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
+		}
+		DWORD pid = 0;
+		RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+
+		// Lookup process object
+		PEPROCESS process = NULL;
+		NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process);
+		if (!NT_SUCCESS(st) || process == NULL) {
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			status = STATUS_NOT_FOUND;
+			goto cleanup;
+		}
+
+		// Ask the kernel for the process image name (NT path). SeLocateProcessImageName
+		// returns a pointer to a UNICODE_STRING allocated by the kernel which we must
+		// free with ExFreePool when done.
+		PUNICODE_STRING imageName = NULL;
+		NTSTATUS res = SeLocateProcessImageName(process, &imageName);
+		if (!NT_SUCCESS(res) || imageName == NULL || imageName->Length == 0) {
+			ObDereferenceObject(process);
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			status = STATUS_NOT_FOUND;
+			goto cleanup;
+		}
+
+		// Copy imageName->Buffer (Unicode WCHARs) into OutputBuffer if large enough.
+		ULONG bytesNeeded = imageName->Length + sizeof(WCHAR); // include space for null
+		if (OutputBuffer && OutputBufferSize >= bytesNeeded) {
+			RtlCopyMemory(OutputBuffer, imageName->Buffer, imageName->Length);
+			// Null-terminate
+			((WCHAR*)OutputBuffer)[imageName->Length / sizeof(WCHAR)] = L'\0';
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
+			status = STATUS_SUCCESS;
+		}
+		else {
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
+			status = STATUS_BUFFER_TOO_SMALL;
+		}
+
+		// Cleanup
+		ExFreePool(imageName);
+		ObDereferenceObject(process);
+		goto cleanup;
 		break;
 	}
 	default:
 		break;
 	}
-	
+
 cleanup:
-    if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
-    return status;
+	if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
+	return status;
 }
