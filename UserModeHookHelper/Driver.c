@@ -2,7 +2,6 @@
 #include "Trace.h"
 #include "mini.h"
 #include "SysCallback.h"
-#include "FltCommPort.h"
  
 GLOBAL_V gVar;
 CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
@@ -65,16 +64,6 @@ NTSTATUS
 	}
 	else {
 		Log(L"failed to call FltRegisterFilter: 0x%x\n", status);
-		MiniUnload(0);
-		return status;
-	}
-
-	status = Comm_CreatePort();
-	if (NT_SUCCESS(status)) {
-		Log(L"minifilter port created: 0x%p\n", gVar.m_ServerPort);
-	}
-	else {
-		Log(L"failed to create minifilter port: 0x%x\n", status);
 		MiniUnload(0);
 		return status;
 	}

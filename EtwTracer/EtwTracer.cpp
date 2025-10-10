@@ -1,7 +1,6 @@
 #include <Windows.h>
 #include <tchar.h>
 #include <stdio.h>
-#include <string>
 #include "../UMController/ETW.h"
 #include <evntrace.h>
 #include <evntcons.h>
@@ -36,38 +35,10 @@ TraceEventCallback(
 		return;
 	}
 
-	// Timestamp
-	SYSTEMTIME st;
-	GetLocalTime(&st);
-	wchar_t timebuf[64];
-	swprintf_s(timebuf, _countof(timebuf), L"%04d-%02d-%02d %02d:%02d:%02d.%03d",
-		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-
-	// PID:TID
-	ULONG pid = EventRecord->EventHeader.ProcessId;
-	ULONG tid = EventRecord->EventHeader.ThreadId;
-
-	// Safely copy user data (may not be null-terminated within UserDataLength)
-	std::wstring msg;
-	SIZE_T cb = EventRecord->UserDataLength;
-	if (cb > 0) {
-		SIZE_T wcharCount = cb / sizeof(WCHAR);
-		const WCHAR* p = (const WCHAR*)EventRecord->UserData;
-		SIZE_T actualLen = 0;
-		for (; actualLen < wcharCount; ++actualLen) {
-			if (p[actualLen] == L'\0') break;
-		}
-		msg.assign(p, actualLen);
-		// Trim trailing newlines or carriage returns
-		while (!msg.empty() && (msg.back() == L'\n' || msg.back() == L'\r')) msg.pop_back();
-	}
-
-	// Print single-line entry: [YYYY-MM-DD HH:MM:SS.mmm] [pid:tid] message
-	if (msg.empty()) {
-		wprintf(L"[%s] [%lu:%lu]\n", timebuf, pid, tid);
-	} else {
-		wprintf(L"[%s] [%lu:%lu] %s\n", timebuf, pid, tid, msg.c_str());
-	}
+	wprintf(L"[PID:%06d][TID:%06d] %s\n",
+		EventRecord->EventHeader.ProcessId,
+		EventRecord->EventHeader.ThreadId,
+		(PWCHAR)EventRecord->UserData);
 }
 void CreateWaitSignalThread();
 

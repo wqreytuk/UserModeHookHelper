@@ -317,11 +317,6 @@
   <ItemGroup>
     <Image Include="res\UMController.ico" />
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\EtwTracer\EtwTracer.vcxproj">
-      <Project>{e1ddc919-268c-4dd1-b0b5-8ed0d8554887}</Project>
-    </ProjectReference>
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
