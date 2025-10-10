@@ -8,7 +8,6 @@
 #include "UMControllerDlg.h"
 #include "ETW.h"
 
-ETW gETW;
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -36,16 +35,17 @@ CUMControllerApp::CUMControllerApp()
 
 // The one and only CUMControllerApp object
 
-CUMControllerApp theApp;
+CUMControllerApp app;
+
 
 
 // CUMControllerApp initialization
 
 BOOL CUMControllerApp::InitInstance()
 {
-	gETW.Reg();
-	// launch etw tracer
-	gETW.StartTracer();
+	// initialize ETW provider from app-owned instance
+		app.GetETW().Reg();
+		app.GetETW().StartTracer();
 	// InitCommonControlsEx() is required on Windows XP if an application
 	// manifest specifies use of ComCtl32.dll version 6 or later to enable
 	// visual styles.  Otherwise, any window creation will fail.

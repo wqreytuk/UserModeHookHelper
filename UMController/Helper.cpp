@@ -1,7 +1,7 @@
 #include "pch.h"
 #include "Helper.h"
 #include "ETW.h"
-extern ETW gETW;
+#include "UMController.h"
 #include <atomic>
 #include <wchar.h>
 #include <memory>
@@ -32,8 +32,8 @@ void Helper::Fatal(const wchar_t* message) {
 		// here.
 		handler(message);
 	} else {
-		gETW.Log(L"Fatal: %s\n", message);
-		gETW.UnReg();
+		app.GetETW().Log(L"Fatal: %s\n", message);
+		app.GetETW().UnReg();
 		exit(-1);
 	}
 }

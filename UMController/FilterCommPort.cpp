@@ -4,11 +4,12 @@
 #include "FilterCommPort.h"
 #include "../UserModeHookHelper/MacroDef.h"
 #include "ETW.h"
+#include "UMController.h"
 #include "Helper.h"
 #include "../UserModeHookHelper/UKShared.h"
 #include <memory>
 
-extern ETW gETW;
+// use app-owned ETW instance
 
 Filter::~Filter() {
 	// disconnect from minifilter port
@@ -17,7 +18,7 @@ Filter::~Filter() {
 		m_Port = INVALID_HANDLE_VALUE;
 	}
 	else {
-		gETW.Log(L"disconnected from minifilterport\n");
+		app.GetETW().Log(L"disconnected from minifilterport\n");
 	}
 }
 
@@ -33,11 +34,11 @@ Filter::Filter() {
 		&m_Port
 	);
 	if (hResult != S_OK) {
-		gETW.Log(L"failed to call FilterConnectCommunicationPort: 0x%x\n", hResult);
+		app.GetETW().Log(L"failed to call FilterConnectCommunicationPort: 0x%x\n", hResult);
 		Helper::Fatal(L"FilterConnectCommunicationPort failed in Filter constructor");
 	}
 	else
-		gETW.Log(L"successfully connect to minifilterport: 0x%p\n", m_Port);
+		app.GetETW().Log(L"successfully connect to minifilterport: 0x%p\n", m_Port);
 }
 
 
@@ -68,7 +69,7 @@ boolean Filter::FLTCOMM_CheckHookList(const std::wstring& ntPath) {
 
 	if (S_OK != hResult) {
 		free(msg);
-		gETW.Log(L"failed to call FilterSendMessage: 0x%p\n", hResult);
+		app.GetETW().Log(L"failed to call FilterSendMessage: 0x%p\n", hResult);
 		Helper::Fatal(L"FilterSendMessage failed in FLTCOMM_CheckHookList");
 	}
 	free(msg);

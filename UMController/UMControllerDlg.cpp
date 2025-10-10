@@ -16,7 +16,7 @@
 
 std::vector<ProcessEntry> g_ProcessList;
 
-extern ETW gETW;
+#include "UMController.h" // for app
 
 // CAboutDlg dialog used for App About
 
@@ -137,7 +137,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 	// of calling exit() from a library thread.
 	Helper::SetFatalHandler([](const wchar_t* msg) {
 		// Log first, then post message to the main UI thread.
-		gETW.Log(L"Fatal reported: %s\n", msg);
+		app.GetETW().Log(L"Fatal reported: %s\n", msg);
 		CWnd* pMain = AfxGetMainWnd();
 		if (pMain && pMain->GetSafeHwnd()) {
 			::PostMessage(pMain->GetSafeHwnd(), WM_APP_FATAL, 0, 0);
@@ -148,7 +148,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 	LoadProcessList();
 	FilterProcessList(L"");
 
-	gETW.Log(L"dialog init succeed\n");
+	app.GetETW().Log(L"dialog init succeed\n");
 
 
 	return TRUE;  // return TRUE  unless you set the focus to a control
@@ -156,7 +156,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 
 LRESULT CUMControllerDlg::OnFatalMessage(WPARAM, LPARAM) {
 	// Graceful shutdown triggered from fatal handler.
-	gETW.Log(L"OnFatalMessage received, closing dialog.\n");
+	app.GetETW().Log(L"OnFatalMessage received, closing dialog.\n");
 	EndDialog(IDCANCEL);
 	return 0;
 }
@@ -201,23 +201,22 @@ void CUMControllerDlg::LoadProcessList() {
 
 	PROCESSENTRY32 pe32 = { sizeof(pe32) };
 	if (Process32First(snapshot, &pe32)) {
-		int i = 0;
 		do {
 			ProcessEntry entry;
 			entry.pid = pe32.th32ProcessID;
-			if (!entry.pid) {
-				i++;
+			// Skip invalid or well-known system PIDs that don't have useful image paths
+			// (0 = Idle, 4 = System on many Windows versions).
+			if (entry.pid == 0 || entry.pid == 4) {
 				continue;
 			}
 			entry.name = pe32.szExeFile;
 			// Try to obtain an NT-style image path (preferred for kernel).
 			std::wstring ntPath;
 			Helper::ResolveProcessNtImagePath(entry.pid, m_Filter, ntPath);
+			assert(!ntPath.empty());
 			// Query the hook list directly with NT path
 			entry.bInHookList = m_Filter.FLTCOMM_CheckHookList(ntPath);
 			g_ProcessList.push_back(entry);
-
-			i++;
 		} while (Process32Next(snapshot, &pe32));
 	}
 

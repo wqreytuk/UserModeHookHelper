@@ -8,7 +8,8 @@
 	#error "include 'pch.h' before including this file for PCH"
 #endif
 
-#include "resource.h"		// main symbols
+#include "resource.h" 		// main symbols
+#include "ETW.h"
 
 // CUMControllerApp:
 // See UMController.cpp for the implementation of this class
@@ -19,6 +20,12 @@ class CUMControllerApp : public CWinApp
 public:
 	CUMControllerApp();
 
+	ETW& GetETW() { return m_etw; }
+
+private:
+	// App-owned ETW instance (owns lifetime)
+	ETW m_etw;
+
 // Overrides
 public:
 	virtual BOOL InitInstance();
@@ -28,4 +35,5 @@ public:
 	DECLARE_MESSAGE_MAP() 
 };
 
-extern CUMControllerApp theApp;
+extern CUMControllerApp app;
+
