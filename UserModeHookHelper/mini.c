@@ -3,6 +3,9 @@
 #include "FltCommPort.h"
 #include "ListLib.h"
 #include "Trace.h"
+#include "HookList.h"
+#include "PortCtx.h"
+#include "DriverCtx.h"
 NTSTATUS
 MiniUnload(
 	FLT_FILTER_UNLOAD_FLAGS Flags
@@ -10,51 +13,25 @@ MiniUnload(
 {
 	UNREFERENCED_PARAMETER(Flags);
 
-	// free port context related resources
-	ExAcquireResourceExclusiveLite(&gVar.m_PortCtxListLock, TRUE);
+	// free port context related resources (encapsulated in PortCtx module)
+	PortCtx_Uninit();
 
-	// Remove entries one-by-one from the list and free them.  This avoids
-	// iterating over freed memory (use-after-free) which the previous
-	// LIST_FOR_EACH_ENTRY + free caused.
-	while (!IsListEmpty(&gVar.m_PortCtxList)) {
-		PLIST_ENTRY entry = RemoveHeadList(&gVar.m_PortCtxList);
-		PCOMM_CONTEXT ctx = CONTAINING_RECORD(entry, COMM_CONTEXT, m_entry);
-		// RemoveHeadList already unlinks the entry from the list, so just free.
-		ExFreePoolWithTag(ctx, tag_port);
-	}
-
-	// list is now empty
-	InitializeListHead(&gVar.m_PortCtxList);
-	ExReleaseResourceLite(&gVar.m_PortCtxListLock);
-
-	// free ERESOURCE
-	ExDeleteResourceLite(&gVar.m_PortCtxListLock);
-
-	// free hook list entries
-	ExAcquireResourceExclusiveLite(&gVar.m_HookListLock, TRUE);
-	while (!IsListEmpty(&gVar.m_HookList)) {
-		PLIST_ENTRY entry = RemoveHeadList(&gVar.m_HookList);
-		PHOOK_ENTRY p = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
-		if (p->NtPath.Buffer) {
-			ExFreePoolWithTag(p->NtPath.Buffer, tag_port);
-		}
-		ExFreePoolWithTag(p, tag_port);
-	}
-	InitializeListHead(&gVar.m_HookList);
-	ExReleaseResourceLite(&gVar.m_HookListLock);
-	ExDeleteResourceLite(&gVar.m_HookListLock);
+	// free hook list entries (encapsulated in HookList module)
+	HookList_Uninit();
 
 	// Unregister sys notify routine
 	PsSetCreateProcessNotifyRoutine(ProcessCrNotify, TRUE);
 	PsRemoveLoadImageNotifyRoutine(LoadImageNotify);
 
-	if (gVar.m_ServerPort) {
-		FltCloseCommunicationPort(gVar.m_ServerPort);
-		gVar.m_ServerPort = NULL;
+	PFLT_PORT sp = DriverCtx_GetServerPort();
+	if (sp) {
+		FltCloseCommunicationPort(sp);
+		DriverCtx_ClearServerPort();
 	}
 
-	if (gVar.m_Filter) { 
-		FltUnregisterFilter(gVar.m_Filter);
+	if (DriverCtx_GetFilter()) {
+		FltUnregisterFilter(DriverCtx_GetFilter());
+		DriverCtx_ClearFilter();
 	}
 	Log(L"successfully unloaded minifilter driver\n");
 	return STATUS_SUCCESS;

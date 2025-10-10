@@ -9,15 +9,6 @@ typedef struct _COMM_CONTEXT {
 	LONG			m_RefCount;
 }COMM_CONTEXT, *PCOMM_CONTEXT;
 
-// Kernel-side hook list entry: stores a LIST_ENTRY plus the 64-bit hash
-// and an optional NT path stored as a UNICODE_STRING. The NtPath.Buffer
-// (if non-NULL) is separately allocated from non-paged pool and must be
-// freed when the entry is removed.
-typedef struct _HOOK_ENTRY {
-	LIST_ENTRY ListEntry;
-	ULONGLONG Hash;
-	UNICODE_STRING NtPath;
-} HOOK_ENTRY, *PHOOK_ENTRY;
 
 NTSTATUS
 Comm_CreatePort();

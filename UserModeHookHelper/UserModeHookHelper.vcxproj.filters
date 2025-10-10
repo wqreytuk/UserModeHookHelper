@@ -48,6 +48,15 @@
     <ClCompile Include="FltCommPort.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="HookList.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="PortCtx.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="DriverCtx.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Trace.h">
@@ -78,6 +87,15 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="UKShared.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="HookList.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="PortCtx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="DriverCtx.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

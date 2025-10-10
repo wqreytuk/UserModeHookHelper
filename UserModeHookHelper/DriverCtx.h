@@ -1,0 +1,35 @@
+#ifndef DRIVERCTX_H
+#define DRIVERCTX_H
+
+#include "Common.h"
+
+/*
+ * DriverCtx module
+ *
+ * Purpose:
+ *   Provide a minimal, well-documented accessor layer for driver-level
+ *   global handles (filter and server port). This reduces direct global
+ *   access and centralizes ownership semantics.
+ *
+ * API contract:
+ *   - DriverCtx_SetFilter / DriverCtx_GetFilter: set/get the PFLT_FILTER
+ *     handle. Typically set once during DriverEntry and cleared during unload.
+ *   - DriverCtx_SetServerPort / DriverCtx_GetServerPort: set/get the
+ *     communication server port handle. Set when the port is created and
+ *     cleared on close/unload.
+ *   - DriverCtx_Clear* helpers reset stored pointers to NULL.
+ *
+ * Thread-safety:
+ *   These are simple setters/getters; the typical driver lifecycle (set in
+ *   DriverEntry, cleared during unload) makes them safe without additional
+ *   synchronization. If you plan concurrent mutations, add synchronization.
+ */
+
+VOID DriverCtx_SetFilter(PFLT_FILTER Filter);
+PFLT_FILTER DriverCtx_GetFilter(VOID);
+VOID DriverCtx_SetServerPort(PFLT_PORT ServerPort);
+PFLT_PORT DriverCtx_GetServerPort(VOID);
+VOID DriverCtx_ClearServerPort(VOID);
+VOID DriverCtx_ClearFilter(VOID);
+
+#endif

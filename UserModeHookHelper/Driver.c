@@ -2,8 +2,10 @@
 #include "Trace.h"
 #include "mini.h"
 #include "SysCallback.h"
+#include "HookList.h"
+#include "PortCtx.h"
+#include "DriverCtx.h"
  
-GLOBAL_V gVar;
 CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
 	{ IRP_MJ_CREATE,
 	  0,
@@ -42,23 +44,25 @@ NTSTATUS
 	(RegistryPath); 
 	Log(L"DriverEntry\n");
 
-	// global variable initializtion
-	InitializeListHead(&gVar.m_PortCtxList);
-	ExInitializeResourceLite(&gVar.m_PortCtxListLock);
-	// initialize hook list
-	InitializeListHead(&gVar.m_HookList);
-	ExInitializeResourceLite(&gVar.m_HookListLock);
+	// initialize modules
+	HookList_Init();
+	PortCtx_Init();
 
 	// register minifilter
+	PFLT_FILTER filter = NULL;
 	NTSTATUS status = FltRegisterFilter(
 		DriverObject,
 		&FilterRegistration,
-		&gVar.m_Filter
+		&filter
 	);
+	// store filter in DriverCtx for controlled access
+	if (NT_SUCCESS(status)) {
+		DriverCtx_SetFilter(filter);
+	}
 
 	// we need to manually call miniunload until FltStartFiltering succeed
 	if (NT_SUCCESS(status)) {
-		status = FltStartFiltering(gVar.m_Filter);
+	status = FltStartFiltering(DriverCtx_GetFilter());
 		if (!NT_SUCCESS(status)) {
 			Log(L"failed to start filtering: 0x%x\n", status);
 			MiniUnload(0);

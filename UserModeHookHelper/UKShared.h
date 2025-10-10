@@ -4,6 +4,12 @@
 #define CMD_CHECK_HOOK_LIST 0
 // Request the image path for a PID. Payload: DWORD pid in m_Data.
 #define CMD_GET_IMAGE_PATH_BY_PID 1
+// Add a hook entry. Payload: ULONGLONG hash followed by optional null-terminated
+// UTF-16LE NT path string in m_Data (hash first). If no path is provided,
+// the kernel will store an entry with no path.
+#define CMD_ADD_HOOK 2
+// Remove a hook entry by hash. Payload: ULONGLONG hash in m_Data.
+#define CMD_REMOVE_HOOK 3
 
 typedef struct _UMHH_COMMAND_MESSAGE {
 	DWORD m_Cmd;

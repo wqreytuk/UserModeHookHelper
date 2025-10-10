@@ -130,3 +130,51 @@ bool Filter::FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath) {
 	outPath.assign(w);
 	return true;
 }
+bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
+	if (ntPath.empty()) return false;
+
+	// Compute hash
+	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+	DWORD64 hash = Helper::GetNtPathHash(const_cast<UCHAR*>(bytes));
+
+	// Build message: ULONGLONG hash followed by null-terminated WCHAR path
+	size_t pathBytes = (ntPath.size() + 1) * sizeof(WCHAR);
+	size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(ULONGLONG) + pathBytes;
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_ADD_HOOK;
+	memcpy(msg->m_Data, &hash, sizeof(ULONGLONG));
+	memcpy((BYTE*)msg->m_Data + sizeof(ULONGLONG), ntPath.c_str(), pathBytes);
+
+	NTSTATUS st = STATUS_UNSUCCESSFUL;
+	DWORD bytesOut = 0;
+	HRESULT hResult = FilterSendMessage(m_Port,
+		msg,
+		(DWORD)msgSize,
+		&st,
+		sizeof(NTSTATUS),
+		&bytesOut);
+	free(msg);
+	return (hResult == S_OK && NT_SUCCESS(st));
+}
+
+bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
+	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1;
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_REMOVE_HOOK;
+	memcpy(msg->m_Data, &hash, sizeof(ULONGLONG));
+
+	BOOLEAN removed = FALSE;
+	DWORD bytesOut = 0;
+	HRESULT hResult = FilterSendMessage(m_Port,
+		msg,
+		(DWORD)msgSize,
+		&removed,
+		sizeof(BOOLEAN),
+		&bytesOut);
+	free(msg);
+	return (hResult == S_OK && removed == TRUE);
+}
