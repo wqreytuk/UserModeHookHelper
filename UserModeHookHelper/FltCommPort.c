@@ -1,5 +1,63 @@
 ﻿#include "FltCommPort.h"
 #include "Trace.h"
+#include "UKShared.h"
+
+// Add an entry to the hook list. The caller may provide an NT path
+// (wide string) which will be copied into freshly allocated non-paged
+// pool and attached to the entry. Returns STATUS_SUCCESS or an error code.
+NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath) {
+	PHOOK_ENTRY p = ExAllocatePoolWithTag(NonPagedPool, sizeof(HOOK_ENTRY), tag_port);
+	if (!p) return STATUS_INSUFFICIENT_RESOURCES;
+	RtlZeroMemory(p, sizeof(HOOK_ENTRY));
+	p->Hash = hash;
+	InitializeListHead(&p->ListEntry);
+	p->NtPath.Buffer = NULL;
+	p->NtPath.Length = 0;
+	p->NtPath.MaximumLength = 0;
+
+	if (NtPath) {
+		size_t chars = wcslen(NtPath) + 1; // include null
+		SIZE_T bytes = chars * sizeof(WCHAR);
+		PWCHAR buf = ExAllocatePoolWithTag(NonPagedPool, bytes, tag_port);
+		if (!buf) {
+			ExFreePoolWithTag(p, tag_port);
+			return STATUS_INSUFFICIENT_RESOURCES;
+		}
+		RtlCopyMemory(buf, NtPath, bytes);
+		p->NtPath.Buffer = buf;
+		// Length excludes trailing null
+		p->NtPath.Length = (USHORT)((chars - 1) * sizeof(WCHAR));
+		p->NtPath.MaximumLength = (USHORT)(bytes);
+	}
+
+	ExAcquireResourceExclusiveLite(&gVar.m_HookListLock, TRUE);
+	InsertTailList(&gVar.m_HookList, &p->ListEntry);
+	ExReleaseResourceLite(&gVar.m_HookListLock);
+	return STATUS_SUCCESS;
+}
+
+// Remove matching hash from hook list. Returns TRUE if removed.
+BOOLEAN HookList_RemoveEntry(ULONGLONG hash) {
+	BOOLEAN removed = FALSE;
+	ExAcquireResourceExclusiveLite(&gVar.m_HookListLock, TRUE);
+	PLIST_ENTRY entry = gVar.m_HookList.Flink;
+	while (entry != &gVar.m_HookList) {
+		PHOOK_ENTRY p = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+		PLIST_ENTRY next = entry->Flink;
+		if (p->Hash == hash) {
+			RemoveEntryList(&p->ListEntry);
+			if (p->NtPath.Buffer) {
+				ExFreePoolWithTag(p->NtPath.Buffer, tag_port);
+			}
+			ExFreePoolWithTag(p, tag_port);
+			removed = TRUE;
+			break;
+		}
+		entry = next;
+	}
+	ExReleaseResourceLite(&gVar.m_HookListLock);
+	return removed;
+}
 
 
 // write a scalable code even though I only have one client
@@ -127,5 +185,56 @@ Comm_MessageNotify(
 	(OutputBuffer);
 	(OutputBufferSize);
 	(ReturnOutputBufferLength);
+	// Validate input
+	if (!InputBuffer || InputBufferSize < sizeof(UMHH_COMMAND_MESSAGE)) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)InputBuffer;
+	switch (msg->m_Cmd) {
+	case CMD_CHECK_HOOK_LIST: {
+		// Expect an 8-byte hash payload
+		if (InputBufferSize < (sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1)) {
+			// client didn't send full hash
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			return STATUS_BUFFER_TOO_SMALL;
+		}
+		ULONGLONG hash = 0;
+		// m_Data is declared as size 1; copy the following bytes
+		RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
+
+		BOOLEAN found = FALSE;
+
+		// Walk hook list under shared lock
+		ExAcquireResourceSharedLite(&gVar.m_HookListLock, TRUE);
+		PLIST_ENTRY entry = gVar.m_HookList.Flink;
+		while (entry != &gVar.m_HookList) {
+			PHOOK_ENTRY pHook = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+			if (pHook && pHook->Hash == hash) {
+				found = TRUE;
+				break;
+			}
+			entry = entry->Flink;
+		}
+		ExReleaseResourceLite(&gVar.m_HookListLock);
+
+		if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
+			*(BOOLEAN*)OutputBuffer = found;
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
+			return STATUS_SUCCESS;
+		}
+		else {
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			return STATUS_BUFFER_TOO_SMALL;
+		}
+	}
+	case CMD_GET_IMAGE_PATH_BY_PID: {
+		// existing behavior will be handled later; fall through to default for now
+		break;
+	}
+	default:
+		break;
+	}
+
 	return status;
 }

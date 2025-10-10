@@ -13,6 +13,9 @@ typedef struct _GLOBAL_V {
 	
 	LIST_ENTRY m_PortCtxList;
 	ERESOURCE m_PortCtxListLock;
+	// Hook list: stores 64-bit FNV-1a hashes of NT image paths
+	LIST_ENTRY m_HookList;
+	ERESOURCE m_HookListLock;
 
 }GLOBAL_V, *PGLOBAL_V;
 extern GLOBAL_V gVar;

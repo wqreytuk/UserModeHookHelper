@@ -30,6 +30,20 @@ MiniUnload(
 	// free ERESOURCE
 	ExDeleteResourceLite(&gVar.m_PortCtxListLock);
 
+	// free hook list entries
+	ExAcquireResourceExclusiveLite(&gVar.m_HookListLock, TRUE);
+	while (!IsListEmpty(&gVar.m_HookList)) {
+		PLIST_ENTRY entry = RemoveHeadList(&gVar.m_HookList);
+		PHOOK_ENTRY p = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+		if (p->NtPath.Buffer) {
+			ExFreePoolWithTag(p->NtPath.Buffer, tag_port);
+		}
+		ExFreePoolWithTag(p, tag_port);
+	}
+	InitializeListHead(&gVar.m_HookList);
+	ExReleaseResourceLite(&gVar.m_HookListLock);
+	ExDeleteResourceLite(&gVar.m_HookListLock);
+
 	// Unregister sys notify routine
 	PsSetCreateProcessNotifyRoutine(ProcessCrNotify, TRUE);
 	PsRemoveLoadImageNotifyRoutine(LoadImageNotify);

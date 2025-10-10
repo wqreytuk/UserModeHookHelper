@@ -45,6 +45,9 @@ NTSTATUS
 	// global variable initializtion
 	InitializeListHead(&gVar.m_PortCtxList);
 	ExInitializeResourceLite(&gVar.m_PortCtxListLock);
+	// initialize hook list
+	InitializeListHead(&gVar.m_HookList);
+	ExInitializeResourceLite(&gVar.m_HookListLock);
 
 	// register minifilter
 	NTSTATUS status = FltRegisterFilter(
