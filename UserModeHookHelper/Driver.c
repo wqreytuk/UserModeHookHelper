@@ -65,21 +65,27 @@ NTSTATUS
 	status = FltStartFiltering(DriverCtx_GetFilter());
 		if (!NT_SUCCESS(status)) {
 			Log(L"failed to start filtering: 0x%x\n", status);
-			MiniUnload(0);
-			return status;
+			goto ABORTION;
 		} 
 	}
 	else {
 		Log(L"failed to call FltRegisterFilter: 0x%x\n", status);
-		MiniUnload(0);
-		return status;
+		goto ABORTION;
+	}
+
+	status = Comm_CreatePort();
+	if (!NT_SUCCESS(status)) {
+		Log(L"failed to call Comm_CreatePort: 0x%x\n", status);
+		goto ABORTION;
 	}
 
 	status = SetSysNotifiers();
 	if (!NT_SUCCESS(status)) {
 		Log(L"failed to set system notify routines\n");
-		return status;
+		goto ABORTION;
 	}
-
+	return status;
+ABORTION:
+	MiniUnload(0);
 	return status;
 }

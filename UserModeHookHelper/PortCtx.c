@@ -42,8 +42,13 @@ PCOMM_CONTEXT PortCtx_CreateAndInsert(HANDLE UserProcessId, PFLT_PORT ClientPort
 VOID PortCtx_RemoveAndFree(PCOMM_CONTEXT ctx) {
     if (!ctx) return;
     ExAcquireResourceExclusiveLite(&s_PortCtxListLock, TRUE);
-    if (ctx->m_entry.Flink != &ctx->m_entry) {
-        RemoveEntryList(&ctx->m_entry);
+    // If the global list was already emptied (for example during driver unload)
+    // don't attempt to touch the ctx->m_entry pointers which may no longer be
+    // linked. Instead only remove the entry when the global list is non-empty.
+    if (!IsListEmpty(&s_PortCtxList)) {
+        if (ctx->m_entry.Flink != &ctx->m_entry) {
+            RemoveEntryList(&ctx->m_entry);
+        }
     }
     ExReleaseResourceLite(&s_PortCtxListLock);
     ExFreePoolWithTag(ctx, tag_ctx);

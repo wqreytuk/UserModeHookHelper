@@ -76,7 +76,7 @@ Comm_CreatePort(
 			DriverCtx_SetServerPort(serverPort);
 		}
 
-		DbgPrint("minifilter port created: %wZ\n", oa.ObjectName);
+		Log(L"minifilter port created: %wZ\n", oa.ObjectName);
 		FltFreeSecurityDescriptor(sd);
 	}
 	else {

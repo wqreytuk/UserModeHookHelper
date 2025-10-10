@@ -9,6 +9,20 @@
 #include "../UserModeHookHelper/UKShared.h"
 #include <memory>
 
+// Provide minimal NTSTATUS/NT_SUCCESS definitions for user-mode build
+#ifndef NTSTATUS
+typedef long NTSTATUS;
+#endif
+#ifndef STATUS_SUCCESS
+#define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
+#endif
+#ifndef STATUS_UNSUCCESSFUL
+#define STATUS_UNSUCCESSFUL ((NTSTATUS)0xC0000001L)
+#endif
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
+
 // use app-owned ETW instance
 
 Filter::~Filter() {
@@ -46,14 +60,20 @@ boolean Filter::FLTCOMM_CheckHookList(const std::wstring& ntPath) {
 	// Compute 64-bit FNV-1a hash over NT path bytes (UTF-16LE) and send the
 	// 8-byte hash to the kernel. This preserves the original design that
 	// compares a compact identifier in kernel space.
-	if (ntPath.empty()) return FALSE;
+	if (ntPath.empty()) {
+		Helper::Fatal(L"FLTCOMM_CheckHookList called with empty path");
+		return FALSE;
+	}
 
 	// Interpret the WCHAR buffer as bytes for hashing (UTF-16LE)
 	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
 	DWORD64 hash = Helper::GetNtPathHash(const_cast<UCHAR*>(bytes));
 
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD64));
-	if (!msg) return FALSE;
+	if (!msg) {
+		Helper::Fatal(L"FLTCOMM_CheckHookList: failed to allocate message");
+		return FALSE;
+	}
 	memset(msg, 0, sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD64));
 	msg->m_Cmd = CMD_CHECK_HOOK_LIST;
 	memcpy(msg->m_Data, &hash, sizeof(DWORD64));
@@ -109,6 +129,7 @@ bool Filter::FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath) {
 		&bytesOut);
 
 	if (hResult != S_OK || bytesOut == 0) {
+		Helper::Fatal(L"FLTCOMM_GetImagePathByPid: FilterSendMessage failed or returned no data");
 		return false;
 	}
 
@@ -120,10 +141,11 @@ bool Filter::FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath) {
 	WCHAR* w = (WCHAR*)t_replyBuf.get();
 	// Guarantee null-termination
 	size_t wcCount = bytesOut / sizeof(WCHAR);
-	if (wcCount == 0) { return false; }
+	if (wcCount == 0) { Helper::Fatal(L"FLTCOMM_GetImagePathByPid: reply buffer empty"); return false; }
 	w[wcCount - 1] = L'\0';
 
 	if (w[0] == L'\0') {
+		Helper::Fatal(L"FLTCOMM_GetImagePathByPid: reply path is empty\n");
 		return false;
 	}
 
@@ -131,7 +153,10 @@ bool Filter::FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath) {
 	return true;
 }
 bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
-	if (ntPath.empty()) return false;
+	if (ntPath.empty()) {
+		Helper::Fatal(L"FLTCOMM_AddHook called with empty path");
+		return false;
+	}
 
 	// Compute hash
 	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
@@ -141,7 +166,10 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 	size_t pathBytes = (ntPath.size() + 1) * sizeof(WCHAR);
 	size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(ULONGLONG) + pathBytes;
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
-	if (!msg) return false;
+	if (!msg) {
+		Helper::Fatal(L"FLTCOMM_AddHook: failed to allocate message");
+		return false;
+	}
 	memset(msg, 0, msgSize);
 	msg->m_Cmd = CMD_ADD_HOOK;
 	memcpy(msg->m_Data, &hash, sizeof(ULONGLONG));
@@ -156,13 +184,23 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 		sizeof(NTSTATUS),
 		&bytesOut);
 	free(msg);
-	return (hResult == S_OK && NT_SUCCESS(st));
+	if (hResult == S_OK && NT_SUCCESS(st)) {
+		SetLastError(ERROR_SUCCESS);
+		return true;
+	}
+	// Any failure here is considered fatal for the app
+	SetLastError(21); // ERROR_NOT_READY as sentinel for fatal
+	Helper::Fatal(L"FLTCOMM_AddHook: kernel or IPC failure while adding hook");
+	return false;
 }
 
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1;
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
-	if (!msg) return false;
+	if (!msg) {
+		Helper::Fatal(L"FLTCOMM_RemoveHookByHash: failed to allocate message");
+		return false;
+	}
 	memset(msg, 0, msgSize);
 	msg->m_Cmd = CMD_REMOVE_HOOK;
 	memcpy(msg->m_Data, &hash, sizeof(ULONGLONG));
@@ -176,5 +214,12 @@ bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 		sizeof(BOOLEAN),
 		&bytesOut);
 	free(msg);
-	return (hResult == S_OK && removed == TRUE);
+	if (hResult == S_OK && removed == TRUE) {
+		SetLastError(ERROR_SUCCESS);
+		return true;
+	}
+	// Any failure is fatal in user-mode policy
+	SetLastError(21); // ERROR_NOT_READY as sentinel for fatal
+	Helper::Fatal(L"FLTCOMM_RemoveHookByHash: kernel or IPC failure while removing hook");
+	return false;
 }
