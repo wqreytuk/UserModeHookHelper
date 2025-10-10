@@ -25,12 +25,12 @@ class CAboutDlg : public CDialogEx
 public:
 	CAboutDlg();
 
-// Dialog Data
+	// Dialog Data
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_ABOUTBOX };
 #endif
 
-	protected:
+protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 
 // Implementation
@@ -58,7 +58,7 @@ BOOL CUMControllerDlg::PreCreateWindow(CREATESTRUCT& cs)
 {
 	cs.style &= ~WS_MAXIMIZE;
 	cs.style &= ~WS_MINIMIZE;
-	
+
 	return(TRUE);
 }
 
@@ -179,9 +179,9 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 	int i = 0;
 	for (size_t idx = 0; idx < g_ProcessList.size(); idx++) {
 		if (filter.empty() || g_ProcessList[idx].name.find(filter) != std::wstring::npos) {
-			int nIndex =m_ProcListCtrl.InsertItem(i, g_ProcessList[idx].name.c_str());
+			int nIndex = m_ProcListCtrl.InsertItem(i, g_ProcessList[idx].name.c_str());
 			m_ProcListCtrl.SetItemText(i, 1, std::to_wstring(g_ProcessList[idx].pid).c_str());
-			
+
 			// save idx of g_ProcessList vector, so we know if this entry is in hook list
 			// in right click menu handler
 			// otherwise we'll need to call CheckHookList for every process list netry
@@ -195,29 +195,29 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 void CUMControllerDlg::LoadProcessList() {
 	g_ProcessList.clear();
 	m_ProcListCtrl.DeleteAllItems();
+	// Hard-coded exclusions: skip system/critical PIDs that don't have image paths
 
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (snapshot == INVALID_HANDLE_VALUE) return;
 
 	PROCESSENTRY32 pe32 = { sizeof(pe32) };
 	if (Process32First(snapshot, &pe32)) {
-		int i = 0;
 		do {
 			ProcessEntry entry;
 			entry.pid = pe32.th32ProcessID;
-			if (!entry.pid) {
-				i++;
+			// Exclude PID 0 and PID 4 (system process/idle) explicitly
+			if (entry.pid == 0 || entry.pid == 4) {
 				continue;
 			}
 			entry.name = pe32.szExeFile;
 			// Try to obtain an NT-style image path (preferred for kernel).
 			std::wstring ntPath;
 			Helper::ResolveProcessNtImagePath(entry.pid, m_Filter, ntPath);
+			// this should not be true
+			assert(!ntPath.empty());
 			// Query the hook list directly with NT path
 			entry.bInHookList = m_Filter.FLTCOMM_CheckHookList(ntPath);
 			g_ProcessList.push_back(entry);
-
-			i++;
 		} while (Process32Next(snapshot, &pe32));
 	}
 

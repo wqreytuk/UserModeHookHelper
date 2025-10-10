@@ -8,5 +8,5 @@ void Log(const WCHAR* format, ...) {
 	RtlStringCchVPrintfW(buffer, ARRAYSIZE(buffer), format, args);
 	va_end(args);
 
-	DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_INFO_LEVEL, "%ws\n", buffer);
+	DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_INFO_LEVEL, "%ws %ws\n", UMHH_LOG_PREFIX, buffer);
 }

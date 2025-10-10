@@ -1,5 +1,6 @@
 ﻿#include "FltCommPort.h"
 #include "Trace.h"
+#include "UKShared.h"
 
 
 // write a scalable code even though I only have one client
@@ -75,9 +76,15 @@ Comm_CreatePort(
 	 		Comm_PortDisconnect,
 	 		Comm_MessageNotify,
 	 		COMM_MAX_CONNECTION);
-
-		DbgPrint("minifilter port created: %wZ\n", oa.ObjectName);
-		FltFreeSecurityDescriptor(sd);
+		if (NT_SUCCESS(status)) {
+			Log(L"minifilter port created: %wZ\n", oa.ObjectName);
+			FltFreeSecurityDescriptor(sd);
+		}
+		else {
+			Log(L"failed to call FltCreateCommunicationPort: 0x%x\n", status);
+			FltFreeSecurityDescriptor(sd);
+			return status;
+		}
 	}
 	else {
 		Log(L"failed to call FltBuildDefaultSecurityDescriptor: 0x%x\n", status);
@@ -120,12 +127,105 @@ Comm_MessageNotify(
 	__in ULONG OutputBufferSize,
 	__out PULONG ReturnOutputBufferLength
 ) {
-	NTSTATUS status = STATUS_SUCCESS;
 	(ConnectionCookie);
-	(InputBuffer);
-	(InputBufferSize);
-	(OutputBuffer);
-	(OutputBufferSize);
-	(ReturnOutputBufferLength);
+	NTSTATUS status = STATUS_SUCCESS;
+	PUMHH_COMMAND_MESSAGE pMsg = NULL;
+	DWORD pid = 0;
+	PEPROCESS pProcess = NULL;
+	PUNICODE_STRING pImagePath = NULL;
+	PWCHAR pOutputWide = NULL;
+	ULONG requiredSize = 0;
+
+	// Initialize return length
+	if (ReturnOutputBufferLength) {
+		*ReturnOutputBufferLength = 0;
+	}
+
+	// Validate input buffer size
+	if (!InputBuffer || InputBufferSize < sizeof(UMHH_COMMAND_MESSAGE)) {
+		Log(L"Comm_MessageNotify: Invalid input buffer size %lu\n", InputBufferSize);
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	pMsg = (PUMHH_COMMAND_MESSAGE)InputBuffer;
+
+	switch (pMsg->m_Cmd) {
+	case CMD_CHECK_HOOK_LIST: {
+		// TODO: Implement hash-based hook list checking
+		Log(L"Comm_MessageNotify: CMD_CHECK_HOOK_LIST not yet implemented\n");
+		status = STATUS_NOT_IMPLEMENTED;
+		break;
+	}
+
+	case CMD_GET_IMAGE_PATH_BY_PID: {
+		// Validate payload size for PID
+		// Compute the minimal required buffer size as: offset_of(m_Data) + payload_size
+		// This avoids confusion from struct padding (sizeof may include padding).
+		{
+			ULONG minSize = (ULONG)((ULONG_PTR)&((UMHH_COMMAND_MESSAGE*)0)->m_Data) + sizeof(DWORD);
+			if (InputBufferSize < minSize) {
+				Log(L"Comm_MessageNotify: CMD_GET_IMAGE_PATH_BY_PID insufficient payload. Required: %lu, Provided: %lu\n", minSize, InputBufferSize);
+				status = STATUS_INVALID_PARAMETER;
+				break;
+			}
+		}
+
+		// Extract PID from payload
+		RtlCopyMemory(&pid, pMsg->m_Data, sizeof(DWORD));
+		Log(L"Comm_MessageNotify: CMD_GET_IMAGE_PATH_BY_PID for PID %lu\n", pid);
+
+		// Look up process by PID
+		status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &pProcess);
+		if (!NT_SUCCESS(status)) {
+			Log(L"Comm_MessageNotify: PsLookupProcessByProcessId failed for PID %lu, status 0x%x\n", pid, status);
+			break;
+		}
+
+		// Get the process image file name (NT path)
+		status = SeLocateProcessImageName(pProcess, &pImagePath);
+		if (!NT_SUCCESS(status)) {
+			Log(L"Comm_MessageNotify: SeLocateProcessImageName failed for PID %lu, status 0x%x\n", pid, status);
+			ObDereferenceObject(pProcess);
+			break;
+		}
+
+		// Calculate required output size (wide string length + null terminator)
+		requiredSize = pImagePath->Length + sizeof(WCHAR);
+
+		if (!OutputBuffer || OutputBufferSize < requiredSize) {
+			Log(L"Comm_MessageNotify: Output buffer too small. Required: %lu, Available: %lu\n", requiredSize, OutputBufferSize);
+			status = STATUS_BUFFER_TOO_SMALL;
+			if (ReturnOutputBufferLength) {
+				*ReturnOutputBufferLength = requiredSize;
+			}
+		} else {
+			// Copy the wide string to output buffer
+			pOutputWide = (PWCHAR)OutputBuffer;
+			RtlZeroMemory(pOutputWide, OutputBufferSize);
+			RtlCopyMemory(pOutputWide, pImagePath->Buffer, pImagePath->Length);
+			// Null-terminate
+			pOutputWide[pImagePath->Length / sizeof(WCHAR)] = L'\0';
+			
+			if (ReturnOutputBufferLength) {
+				*ReturnOutputBufferLength = requiredSize;
+			}
+			
+			Log(L"Comm_MessageNotify: Returning path for PID %lu: %wZ\n", pid, pImagePath);
+			status = STATUS_SUCCESS;
+		}
+
+		// Cleanup
+		ExFreePool(pImagePath);
+		ObDereferenceObject(pProcess);
+		break;
+	}
+
+	default: {
+		Log(L"Comm_MessageNotify: Unknown command %lu\n", pMsg->m_Cmd);
+		status = STATUS_INVALID_PARAMETER;
+		break;
+	}
+	}
+
 	return status;
 }
