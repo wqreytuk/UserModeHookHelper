@@ -212,7 +212,8 @@ void CUMControllerDlg::LoadProcessList() {
 			entry.name = pe32.szExeFile;
 			// Try to obtain an NT-style image path (preferred for kernel).
 			std::wstring ntPath;
-			Helper::ResolveProcessNtImagePath(entry.pid, m_Filter, ntPath);
+			if (!Helper::ResolveProcessNtImagePath(entry.pid, m_Filter, ntPath))
+				continue;
 			assert(!ntPath.empty());
 			// Query the hook list directly with NT path
 			entry.bInHookList = m_Filter.FLTCOMM_CheckHookList(ntPath);

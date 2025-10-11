@@ -8,6 +8,8 @@
 #include "Helper.h"
 #include "../UserModeHookHelper/UKShared.h"
 #include <memory>
+#include <winerror.h>   // For HRESULT macros 
+
 
 // Provide minimal NTSTATUS/NT_SUCCESS definitions for user-mode build
 #ifndef NTSTATUS
@@ -129,6 +131,10 @@ bool Filter::FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath) {
 		&bytesOut);
 
 	if (hResult != S_OK || bytesOut == 0) {
+		if (hResult == HRESULT_FROM_WIN32(ERROR_NOT_FOUND)) {
+			app.GetETW().Log(L"process terminated on the fly, can not get ntpath\n");
+			return false;
+		}
 		Helper::Fatal(L"FLTCOMM_GetImagePathByPid: FilterSendMessage failed or returned no data");
 		return false;
 	}
