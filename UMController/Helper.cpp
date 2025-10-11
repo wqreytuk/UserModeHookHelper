@@ -7,6 +7,10 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+// COM/WMI headers
+#include <comdef.h>
+#include <Wbemidl.h>
+#pragma comment(lib, "wbemuuid.lib")
 
 // Simple process-wide fatal handler. Stored as an atomic pointer so it can be
 // safely set from any thread during startup.
@@ -123,4 +127,78 @@ bool Helper::ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& 
 		return true;
 	}
 	return false;
+}
+
+bool Helper::GetProcessCommandLineByPID(DWORD pid, std::wstring& outCmdLine) {
+	// Use WMI to query Win32_Process for the CommandLine property for the PID.
+	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	bool coInit = SUCCEEDED(hr);
+
+	IWbemLocator *pLoc = nullptr;
+	IWbemServices *pSvc = nullptr;
+	IEnumWbemClassObject* pEnumerator = nullptr;
+	bool result = false;
+
+	hr = CoCreateInstance(CLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER,
+		IID_IWbemLocator, (LPVOID *)&pLoc);
+	if (FAILED(hr)) goto cleanup;
+
+	hr = pLoc->ConnectServer(
+		_bstr_t(L"ROOT\\CIMV2"), // namespace
+		NULL, // User
+		NULL, // Password
+		0,    // Locale
+		NULL, // SecurityFlags
+		0,    // Authority
+		0,    // Context
+		&pSvc);
+
+	if (FAILED(hr)) goto cleanup;
+
+	// Set security levels on the proxy
+	hr = CoSetProxyBlanket(
+		pSvc,                        // the proxy to set
+		RPC_C_AUTHN_WINNT,           // authentication service
+		RPC_C_AUTHZ_NONE,            // authorization service
+		NULL,                        // Server principal name
+		RPC_C_AUTHN_LEVEL_CALL,      // authentication level
+		RPC_C_IMP_LEVEL_IMPERSONATE, // impersonation level
+		NULL,                        // client identity
+		EOAC_NONE                    // proxy capabilities
+	);
+	if (FAILED(hr)) goto cleanup;
+
+	// Query for the specific process
+	wchar_t query[128];
+	_snwprintf_s(query, _countof(query), _TRUNCATE, L"SELECT CommandLine FROM Win32_Process WHERE ProcessId=%u", pid);
+
+	hr = pSvc->ExecQuery(
+		bstr_t("WQL"),
+		bstr_t(query),
+		WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+		NULL,
+		&pEnumerator);
+
+	if (FAILED(hr)) goto cleanup;
+
+	IWbemClassObject *pclsObj = NULL;
+	ULONG uReturn = 0;
+	hr = pEnumerator->Next(WBEM_INFINITE, 1, &pclsObj, &uReturn);
+	if (uReturn == 0) goto cleanup;
+
+	VARIANT vtProp;
+	hr = pclsObj->Get(L"CommandLine", 0, &vtProp, 0, 0);
+	if (SUCCEEDED(hr) && vtProp.vt == VT_BSTR && vtProp.bstrVal != NULL) {
+		outCmdLine = std::wstring(vtProp.bstrVal, SysStringLen(vtProp.bstrVal));
+		result = true;
+	}
+	VariantClear(&vtProp);
+	pclsObj->Release();
+
+cleanup:
+	if (pEnumerator) pEnumerator->Release();
+	if (pSvc) pSvc->Release();
+	if (pLoc) pLoc->Release();
+	if (coInit) CoUninitialize();
+	return result;
 }

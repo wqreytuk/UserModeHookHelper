@@ -12,6 +12,7 @@ struct ProcessEntry {
 	DWORD pid;
 	std::wstring name;
 	std::wstring path;
+	std::wstring cmdline; // process start parameters (command line)
 	bool bInHookList;
 };
 extern std::vector<ProcessEntry> g_ProcessList;
@@ -54,6 +55,7 @@ public:
 	afx_msg void OnEnChangeEditSearch();
 	afx_msg void OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult);
 	afx_msg void OnLvnColumnclickListProc(NMHDR *pNMHDR, LRESULT *pResult);
+    afx_msg LRESULT OnUpdateProcess(WPARAM wParam, LPARAM lParam);
 private:
 	Filter m_Filter;
 	CListCtrl m_ProcListCtrl;

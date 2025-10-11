@@ -117,6 +117,12 @@ int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam
 		else if (a.bInHookList) res = -1;
 		else res = 1;
 		break;
+	case 3: // NT Path (case-insensitive)
+		res = _wcsicmp(a.path.c_str(), b.path.c_str());
+		break;
+	case 4: // Start Params (case-insensitive)
+		res = _wcsicmp(a.cmdline.c_str(), b.cmdline.c_str());
+		break;
 	default:
 		res = 0;
 	}
@@ -126,6 +132,8 @@ int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam
 
 // Custom message used to signal a fatal error from any thread.
 #define WM_APP_FATAL (WM_APP + 0x100)
+// Message to update a single process row from background thread.
+#define WM_APP_UPDATE_PROCESS (WM_APP + 0x101)
 BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
@@ -133,6 +141,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_EN_CHANGE(IDC_EDIT_SEARCH, &CUMControllerDlg::OnEnChangeEditSearch)
 	ON_NOTIFY(NM_RCLICK, IDC_LIST_PROC, &CUMControllerDlg::OnNMRClickListProc)
 	ON_NOTIFY(LVN_COLUMNCLICK, IDC_LIST_PROC, &CUMControllerDlg::OnLvnColumnclickListProc)
+	ON_MESSAGE(WM_APP_UPDATE_PROCESS, &CUMControllerDlg::OnUpdateProcess)
 	ON_COMMAND(ID_MENU_ADD_HOOK, &CUMControllerDlg::OnAddHook)
 	ON_COMMAND(ID_MENU_REMOVE_HOOK, &CUMControllerDlg::OnRemoveHook)
 	ON_COMMAND(ID_MENU_INJECT_DLL, &CUMControllerDlg::OnInjectDll)
@@ -157,7 +166,10 @@ BOOL CUMControllerDlg::OnInitDialog()
 
 	m_ProcListCtrl.InsertColumn(0, L"PID", LVCFMT_LEFT, 100);
 	m_ProcListCtrl.InsertColumn(1, L"Process Name", LVCFMT_LEFT, 200);
+	// Column 2: InHookList (Yes/No), Column 3: NT Path, Column 4: Start Params
 	m_ProcListCtrl.InsertColumn(2, L"InHookList", LVCFMT_LEFT, 80);
+	m_ProcListCtrl.InsertColumn(3, L"NT Path", LVCFMT_LEFT, 400);
+	m_ProcListCtrl.InsertColumn(4, L"Start Params", LVCFMT_LEFT, 300);
 	m_ProcListCtrl.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
 
 	CMenu* pSysMenu = GetSystemMenu(FALSE);
@@ -229,12 +241,24 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 	m_ProcListCtrl.DeleteAllItems();
 
 	int i = 0;
+	// Prepare lower-case filter for case-insensitive search
+	std::wstring filterLower;
+	filterLower.reserve(filter.size());
+	for (wchar_t c : filter) filterLower.push_back(towlower(c));
+
 	for (size_t idx = 0; idx < g_ProcessList.size(); idx++) {
-		if (filter.empty() || g_ProcessList[idx].name.find(filter) != std::wstring::npos) {
-			// Insert PID in column 0, process name in column 1, and InHookList in column 2
-			int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(g_ProcessList[idx].pid).c_str());
-			m_ProcListCtrl.SetItemText(nIndex, 1, g_ProcessList[idx].name.c_str());
-			m_ProcListCtrl.SetItemText(nIndex, 2, g_ProcessList[idx].bInHookList ? L"Yes" : L"No");
+		std::wstring nameLower;
+		nameLower.reserve(g_ProcessList[idx].name.size());
+		for (wchar_t c : g_ProcessList[idx].name) nameLower.push_back(towlower(c));
+
+		if (filter.empty() || nameLower.find(filterLower) != std::wstring::npos) {
+				// Insert PID in column 0, process name in column 1, InHookList in column 2,
+				// NT Path in column 3 and Start Params in column 4
+				int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(g_ProcessList[idx].pid).c_str());
+				m_ProcListCtrl.SetItemText(nIndex, 1, g_ProcessList[idx].name.c_str());
+				m_ProcListCtrl.SetItemText(nIndex, 2, g_ProcessList[idx].bInHookList ? L"Yes" : L"No");
+				m_ProcListCtrl.SetItemText(nIndex, 3, g_ProcessList[idx].path.c_str());
+				m_ProcListCtrl.SetItemText(nIndex, 4, g_ProcessList[idx].cmdline.c_str());
 
 			// save idx of g_ProcessList vector, so we know if this entry is in hook list
 			// in right click menu handler
@@ -252,28 +276,77 @@ void CUMControllerDlg::LoadProcessList() {
 	if (snapshot == INVALID_HANDLE_VALUE) return;
 
 	PROCESSENTRY32 pe32 = { sizeof(pe32) };
+	std::vector<DWORD> pids;
 	if (Process32First(snapshot, &pe32)) {
 		do {
+			DWORD pid = pe32.th32ProcessID;
+			if (pid == 0 || pid == 4) continue;
+			pids.push_back(pid);
 			ProcessEntry entry;
-			entry.pid = pe32.th32ProcessID;
-			// Skip invalid or well-known system PIDs that don't have useful image paths
-			// (0 = Idle, 4 = System on many Windows versions).
-			if (entry.pid == 0 || entry.pid == 4) {
-				continue;
-			}
+			entry.pid = pid;
 			entry.name = pe32.szExeFile;
-			// Try to obtain an NT-style image path (preferred for kernel).
-			std::wstring ntPath;
-			if (!Helper::ResolveProcessNtImagePath(entry.pid, m_Filter, ntPath))
-				continue;
-			assert(!ntPath.empty());
-			// Query the hook list directly with NT path
-			entry.bInHookList = m_Filter.FLTCOMM_CheckHookList(ntPath);
+			entry.path.clear();
+			entry.cmdline.clear();
+			entry.bInHookList = false; // will be updated in background
 			g_ProcessList.push_back(entry);
 		} while (Process32Next(snapshot, &pe32));
 	}
 
 	CloseHandle(snapshot);
+
+	// Populate the UI quickly with PID and name only
+	int i = 0;
+	for (size_t idx = 0; idx < g_ProcessList.size(); idx++) {
+		int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(g_ProcessList[idx].pid).c_str());
+		m_ProcListCtrl.SetItemText(nIndex, 1, g_ProcessList[idx].name.c_str());
+		m_ProcListCtrl.SetItemText(nIndex, 2, g_ProcessList[idx].bInHookList ? L"Yes" : L"No");
+		m_ProcListCtrl.SetItemText(nIndex, 3, g_ProcessList[idx].path.c_str());
+		m_ProcListCtrl.SetItemText(nIndex, 4, g_ProcessList[idx].cmdline.c_str());
+		m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)idx);
+		i++;
+	}
+
+	// Start background thread to resolve details (NT path, hook membership, cmdline)
+	std::thread([this]() {
+		for (size_t idx = 0; idx < g_ProcessList.size(); idx++) {
+			ProcessEntry& entry = g_ProcessList[idx];
+			std::wstring ntPath;
+			if (Helper::ResolveProcessNtImagePath(entry.pid, m_Filter, ntPath)) {
+				entry.path = ntPath;
+				entry.bInHookList = m_Filter.FLTCOMM_CheckHookList(ntPath);
+			} else {
+				entry.path.clear();
+				entry.bInHookList = false;
+			}
+
+			std::wstring cmdline;
+			if (Helper::GetProcessCommandLineByPID(entry.pid, cmdline)) {
+				entry.cmdline = cmdline;
+			} else {
+				entry.cmdline.clear();
+			}
+
+			// Post update to UI thread for this entry index
+			::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)idx, 0);
+		}
+	}).detach();
+}
+
+LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
+	int idx = (int)wParam;
+	if (idx < 0 || idx >= (int)g_ProcessList.size()) return 0;
+	// Find the list item with ItemData == idx
+	int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
+	while (item != -1) {
+		if ((int)m_ProcListCtrl.GetItemData(item) == idx) break;
+		item = m_ProcListCtrl.GetNextItem(item, LVNI_ALL);
+	}
+	if (item == -1) return 0;
+
+	m_ProcListCtrl.SetItemText(item, 2, g_ProcessList[idx].bInHookList ? L"Yes" : L"No");
+	m_ProcListCtrl.SetItemText(item, 3, g_ProcessList[idx].path.c_str());
+	m_ProcListCtrl.SetItemText(item, 4, g_ProcessList[idx].cmdline.c_str());
+	return 0;
 }
 void CUMControllerDlg::OnSysCommand(UINT nID, LPARAM lParam)
 {

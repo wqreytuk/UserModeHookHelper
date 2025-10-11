@@ -16,6 +16,8 @@ public:
 
 	// Resolve NT path: try user-mode then kernel fallback via Filter.
 	static bool ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& outNtPath);
+	// Try to get process command line (start parameters) from user-mode via WMI.
+	static bool GetProcessCommandLineByPID(DWORD pid, std::wstring& outCmdLine);
 
 	static std::basic_string<TCHAR> GetCurrentModulePath(TCHAR* append);
 	// Call the configured fatal handler for unrecoverable errors. 
