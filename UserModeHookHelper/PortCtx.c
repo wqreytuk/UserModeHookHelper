@@ -102,3 +102,45 @@ PCOMM_CONTEXT PortCtx_FindAndReferenceByCookie(PVOID ConnectionCookie) {
     ExReleaseResourceLite(&s_PortCtxListLock);
     return found;
 }
+
+NTSTATUS PortCtx_Snapshot(PCOMM_CONTEXT** outArray, PULONG outCount) {
+    if (!outArray || !outCount) return STATUS_INVALID_PARAMETER;
+    *outArray = NULL;
+    *outCount = 0;
+
+    ExAcquireResourceSharedLite(&s_PortCtxListLock, TRUE);
+    // Count entries first
+    ULONG count = 0;
+    PCOMM_CONTEXT ctx = NULL;
+    LIST_FOR_EACH_ENTRY(ctx, &s_PortCtxList, m_entry, COMM_CONTEXT) {
+        if (!ctx->m_Removed) count++;
+    }
+    if (count == 0) {
+        ExReleaseResourceLite(&s_PortCtxListLock);
+        return STATUS_SUCCESS;
+    }
+    // Allocate array from NonPagedPool
+    PCOMM_CONTEXT* arr = ExAllocatePoolWithTag(NonPagedPool, sizeof(PCOMM_CONTEXT) * count, tag_ctx);
+    if (!arr) {
+        ExReleaseResourceLite(&s_PortCtxListLock);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    ULONG idx = 0;
+    LIST_FOR_EACH_ENTRY(ctx, &s_PortCtxList, m_entry, COMM_CONTEXT) {
+        if (ctx->m_Removed) continue;
+        InterlockedIncrement(&ctx->m_RefCount);
+        arr[idx++] = ctx;
+    }
+    ExReleaseResourceLite(&s_PortCtxListLock);
+    *outArray = arr;
+    *outCount = idx;
+    return STATUS_SUCCESS;
+}
+
+VOID PortCtx_FreeSnapshot(PCOMM_CONTEXT* array, ULONG count) {
+    if (!array) return;
+    for (ULONG i = 0; i < count; ++i) {
+        if (array[i]) PortCtx_Dereference(array[i]);
+    }
+    ExFreePoolWithTag(array, tag_ctx);
+}

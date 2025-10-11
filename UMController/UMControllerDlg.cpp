@@ -9,6 +9,7 @@
 #include "afxdialogex.h"
 #include "ETW.h"
 #include "Helper.h"
+#include "FilterCommPort.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -212,6 +213,18 @@ BOOL CUMControllerDlg::OnInitDialog()
 	LoadProcessList();
 	FilterProcessList(L"");
 
+	// Register process notify callback so UI updates on create/exit
+	m_Filter.RegisterProcessNotifyCallback([](DWORD pid, BOOLEAN create, void* ctx) {
+		HWND hwnd = NULL;
+		if (ctx) hwnd = (HWND)ctx;
+		if (hwnd) {
+			// Post a special WM_APP_UPDATE_PROCESS message with wParam = pid | (create?PROCESS_NOTIFY_CREATE_FLAG:0)
+			WPARAM w = (WPARAM)pid;
+			if (create) w |= PROCESS_NOTIFY_CREATE_FLAG;
+			::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, w, 0);
+		}
+	}, this->GetSafeHwnd());
+
 	app.GetETW().Log(L"dialog init succeed\n");
 
 
@@ -333,6 +346,16 @@ void CUMControllerDlg::LoadProcessList() {
 }
 
 LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
+	// Special signaling: if high bit set, this is a process create (wParam high bit)
+	if ((wParam & PROCESS_NOTIFY_CREATE_FLAG) != 0) {
+		DWORD pid = (DWORD)(wParam & 0x7FFFFFFFu);
+		// New process created - refresh the process list in background
+		std::thread([this]() {
+			LoadProcessList();
+			FilterProcessList(L"");
+		}).detach();
+		return 0;
+	}
 	int idx = (int)wParam;
 	if (idx < 0 || idx >= (int)g_ProcessList.size()) return 0;
 	// Find the list item with ItemData == idx

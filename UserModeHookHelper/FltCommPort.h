@@ -44,4 +44,10 @@ Comm_MessageNotify(
 	__in ULONG OutputBufferSize,
 	__out PULONG ReturnOutputBufferLength
 );
+
+// Broadcast a process create/exit notification to all connected clients.
+// This is safe to call at APC level; it will iterate PortCtx list and send a
+// small message to each client port. Returns number of clients successfully
+// notified via outNotifiedCount (may be NULL).
+NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG outNotifiedCount);
 #endif

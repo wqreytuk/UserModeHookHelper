@@ -5,10 +5,6 @@
 #include "PortCtx.h"
 #include "DriverCtx.h"
 
-#ifndef UMHH_MSG_HEADER_SIZE
-#define UMHH_MSG_HEADER_SIZE FIELD_OFFSET(UMHH_COMMAND_MESSAGE, m_Data)
-#endif
-
 // Hook list operations are implemented in HookList.c
 
 
@@ -294,4 +290,42 @@ Comm_MessageNotify(
 cleanup:
 	if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
 	return status;
+}
+
+NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG outNotifiedCount) {
+	NTSTATUS status = STATUS_SUCCESS;
+	PCOMM_CONTEXT* arr = NULL;
+	ULONG count = 0;
+	if (outNotifiedCount) *outNotifiedCount = 0;
+
+	status = PortCtx_Snapshot(&arr, &count);
+	if (!NT_SUCCESS(status)) return status;
+	if (count == 0) return STATUS_SUCCESS;
+
+	// Build message: DWORD pid followed by BOOLEAN create flag
+	ULONG payloadSize = sizeof(DWORD) + sizeof(BOOLEAN);
+	ULONG msgSize = UMHH_MSG_HEADER_SIZE + payloadSize;
+	PUMHH_COMMAND_MESSAGE msg = ExAllocatePoolWithTag(NonPagedPool, msgSize, tag_port);
+	if (!msg) {
+		PortCtx_FreeSnapshot(arr, count);
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	RtlZeroMemory(msg, msgSize);
+	msg->m_Cmd = CMD_PROCESS_NOTIFY;
+	RtlCopyMemory(msg->m_Data, &ProcessId, sizeof(DWORD));
+	RtlCopyMemory(msg->m_Data + sizeof(DWORD), &Create, sizeof(BOOLEAN));
+
+	ULONG notified = 0;
+	for (ULONG i = 0; i < count; ++i) {
+		PCOMM_CONTEXT ctx = arr[i];
+		if (!ctx || ctx->m_ClientPort == NULL) continue;
+		NTSTATUS st = FltSendMessage(DriverCtx_GetFilter(), &ctx->m_ClientPort, msg, msgSize, NULL, 0, NULL);
+		if (NT_SUCCESS(st)) notified++;
+		// Ignore failures for now; clients may have disconnected.
+	}
+
+	ExFreePool(msg);
+	PortCtx_FreeSnapshot(arr, count);
+	if (outNotifiedCount) *outNotifiedCount = notified;
+	return STATUS_SUCCESS;
 }

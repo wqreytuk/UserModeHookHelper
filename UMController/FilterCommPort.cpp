@@ -9,6 +9,29 @@
 #include "../UserModeHookHelper/UKShared.h"
 #include <memory>
 #include <winerror.h>   // For HRESULT macros 
+#include <cstddef>
+typedef NTSTATUS (NTAPI *PFN_RtlQueueWorkItem)(PVOID, PVOID, ULONG);
+
+// Cached RtlQueueWorkItem pointer. Initialized on first use.
+static PFN_RtlQueueWorkItem g_RtlQueueWorkItem = NULL;
+
+// Mimic QueueUserWorkItem by invoking RtlQueueWorkItem. The function pointer
+// is looked up once and cached to avoid repeated GetProcAddress calls.
+static BOOL QueueUserWorkItem(PVOID funcPtr, PVOID context, ULONG flags) {
+	// Fast path: if already cached, call directly
+	PFN_RtlQueueWorkItem p = (PFN_RtlQueueWorkItem)InterlockedCompareExchangePointer((PVOID*)&g_RtlQueueWorkItem, g_RtlQueueWorkItem, g_RtlQueueWorkItem);
+	if (!p) {
+		HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+		if (!hNtdll) return FALSE;
+		PFN_RtlQueueWorkItem lookup = (PFN_RtlQueueWorkItem)GetProcAddress(hNtdll, "RtlQueueWorkItem");
+		if (!lookup) return FALSE;
+		// Try to store it atomically; if another thread stored it first, use the stored value
+		PVOID prev = InterlockedCompareExchangePointer((PVOID*)&g_RtlQueueWorkItem, (PVOID)lookup, NULL);
+		p = (PFN_RtlQueueWorkItem)(prev ? prev : (PVOID)lookup);
+	}
+	NTSTATUS st = p(funcPtr, context, flags);
+	return (st >= 0) ? TRUE : FALSE;
+}
 
 
 // Provide minimal NTSTATUS/NT_SUCCESS definitions for user-mode build
@@ -29,9 +52,15 @@ typedef long NTSTATUS;
 
 Filter::~Filter() {
 	// disconnect from minifilter port
+	m_StopListener = true;
 	if (m_Port != INVALID_HANDLE_VALUE) {
-		CloseHandle(m_Port);  // Disconnects from minifilter
+		CloseHandle(m_Port);
 		m_Port = INVALID_HANDLE_VALUE;
+	}
+	if (m_WorkExitEvent) {
+		WaitForSingleObject(m_WorkExitEvent, 2000);
+		CloseHandle(m_WorkExitEvent);
+		m_WorkExitEvent = NULL;
 	}
 	else {
 		app.GetETW().Log(L"disconnected from minifilterport\n");
@@ -55,6 +84,76 @@ Filter::Filter() {
 	}
 	else
 		app.GetETW().Log(L"successfully connect to minifilterport: 0x%p\n", m_Port);
+
+	// Start listener using RtlQueueWorkItem
+	m_StopListener = false;
+	m_WorkExitEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (!QueueUserWorkItem(ListenerWorkItem, this, 0)) {
+		Helper::Fatal(L"QueueUserWorkItem (RtlQueueWorkItem) failed in Filter constructor");
+	}
+	app.GetETW().Log(L"user mode miniport listener queued into work item\n");
+}
+
+
+void Filter::RunListenerLoop() {
+	if (m_StopListener) return;
+	const ULONG REPLY_MAX = 4096;
+	std::unique_ptr<BYTE[]> reply(new BYTE[REPLY_MAX]);
+	while (!m_StopListener) {
+		// synchronous call: pass NULL for LPOVERLAPPED to block until a message arrives
+		BYTE* buf = reply.get();
+		NTSTATUS st = FilterGetMessage(m_Port, (PFILTER_MESSAGE_HEADER)buf, REPLY_MAX, NULL);
+		if (st != STATUS_SUCCESS) {
+			// error or port closed; exit
+			app.GetETW().Log(L"failed to call FilterGetMessage in RunListenerLoop: 0x%x\n", st);
+			break;
+		}
+		// The FilterGetMessage call writes a FILTER_MESSAGE_HEADER followed by
+		// the message Data into our buffer. Different SDKs name the header
+		// fields differently, so avoid accessing them directly. Instead use the
+		// UMHH_MSG_HEADER_SIZE (offset to m_Data) to find where our UMHH
+		// payload begins.
+		const size_t fhdrSize = UMHH_MSG_HEADER_SIZE; // bytes before m_Data
+		if (REPLY_MAX <= fhdrSize) continue; // buffer too small
+		BYTE* payloadPtr = buf + fhdrSize;
+		PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)payloadPtr;
+		// Can't rely on MessageSize from SDK header here; the safest option is
+		// to treat the returned buffer as containing at least UMHH_MSG_HEADER_SIZE
+		// plus our payload and perform minimal bounds checks for known commands.
+		size_t payloadBytes = REPLY_MAX - fhdrSize;
+		if (msg->m_Cmd == CMD_PROCESS_NOTIFY) {
+			size_t need = UMHH_MSG_HEADER_SIZE + sizeof(DWORD) + sizeof(BOOLEAN);
+			if (payloadBytes >= need) {
+				DWORD pid = 0;
+				BOOLEAN create = 0;
+				memcpy(&pid, msg->m_Data, sizeof(DWORD));
+				memcpy(&create, msg->m_Data + sizeof(DWORD), sizeof(BOOLEAN));
+				if (m_ProcessNotifyCb) {
+					m_ProcessNotifyCb(pid, create, m_ProcessNotifyCtx);
+				}
+			}
+		}
+		// Loop
+	}
+}
+
+VOID NTAPI Filter::ListenerWorkItem(PVOID context, PVOID systemArg1, PVOID systemArg2) {
+	UNREFERENCED_PARAMETER(systemArg1);
+	UNREFERENCED_PARAMETER(systemArg2);
+	Filter* self = static_cast<Filter*>(context);
+	if (!self) return;
+	self->RunListenerLoop();
+	if (self->m_WorkExitEvent) SetEvent(self->m_WorkExitEvent);
+}
+
+void Filter::RegisterProcessNotifyCallback(ProcessNotifyCb cb, void* ctx) {
+	m_ProcessNotifyCb = cb;
+	m_ProcessNotifyCtx = ctx;
+}
+
+void Filter::UnregisterProcessNotifyCallback() {
+	m_ProcessNotifyCb = NULL;
+	m_ProcessNotifyCtx = NULL;
 }
 
 

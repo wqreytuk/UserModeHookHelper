@@ -48,4 +48,11 @@ VOID PortCtx_Dereference(PCOMM_CONTEXT ctx);
  */
 PCOMM_CONTEXT PortCtx_FindAndReferenceByCookie(PVOID ConnectionCookie);
 
+// Create a snapshot array of active PCOMM_CONTEXT references. The caller
+// receives an allocated array of PCOMM_CONTEXT pointers (NonPagedPool) and
+// the count. The references in the array have been incremented and must be
+// released by calling PortCtx_FreeSnapshot.
+NTSTATUS PortCtx_Snapshot(PCOMM_CONTEXT** outArray, PULONG outCount);
+VOID PortCtx_FreeSnapshot(PCOMM_CONTEXT* array, ULONG count);
+
 #endif

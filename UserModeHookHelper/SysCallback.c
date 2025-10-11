@@ -1,5 +1,6 @@
 #include "SysCallback.h"
 #include "Trace.h"
+#include "FltCommPort.h"
 NTSTATUS SetSysNotifiers() {
 	NTSTATUS status;
 	status = PsSetCreateProcessNotifyRoutine(ProcessCrNotify, FALSE);
@@ -22,8 +23,15 @@ ProcessCrNotify(
 	IN BOOLEAN Create
 ) {
 	(ParentId);
-	(ProcessId);
-	(Create);
+	// Broadcast to any connected user-mode clients. ProcessId is a HANDLE-sized
+	// value; we cast to DWORD to send the PID. If high bits exist on 64-bit
+	// systems they are truncated, but PIDs fit in 32-bits on Windows.
+	DWORD pid = (DWORD)(ULONG_PTR)ProcessId;
+	ULONG notified = 0;
+	NTSTATUS st = Comm_BroadcastProcessNotify(pid, Create, &notified);
+	if (!NT_SUCCESS(st)) {
+		Log(L"Comm_BroadcastProcessNotify failed: 0x%x\n", st);
+	}
 }
 
 VOID
