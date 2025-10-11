@@ -35,10 +35,35 @@ TraceEventCallback(
 		return;
 	}
 
-	wprintf(L"[PID:%06d][TID:%06d] %s\n",
+	// Collapse duplicate newlines and trim trailing newline
+	PWCHAR raw = (PWCHAR)EventRecord->UserData;
+	WCHAR cleaned[4096];
+	size_t ri = 0;
+	bool lastWasNewline = false;
+	for (size_t i = 0; raw[i] != L'\0' && ri + 1 < _countof(cleaned); ++i) {
+		WCHAR c = raw[i];
+		if (c == L'\r') continue;
+		if (c == L'\n') {
+			if (lastWasNewline) continue;
+			cleaned[ri++] = L'\n';
+			lastWasNewline = true;
+		} else {
+			cleaned[ri++] = c;
+			lastWasNewline = false;
+		}
+	}
+	if (ri > 0 && cleaned[ri - 1] == L'\n') ri--;
+	cleaned[ri] = L'\0';
+
+	// Timestamp
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+
+	wprintf(L"%04u-%02u-%02u %02u:%02u:%02u.%03u [%u:%u] %s\n",
+		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
 		EventRecord->EventHeader.ProcessId,
 		EventRecord->EventHeader.ThreadId,
-		(PWCHAR)EventRecord->UserData);
+		cleaned);
 }
 void CreateWaitSignalThread();
 
