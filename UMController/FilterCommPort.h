@@ -6,6 +6,9 @@ class Filter
 {
 public:
 	Filter();
+	// Start the asynchronous listener worker. Separated from constructor so
+	// caller can choose when to start listening (e.g., after UI is populated).
+	void StartListener();
 	// Check whether the NT image path is in the kernel hook list. The path is
 	// passed as an NT-style wide string.
 	boolean FLTCOMM_CheckHookList(const std::wstring& ntPath);
@@ -17,9 +20,10 @@ public:
 	bool FLTCOMM_RemoveHookByHash(ULONGLONG hash);
 	~Filter();
 	// Register a callback that will be invoked when the kernel sends
-	// a CMD_PROCESS_NOTIFY message. The context pointer will be passed
-	// back to the callback and may be used to carry a HWND for posting.
-	typedef void(__cdecl *ProcessNotifyCb)(DWORD pid, BOOLEAN create, void* ctx);
+	// a CMD_PROCESS_NOTIFY message. The callback receives the PID, a
+	// create flag, and a UTF-16 process name (may be NULL). The context
+	// pointer is passed back to the callback (can be used for HWND).
+	typedef void(__cdecl *ProcessNotifyCb)(DWORD pid, BOOLEAN create, const wchar_t* name, void* ctx);
 	void RegisterProcessNotifyCallback(ProcessNotifyCb cb, void* ctx);
 	void UnregisterProcessNotifyCallback();
 
@@ -28,6 +32,8 @@ private:
 	// listener state for async messages
 	HANDLE m_WorkExitEvent = NULL; // signaled when queued worker exits
 	volatile bool m_StopListener = false;
+	volatile bool m_ListenerStarted = false;
+    HANDLE m_ListenerEvent = NULL; // event used with OVERLAPPED FilterGetMessage
 	ProcessNotifyCb m_ProcessNotifyCb = NULL;
 	void* m_ProcessNotifyCtx = NULL;
 	void RunListenerLoop();

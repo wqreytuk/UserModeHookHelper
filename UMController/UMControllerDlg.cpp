@@ -10,14 +10,17 @@
 #include "ETW.h"
 #include "Helper.h"
 #include "FilterCommPort.h"
+#include "UMController.h" // for app
+#include <unordered_map>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
 
 std::vector<ProcessEntry> g_ProcessList;
+std::unordered_map<DWORD,int> g_ProcessIndexMap;
+CRITICAL_SECTION g_ProcessLock;
 
-#include "UMController.h" // for app
 
 // CAboutDlg dialog used for App About
 
@@ -93,15 +96,33 @@ void CUMControllerDlg::OnLvnColumnclickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
 {
 	CUMControllerDlg* pDlg = reinterpret_cast<CUMControllerDlg*>(lParamSort);
-	int idx1 = (int)lParam1;
-	int idx2 = (int)lParam2;
+	// lParam1 and lParam2 are the ItemData values stored for each list item.
+	// We store PID in ItemData, so convert to DWORD and lookup index.
+	DWORD pid1 = (DWORD)lParam1;
+	DWORD pid2 = (DWORD)lParam2;
 
-	// Validate indices
-	if (idx1 < 0 || idx1 >= (int)g_ProcessList.size() || idx2 < 0 || idx2 >= (int)g_ProcessList.size())
+	int idx1 = -1;
+	int idx2 = -1;
+	// Look up indices under lock to avoid races with background updates
+	EnterCriticalSection(&g_ProcessLock);
+	auto it1 = g_ProcessIndexMap.find(pid1);
+	if (it1 != g_ProcessIndexMap.end()) idx1 = it1->second;
+	auto it2 = g_ProcessIndexMap.find(pid2);
+	if (it2 != g_ProcessIndexMap.end()) idx2 = it2->second;
+	// If we couldn't find a mapping, leave idx as -1 and we'll fall back to PID comparison
+	const ProcessEntry *pa = (idx1 >= 0 && idx1 < (int)g_ProcessList.size()) ? &g_ProcessList[idx1] : nullptr;
+	const ProcessEntry *pb = (idx2 >= 0 && idx2 < (int)g_ProcessList.size()) ? &g_ProcessList[idx2] : nullptr;
+	LeaveCriticalSection(&g_ProcessLock);
+
+	// If both entries are available, compare their fields; otherwise, fall back to PID numeric compare
+	if (!pa || !pb) {
+		if (pid1 < pid2) return pDlg->m_SortAscending ? -1 : 1;
+		if (pid1 > pid2) return pDlg->m_SortAscending ? 1 : -1;
 		return 0;
+	}
 
-	const ProcessEntry &a = g_ProcessList[idx1];
-	const ProcessEntry &b = g_ProcessList[idx2];
+	const ProcessEntry &a = *pa;
+	const ProcessEntry &b = *pb;
 
 	int res = 0;
 	switch (pDlg->m_SortColumn) {
@@ -135,6 +156,9 @@ int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam
 #define WM_APP_FATAL (WM_APP + 0x100)
 // Message to update a single process row from background thread.
 #define WM_APP_UPDATE_PROCESS (WM_APP + 0x101)
+// lParam values for WM_APP_UPDATE_PROCESS to identify the source
+#define UPDATE_SOURCE_LOAD 1
+#define UPDATE_SOURCE_NOTIFY 2
 BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
@@ -143,6 +167,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_NOTIFY(NM_RCLICK, IDC_LIST_PROC, &CUMControllerDlg::OnNMRClickListProc)
 	ON_NOTIFY(LVN_COLUMNCLICK, IDC_LIST_PROC, &CUMControllerDlg::OnLvnColumnclickListProc)
 	ON_MESSAGE(WM_APP_UPDATE_PROCESS, &CUMControllerDlg::OnUpdateProcess)
+	ON_WM_DESTROY()
 	ON_COMMAND(ID_MENU_ADD_HOOK, &CUMControllerDlg::OnAddHook)
 	ON_COMMAND(ID_MENU_REMOVE_HOOK, &CUMControllerDlg::OnRemoveHook)
 	ON_COMMAND(ID_MENU_INJECT_DLL, &CUMControllerDlg::OnInjectDll)
@@ -210,20 +235,87 @@ BOOL CUMControllerDlg::OnInitDialog()
 	});
 
 	// TODO: Add extra initialization here
+	InitializeCriticalSection(&g_ProcessLock);
 	LoadProcessList();
 	FilterProcessList(L"");
 
-	// Register process notify callback so UI updates on create/exit
-	m_Filter.RegisterProcessNotifyCallback([](DWORD pid, BOOLEAN create, void* ctx) {
+	// Register process notify callback so UI updates on create/exit.
+	// The callback now receives an optional UTF-16 process name. If present
+	// we duplicate the string and pass the pointer as lParam to the UI thread
+	// via PostMessage; the UI will copy and free it.
+	m_Filter.RegisterProcessNotifyCallback([](DWORD pid, BOOLEAN create, const wchar_t* name, void* ctx) {
+		app.GetETW().Log(L"process notify handler get process %ws pid %d create %d\n", name, pid, create);
 		HWND hwnd = NULL;
 		if (ctx) hwnd = (HWND)ctx;
 		if (hwnd) {
 			// Post a special WM_APP_UPDATE_PROCESS message with wParam = pid | (create?PROCESS_NOTIFY_CREATE_FLAG:0)
 			WPARAM w = (WPARAM)pid;
-			if (create) w |= PROCESS_NOTIFY_CREATE_FLAG;
-			::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, w, 0);
+			if (create) {
+				w |= PROCESS_NOTIFY_CREATE_FLAG;
+				LPARAM l = 0;
+				if (name) {
+					// Extract basename from NT path (last component after '\\' or '/') so
+					// the UI displays just the executable name like Process32 snapshot.
+					const wchar_t* p = name;
+					const wchar_t* last = NULL;
+					for (const wchar_t* q = p; *q; ++q) {
+						if (*q == L'\\' || *q == L'/') last = q;
+					}
+					const wchar_t* base = last ? (last + 1) : p;
+					// Duplicate the base name for the UI thread to own
+					wchar_t* dup = _wcsdup(base);
+					l = (LPARAM)dup;
+				}
+				::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, w, l);
+			} else {
+				::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, w, 0);
+			}
 		}
 	}, this->GetSafeHwnd());
+
+	// Start the asynchronous listener now that the initial list is populated
+	m_Filter.StartListener();
+
+	// Start periodic rescan thread to detect processes that died without
+	// receiving a notification (or to reconcile missed events). The thread
+	// snapshots running PIDs and posts EXIT messages for any PID no longer
+	// present in our g_ProcessList.
+	m_RescanEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	m_RescanThread = std::thread([this]() {
+		while (true) {
+			// Wait rescan interval or until stop event
+			DWORD wait = WaitForSingleObject(m_RescanEvent, m_RescanIntervalMs);
+			if (wait == WAIT_OBJECT_0) break; // stop signaled
+
+			// Snapshot current system PIDs
+			std::unordered_set<DWORD> currentPids;
+			HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+			if (snap != INVALID_HANDLE_VALUE) {
+				PROCESSENTRY32 pe = { sizeof(pe) };
+				if (Process32First(snap, &pe)) {
+					do {
+						if (pe.th32ProcessID != 0 && pe.th32ProcessID != 4) currentPids.insert(pe.th32ProcessID);
+					} while (Process32Next(snap, &pe));
+				}
+				CloseHandle(snap);
+			}
+
+			// Compare against our g_ProcessList under lock and post EXIT for missing PIDs
+			EnterCriticalSection(&g_ProcessLock);
+			std::vector<DWORD> toRemove;
+			for (const auto &entry : g_ProcessList) {
+				if (currentPids.find(entry.pid) == currentPids.end()) {
+					toRemove.push_back(entry.pid);
+				}
+			}
+			LeaveCriticalSection(&g_ProcessLock);
+
+			for (DWORD pid : toRemove) {
+				// Post as an EXIT (wParam = pid, lParam=0)
+				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
+			}
+		}
+	});
 
 	app.GetETW().Log(L"dialog init succeed\n");
 
@@ -236,6 +328,20 @@ LRESULT CUMControllerDlg::OnFatalMessage(WPARAM, LPARAM) {
 	app.GetETW().Log(L"OnFatalMessage received, closing dialog.\n");
 	EndDialog(IDCANCEL);
 	return 0;
+}
+
+void CUMControllerDlg::OnDestroy()
+{
+	CDialogEx::OnDestroy();
+
+	// Stop rescan thread
+	if (m_RescanEvent) {
+		SetEvent(m_RescanEvent);
+	}
+	if (m_RescanThread.joinable()) {
+		m_RescanThread.join();
+	}
+	if (m_RescanEvent) { CloseHandle(m_RescanEvent); m_RescanEvent = NULL; }
 }
 
 
@@ -273,9 +379,11 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 				m_ProcListCtrl.SetItemText(nIndex, 3, g_ProcessList[idx].path.c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 4, g_ProcessList[idx].cmdline.c_str());
 
-			// save idx of g_ProcessList vector, so we know if this entry is in hook list
-			// in right click menu handler
-			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)idx);
+				// save pid in ItemData and update map under lock
+				m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)g_ProcessList[idx].pid);
+				EnterCriticalSection(&g_ProcessLock);
+				g_ProcessIndexMap[g_ProcessList[idx].pid] = (int)idx;
+				LeaveCriticalSection(&g_ProcessLock);
 			i++;
 		}
 	}
@@ -301,6 +409,16 @@ void CUMControllerDlg::LoadProcessList() {
 			entry.path.clear();
 			entry.cmdline.clear();
 			entry.bInHookList = false; // will be updated in background
+			// Capture process creation time (startTime) if possible to help
+			// detect PID reuse. Attempt to open the process briefly.
+			HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+			if (h) {
+				FILETIME createTime, exitTime, kernelTime, userTime;
+				if (GetProcessTimes(h, &createTime, &exitTime, &kernelTime, &userTime)) {
+					entry.startTime = createTime;
+				}
+				CloseHandle(h);
+			}
 			g_ProcessList.push_back(entry);
 		} while (Process32Next(snapshot, &pe32));
 	}
@@ -315,61 +433,323 @@ void CUMControllerDlg::LoadProcessList() {
 		m_ProcListCtrl.SetItemText(nIndex, 2, g_ProcessList[idx].bInHookList ? L"Yes" : L"No");
 		m_ProcListCtrl.SetItemText(nIndex, 3, g_ProcessList[idx].path.c_str());
 		m_ProcListCtrl.SetItemText(nIndex, 4, g_ProcessList[idx].cmdline.c_str());
-		m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)idx);
+		m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)g_ProcessList[idx].pid);
+		EnterCriticalSection(&g_ProcessLock);
+		g_ProcessIndexMap[g_ProcessList[idx].pid] = (int)idx;
+		LeaveCriticalSection(&g_ProcessLock);
 		i++;
 	}
 
 	// Start background thread to resolve details (NT path, hook membership, cmdline)
-	std::thread([this]() {
-		for (size_t idx = 0; idx < g_ProcessList.size(); idx++) {
-			ProcessEntry& entry = g_ProcessList[idx];
+	// Use a stable snapshot of PIDs so the resolver won't race with list mutations.
+	std::vector<DWORD> loaderPids = pids; // copy snapshot captured earlier
+	std::thread([this, loaderPids]() {
+		for (DWORD pid : loaderPids) {
 			std::wstring ntPath;
-			if (Helper::ResolveProcessNtImagePath(entry.pid, m_Filter, ntPath)) {
-				entry.path = ntPath;
-				entry.bInHookList = m_Filter.FLTCOMM_CheckHookList(ntPath);
-			} else {
-				entry.path.clear();
-				entry.bInHookList = false;
+			// Call ResolveProcessNtImagePath exactly once. If it returns false,
+			// assume the target process exited while resolving and post an exit
+			// message so the existing exit handling will remove the entry.
+			bool havePath = Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath);
+			if (!havePath) {
+				app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
+				// Post an exit to trigger removal of any transient entry
+				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
+				continue;
 			}
 
+			bool inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
 			std::wstring cmdline;
-			if (Helper::GetProcessCommandLineByPID(entry.pid, cmdline)) {
-				entry.cmdline = cmdline;
-			} else {
-				entry.cmdline.clear();
-			}
+			Helper::GetProcessCommandLineByPID(pid, cmdline);
 
-			// Post update to UI thread for this entry index
-			::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)idx, 0);
+			// Update shared data under lock if the PID is still present and
+			// matches the same startTime (to mitigate PID reuse).
+			EnterCriticalSection(&g_ProcessLock);
+			auto it = g_ProcessIndexMap.find(pid);
+			if (it != g_ProcessIndexMap.end()) {
+				int curIdx = it->second;
+				if (curIdx >= 0 && curIdx < (int)g_ProcessList.size() && g_ProcessList[curIdx].pid == pid) {
+					g_ProcessList[curIdx].path = ntPath;
+					g_ProcessList[curIdx].bInHookList = inHook;
+					g_ProcessList[curIdx].cmdline = cmdline;
+				}
+			}
+			LeaveCriticalSection(&g_ProcessLock);
+
+			// Post update to UI thread for this PID (from initial loader)
+			::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_LOAD);
 		}
 	}).detach();
 }
 
 LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
-	// Special signaling: if high bit set, this is a process create (wParam high bit)
+	// Create event: high bit set in wParam
 	if ((wParam & PROCESS_NOTIFY_CREATE_FLAG) != 0) {
 		DWORD pid = (DWORD)(wParam & 0x7FFFFFFFu);
-		// New process created - refresh the process list in background
-		std::thread([this]() {
-			LoadProcessList();
-			FilterProcessList(L"");
+		app.GetETW().Log(L"OnUpdateProcess get process create, pid: %d\n", pid);
+		ProcessEntry entry;
+		entry.pid = pid;
+		entry.name.clear();
+		entry.path.clear();
+		entry.cmdline.clear();
+		entry.bInHookList = false;
+
+		// If lParam carries a duplicated wide string pointer, copy it and free.
+		if (lParam) {
+			wchar_t* dup = (wchar_t*)lParam;
+			if (dup) {
+				entry.name.assign(dup);
+				// free duplicated string allocated by _wcsdup
+				free(dup);
+			}
+		}
+
+		// Capture startTime if possible
+		HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+		if (h) {
+			FILETIME createTime, exitTime, kernelTime, userTime;
+			if (GetProcessTimes(h, &createTime, &exitTime, &kernelTime, &userTime)) {
+				entry.startTime = createTime;
+			}
+			CloseHandle(h);
+		}
+
+		// Append under lock and update map
+		EnterCriticalSection(&g_ProcessLock);
+		int newIdx = (int)g_ProcessList.size();
+		g_ProcessList.push_back(entry);
+		g_ProcessIndexMap[pid] = newIdx;
+		LeaveCriticalSection(&g_ProcessLock);
+
+		// Insert UI item
+		// Decide whether the new entry should be visible under the current filter.
+		CString filterText;
+		GetDlgItemText(IDC_EDIT_SEARCH, filterText);
+		std::wstring filterW = filterText.GetString();
+		std::wstring filterLower;
+		for (wchar_t c : filterW) filterLower.push_back(towlower(c));
+		bool showNow = false;
+		if (filterLower.empty()) {
+			showNow = true;
+		} else if (!entry.name.empty()) {
+			std::wstring nameLower;
+			for (wchar_t c : entry.name) nameLower.push_back(towlower(c));
+			if (nameLower.find(filterLower) != std::wstring::npos) showNow = true;
+		}
+		if (showNow) {
+			int nIndex = m_ProcListCtrl.InsertItem(newIdx, std::to_wstring(pid).c_str());
+			// If the kernel provided a process name in lParam, show it immediately;
+			// otherwise display a resolving placeholder while the resolver runs.
+			if (!entry.name.empty()) {
+				m_ProcListCtrl.SetItemText(nIndex, 1, entry.name.c_str());
+			} else {
+				m_ProcListCtrl.SetItemText(nIndex, 1, L"(resolving)");
+			}
+			m_ProcListCtrl.SetItemText(nIndex, 2, L"No");
+			m_ProcListCtrl.SetItemText(nIndex, 3, L"");
+			m_ProcListCtrl.SetItemText(nIndex, 4, L"");
+			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)pid);
+		}
+
+		// Resolver thread: same retry logic as loader
+		std::thread([this, pid]() {
+			std::wstring ntPath;
+			// Single attempt: if resolve fails, assume process exited while resolving
+			if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) { 
+				app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
+				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
+				return;
+			}
+			bool inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
+			std::wstring cmdline;
+			Helper::GetProcessCommandLineByPID(pid, cmdline);
+
+			// Update shared structures under lock only if PID still exists
+			EnterCriticalSection(&g_ProcessLock);
+			auto it = g_ProcessIndexMap.find(pid);
+			if (it != g_ProcessIndexMap.end()) {
+				int curIdx = it->second;
+				if (curIdx >= 0 && curIdx < (int)g_ProcessList.size() && g_ProcessList[curIdx].pid == pid) {
+					g_ProcessList[curIdx].path = ntPath;
+					g_ProcessList[curIdx].bInHookList = inHook;
+					g_ProcessList[curIdx].cmdline = cmdline;
+				}
+			}
+			LeaveCriticalSection(&g_ProcessLock);
+
+			::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
 		}).detach();
+
 		return 0;
 	}
-	int idx = (int)wParam;
-	if (idx < 0 || idx >= (int)g_ProcessList.size()) return 0;
-	// Find the list item with ItemData == idx
-	int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
-	while (item != -1) {
-		if ((int)m_ProcListCtrl.GetItemData(item) == idx) break;
-		item = m_ProcListCtrl.GetNextItem(item, LVNI_ALL);
-	}
-	if (item == -1) return 0;
 
-	m_ProcListCtrl.SetItemText(item, 2, g_ProcessList[idx].bInHookList ? L"Yes" : L"No");
-	m_ProcListCtrl.SetItemText(item, 3, g_ProcessList[idx].path.c_str());
-	m_ProcListCtrl.SetItemText(item, 4, g_ProcessList[idx].cmdline.c_str());
-	return 0;
+	// Loader or resolver update: wParam contains PID
+	if (lParam == UPDATE_SOURCE_LOAD || lParam == UPDATE_SOURCE_NOTIFY) {
+		DWORD pid = (DWORD)wParam;
+		EnterCriticalSection(&g_ProcessLock);
+		auto it = g_ProcessIndexMap.find(pid);
+		if (it == g_ProcessIndexMap.end()) { LeaveCriticalSection(&g_ProcessLock); return 0; }
+		int idx = it->second;
+		if (idx < 0 || idx >= (int)g_ProcessList.size()) { LeaveCriticalSection(&g_ProcessLock); return 0; }
+		bool inHook = g_ProcessList[idx].bInHookList;
+		std::wstring path = g_ProcessList[idx].path;
+		std::wstring cmdline = g_ProcessList[idx].cmdline;
+		LeaveCriticalSection(&g_ProcessLock);
+
+		int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
+		while (item != -1) {
+			if ((DWORD)m_ProcListCtrl.GetItemData(item) == pid) break;
+			item = m_ProcListCtrl.GetNextItem(item, LVNI_ALL);
+		}
+		if (item == -1) {
+			// Item not present in current filtered view. If it now matches the
+			// filter, insert it.
+			CString filterText;
+			GetDlgItemText(IDC_EDIT_SEARCH, filterText);
+			std::wstring filterW = filterText.GetString();
+			std::wstring filterLower;
+			for (wchar_t c : filterW) filterLower.push_back(towlower(c));
+			bool showNow = false;
+			if (filterLower.empty()) showNow = true;
+			else {
+				std::wstring nameLower;
+				for (wchar_t c : g_ProcessList[idx].name) nameLower.push_back(towlower(c));
+				if (nameLower.find(filterLower) != std::wstring::npos) showNow = true;
+			}
+			if (!showNow) return 0;
+			// Insert new item for this PID
+			int newItem = m_ProcListCtrl.InsertItem(idx, std::to_wstring(pid).c_str());
+			m_ProcListCtrl.SetItemText(newItem, 1, g_ProcessList[idx].name.c_str());
+			m_ProcListCtrl.SetItemText(newItem, 2, g_ProcessList[idx].bInHookList ? L"Yes" : L"No");
+			m_ProcListCtrl.SetItemText(newItem, 3, g_ProcessList[idx].path.c_str());
+			m_ProcListCtrl.SetItemText(newItem, 4, g_ProcessList[idx].cmdline.c_str());
+			m_ProcListCtrl.SetItemData(newItem, (DWORD_PTR)pid);
+			item = newItem;
+		}
+
+		m_ProcListCtrl.SetItemText(item, 2, inHook ? L"Yes" : L"No");
+		m_ProcListCtrl.SetItemText(item, 3, path.c_str());
+		m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
+		return 0;
+	}
+
+	// Otherwise treat wParam as PID for exit
+	{
+		DWORD pid = (DWORD)wParam;
+		app.GetETW().Log(L"OnUpdateProcess get process terminate, pid: %d\n", pid);
+		// Locate the entry under lock and capture its index and startTime
+		int found = -1;
+		FILETIME storedStart = { 0,0 };
+		EnterCriticalSection(&g_ProcessLock);
+		auto it = g_ProcessIndexMap.find(pid);
+		if (it != g_ProcessIndexMap.end()) {
+			found = it->second;
+			if (found >= 0 && found < (int)g_ProcessList.size()) {
+				storedStart = g_ProcessList[found].startTime;
+			}
+		}
+		LeaveCriticalSection(&g_ProcessLock);
+
+		// Check whether a process with this PID currently exists and query its create time
+		bool processExists = false;
+		FILETIME curCreate = { 0,0 };
+		HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+		if (h) {
+			FILETIME exitTime, kernelTime, userTime;
+			if (GetProcessTimes(h, &curCreate, &exitTime, &kernelTime, &userTime)) {
+				processExists = true;
+			}
+			CloseHandle(h);
+		}
+
+		// If we couldn't find an entry to remove, nothing to do
+		if (found < 0) return 0;
+
+		// If process exists and startTimes match, ignore this exit (stale)
+		if (processExists && CompareFileTime(&curCreate, &storedStart) == 0) {
+			app.GetETW().Log(L"OnUpdateProcess get process terminate, but process exists and startTimes match, pid: %d\n", pid);
+			return 0; // same process still running, spurious exit
+		}
+
+		if (processExists && CompareFileTime(&curCreate, &storedStart) != 0) {
+			// PID was reused: update the existing entry to reflect the new process
+			EnterCriticalSection(&g_ProcessLock);
+			if (found >= 0 && found < (int)g_ProcessList.size() && g_ProcessList[found].pid == pid) {
+				g_ProcessList[found].name.clear();
+				g_ProcessList[found].path.clear();
+				g_ProcessList[found].cmdline.clear();
+				g_ProcessList[found].bInHookList = false;
+				g_ProcessList[found].startTime = curCreate;
+			}
+			LeaveCriticalSection(&g_ProcessLock);
+
+			// Update UI row to show resolving state and trigger resolver thread
+			int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
+			while (item != -1) {
+				if ((DWORD)m_ProcListCtrl.GetItemData(item) == pid) break;
+				item = m_ProcListCtrl.GetNextItem(item, LVNI_ALL);
+			}
+			if (item != -1) {
+				m_ProcListCtrl.SetItemText(item, 1, L"(resolving)");
+				m_ProcListCtrl.SetItemText(item, 2, L"No");
+				m_ProcListCtrl.SetItemText(item, 3, L"");
+				m_ProcListCtrl.SetItemText(item, 4, L"");
+			}
+
+			// Start resolver thread for this PID (same as create handler)
+			std::thread([this, pid]() {
+				std::wstring ntPath;
+				if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) {
+					app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
+					::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
+					return;
+				}
+				bool inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
+				std::wstring cmdline;
+				Helper::GetProcessCommandLineByPID(pid, cmdline);
+
+				// Update shared structures under lock only if PID still maps to same index
+				EnterCriticalSection(&g_ProcessLock);
+				auto it2 = g_ProcessIndexMap.find(pid);
+				if (it2 != g_ProcessIndexMap.end()) {
+					int curIdx = it2->second;
+					if (curIdx >= 0 && curIdx < (int)g_ProcessList.size() && g_ProcessList[curIdx].pid == pid) {
+						g_ProcessList[curIdx].path = ntPath;
+						g_ProcessList[curIdx].bInHookList = inHook;
+						g_ProcessList[curIdx].cmdline = cmdline;
+					}
+				}
+				LeaveCriticalSection(&g_ProcessLock);
+
+				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
+			}).detach();
+
+			return 0;
+		}
+
+		// Process truly exited: remove entry
+		EnterCriticalSection(&g_ProcessLock);
+		auto itrem = g_ProcessIndexMap.find(pid);
+		if (itrem == g_ProcessIndexMap.end()) { LeaveCriticalSection(&g_ProcessLock); return 0; }
+		int remIdx = itrem->second;
+		if (remIdx >= 0 && remIdx < (int)g_ProcessList.size()) {
+			app.GetETW().Log(L"removing process %s pid %d from process list\n", g_ProcessList[remIdx].name.c_str(), g_ProcessList[remIdx].pid);
+			g_ProcessList.erase(g_ProcessList.begin() + remIdx);
+		}
+		g_ProcessIndexMap.clear();
+		for (int i = 0; i < (int)g_ProcessList.size(); ++i) {
+			g_ProcessIndexMap[g_ProcessList[i].pid] = i;
+		}
+		LeaveCriticalSection(&g_ProcessLock);
+		int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
+		while (item != -1) {
+			if ((DWORD)m_ProcListCtrl.GetItemData(item) == pid) break;
+			item = m_ProcListCtrl.GetNextItem(item, LVNI_ALL);
+		}
+		if (item != -1) {
+			m_ProcListCtrl.DeleteItem(item);
+		}
+		return 0;
+	}
 }
 void CUMControllerDlg::OnSysCommand(UINT nID, LPARAM lParam)
 {
@@ -434,13 +814,18 @@ bool CUMControllerDlg::CheckHookList(const std::wstring& imagePath) {
 
 	return false;
 }
+
+
 void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
 	if (nItem == -1)
 		return;
 
-	int idx = (int)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = (DWORD)m_ProcListCtrl.GetItemData(nItem);
+	auto it = g_ProcessIndexMap.find(pid);
+	if (it == g_ProcessIndexMap.end()) return;
+	int idx = it->second;
 	auto& item = g_ProcessList[idx];
 
 

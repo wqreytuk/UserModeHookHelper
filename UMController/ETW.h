@@ -12,6 +12,7 @@ static const GUID ProviderGUID =
 class ETW {
 public:
 	~ETW();
+	ETW();
 	// register etw event
 	void Reg();
 	void Log(_In_ PCWSTR Format, ...);

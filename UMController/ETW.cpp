@@ -2,14 +2,16 @@
 #include "ETW.h"
 #include "Helper.h"
 
-void ETW::Reg() { 
+ ETW::ETW() {
 	// create an event used to signal event trace
 	m_Event = CreateEvent(NULL, FALSE, FALSE, SIGNALEVENTNAME);
-
-	assert(ERROR_SUCCESS == EventRegister(&ProviderGUID,
+}
+void ETW::Reg() { 
+	ULONG status = EventRegister(&ProviderGUID,
 		NULL,
 		NULL,
-		&m_ProviderHandle));
+		&m_ProviderHandle);
+	assert(ERROR_SUCCESS == status);
 }
 
 void ETW::UnReg() {

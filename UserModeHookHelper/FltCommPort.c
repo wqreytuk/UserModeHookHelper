@@ -301,19 +301,53 @@ NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG out
 	status = PortCtx_Snapshot(&arr, &count);
 	if (!NT_SUCCESS(status)) return status;
 	if (count == 0) return STATUS_SUCCESS;
+	// Attempt to obtain the process image name so we can include it in the
+	// notification payload. This is optional; if retrieval fails we'll send
+	// only PID+Create flag. We fetch the image name here once per broadcast
+	// so the same payload is sent to all connected clients.
+	PUNICODE_STRING imageName = NULL;
+	PEPROCESS process = NULL;
+	SIZE_T nameBytes = 0;
+	NTSTATUS stLookup = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)ProcessId, &process);
+	if (NT_SUCCESS(stLookup) && process != NULL) {
+		NTSTATUS stName = SeLocateProcessImageName(process, &imageName);
+		if (NT_SUCCESS(stName) && imageName != NULL && imageName->Length > 0) {
+			// imageName->Length is in bytes
+			nameBytes = imageName->Length;
+		} else {
+			if (imageName) { ExFreePool(imageName); imageName = NULL; }
+			nameBytes = 0;
+		}
+		// We're done with the referenced process object now
+		ObDereferenceObject(process);
+		process = NULL;
+	}
 
-	// Build message: DWORD pid followed by BOOLEAN create flag
-	ULONG payloadSize = sizeof(DWORD) + sizeof(BOOLEAN);
+	// Build message: [DWORD pid][BOOLEAN create][optional WCHAR name...\0]
+	ULONG payloadSize = (ULONG)(sizeof(DWORD) + sizeof(BOOLEAN) + nameBytes + (nameBytes ? sizeof(WCHAR) : 0));
 	ULONG msgSize = UMHH_MSG_HEADER_SIZE + payloadSize;
 	PUMHH_COMMAND_MESSAGE msg = ExAllocatePoolWithTag(NonPagedPool, msgSize, tag_port);
 	if (!msg) {
+		if (imageName) ExFreePool(imageName);
 		PortCtx_FreeSnapshot(arr, count);
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
 	RtlZeroMemory(msg, msgSize);
 	msg->m_Cmd = CMD_PROCESS_NOTIFY;
+	// copy pid and create flag
 	RtlCopyMemory(msg->m_Data, &ProcessId, sizeof(DWORD));
 	RtlCopyMemory(msg->m_Data + sizeof(DWORD), &Create, sizeof(BOOLEAN));
+	// append optional image name (raw WCHARs), followed by NUL terminator
+	if (nameBytes > 0 && imageName != NULL) {
+		UCHAR* dest = (UCHAR*)msg->m_Data + sizeof(DWORD) + sizeof(BOOLEAN);
+		RtlCopyMemory(dest, imageName->Buffer, nameBytes);
+		// Null-terminate
+		WCHAR* term = (WCHAR*)(dest + nameBytes);
+		*term = L'\0';
+		// Free the imageName structure allocated by SeLocateProcessImageName
+		ExFreePool(imageName);
+		imageName = NULL;
+	}
 
 	ULONG notified = 0;
 	for (ULONG i = 0; i < count; ++i) {

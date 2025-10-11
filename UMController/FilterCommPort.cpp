@@ -1,4 +1,16 @@
 #include "pch.h"
+
+// Provide minimal NT-style macros often used in shared code so this user-
+// mode translation unit doesn't require NT headers. Define them early so
+// any subsequently-included headers that reference NT-style macros compile
+// correctly in this user-mode component.
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((LONG)(Status)) >= 0)
+#endif
+#ifndef STATUS_UNSUCCESSFUL
+#define STATUS_UNSUCCESSFUL ((LONG)0xC0000001)
+#endif
+
 #include <fltuser.h>
 #include <string>
 #include "FilterCommPort.h"
@@ -10,61 +22,32 @@
 #include <memory>
 #include <winerror.h>   // For HRESULT macros 
 #include <cstddef>
-typedef NTSTATUS (NTAPI *PFN_RtlQueueWorkItem)(PVOID, PVOID, ULONG);
+// Use LONG to represent NT-style status values in this user-mode file to
+// avoid requiring nt headers (which may not be present in all environments).
+
+typedef LONG (NTAPI *PFN_RtlQueueWorkItem)(PVOID, PVOID, ULONG);
+
 
 // Cached RtlQueueWorkItem pointer. Initialized on first use.
 static PFN_RtlQueueWorkItem g_RtlQueueWorkItem = NULL;
 
-// Mimic QueueUserWorkItem by invoking RtlQueueWorkItem. The function pointer
-// is looked up once and cached to avoid repeated GetProcAddress calls.
+// Cached wrapper that invokes RtlQueueWorkItem from ntdll.dll. We cache the
+// function pointer on first use to avoid repeated GetProcAddress calls.
 static BOOL QueueUserWorkItem(PVOID funcPtr, PVOID context, ULONG flags) {
-	// Fast path: if already cached, call directly
-	PFN_RtlQueueWorkItem p = (PFN_RtlQueueWorkItem)InterlockedCompareExchangePointer((PVOID*)&g_RtlQueueWorkItem, g_RtlQueueWorkItem, g_RtlQueueWorkItem);
+	PFN_RtlQueueWorkItem p = g_RtlQueueWorkItem;
 	if (!p) {
-		HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
-		if (!hNtdll) return FALSE;
-		PFN_RtlQueueWorkItem lookup = (PFN_RtlQueueWorkItem)GetProcAddress(hNtdll, "RtlQueueWorkItem");
-		if (!lookup) return FALSE;
-		// Try to store it atomically; if another thread stored it first, use the stored value
-		PVOID prev = InterlockedCompareExchangePointer((PVOID*)&g_RtlQueueWorkItem, (PVOID)lookup, NULL);
-		p = (PFN_RtlQueueWorkItem)(prev ? prev : (PVOID)lookup);
+		HMODULE hNt = GetModuleHandleW(L"ntdll.dll");
+		if (!hNt) return FALSE;
+		p = (PFN_RtlQueueWorkItem)GetProcAddress(hNt, "RtlQueueWorkItem");
+		if (!p) return FALSE;
+		// Try to install the pointer atomically; if another thread raced, use
+		// the already-installed pointer.
+		PFN_RtlQueueWorkItem prev = (PFN_RtlQueueWorkItem)InterlockedCompareExchangePointer((PVOID*)&g_RtlQueueWorkItem, p, NULL);
+		if (prev) p = prev;
 	}
-	NTSTATUS st = p(funcPtr, context, flags);
+	if (!p) return FALSE;
+	LONG st = (LONG)p(funcPtr, context, flags);
 	return (st >= 0) ? TRUE : FALSE;
-}
-
-
-// Provide minimal NTSTATUS/NT_SUCCESS definitions for user-mode build
-#ifndef NTSTATUS
-typedef long NTSTATUS;
-#endif
-#ifndef STATUS_SUCCESS
-#define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
-#endif
-#ifndef STATUS_UNSUCCESSFUL
-#define STATUS_UNSUCCESSFUL ((NTSTATUS)0xC0000001L)
-#endif
-#ifndef NT_SUCCESS
-#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
-#endif
-
-// use app-owned ETW instance
-
-Filter::~Filter() {
-	// disconnect from minifilter port
-	m_StopListener = true;
-	if (m_Port != INVALID_HANDLE_VALUE) {
-		CloseHandle(m_Port);
-		m_Port = INVALID_HANDLE_VALUE;
-	}
-	if (m_WorkExitEvent) {
-		WaitForSingleObject(m_WorkExitEvent, 2000);
-		CloseHandle(m_WorkExitEvent);
-		m_WorkExitEvent = NULL;
-	}
-	else {
-		app.GetETW().Log(L"disconnected from minifilterport\n");
-	}
 }
 
 Filter::Filter() {
@@ -85,13 +68,10 @@ Filter::Filter() {
 	else
 		app.GetETW().Log(L"successfully connect to minifilterport: 0x%p\n", m_Port);
 
-	// Start listener using RtlQueueWorkItem
+	// Listener is started explicitly via StartListener
 	m_StopListener = false;
 	m_WorkExitEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-	if (!QueueUserWorkItem(ListenerWorkItem, this, 0)) {
-		Helper::Fatal(L"QueueUserWorkItem (RtlQueueWorkItem) failed in Filter constructor");
-	}
-	app.GetETW().Log(L"user mode miniport listener queued into work item\n");
+	m_ListenerEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
 }
 
 
@@ -99,37 +79,117 @@ void Filter::RunListenerLoop() {
 	if (m_StopListener) return;
 	const ULONG REPLY_MAX = 4096;
 	std::unique_ptr<BYTE[]> reply(new BYTE[REPLY_MAX]);
+
 	while (!m_StopListener) {
-		// synchronous call: pass NULL for LPOVERLAPPED to block until a message arrives
 		BYTE* buf = reply.get();
-		NTSTATUS st = FilterGetMessage(m_Port, (PFILTER_MESSAGE_HEADER)buf, REPLY_MAX, NULL);
-		if (st != STATUS_SUCCESS) {
-			// error or port closed; exit
-			app.GetETW().Log(L"failed to call FilterGetMessage in RunListenerLoop: 0x%x\n", st);
+
+		// Use the shared m_ListenerEvent for all overlapped operations.
+		if (!m_ListenerEvent) {
+			app.GetETW().Log(L"RunListenerLoop: m_ListenerEvent not available, aborting\n");
 			break;
 		}
-		// The FilterGetMessage call writes a FILTER_MESSAGE_HEADER followed by
-		// the message Data into our buffer. Different SDKs name the header
-		// fields differently, so avoid accessing them directly. Instead use the
-		// UMHH_MSG_HEADER_SIZE (offset to m_Data) to find where our UMHH
-		// payload begins.
-		const size_t fhdrSize = UMHH_MSG_HEADER_SIZE; // bytes before m_Data
-		if (REPLY_MAX <= fhdrSize) continue; // buffer too small
-		BYTE* payloadPtr = buf + fhdrSize;
-		PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)payloadPtr;
-		// Can't rely on MessageSize from SDK header here; the safest option is
-		// to treat the returned buffer as containing at least UMHH_MSG_HEADER_SIZE
-		// plus our payload and perform minimal bounds checks for known commands.
-		size_t payloadBytes = REPLY_MAX - fhdrSize;
-		if (msg->m_Cmd == CMD_PROCESS_NOTIFY) {
-			size_t need = UMHH_MSG_HEADER_SIZE + sizeof(DWORD) + sizeof(BOOLEAN);
-			if (payloadBytes >= need) {
-				DWORD pid = 0;
-				BOOLEAN create = 0;
-				memcpy(&pid, msg->m_Data, sizeof(DWORD));
-				memcpy(&create, msg->m_Data + sizeof(DWORD), sizeof(BOOLEAN));
-				if (m_ProcessNotifyCb) {
-					m_ProcessNotifyCb(pid, create, m_ProcessNotifyCtx);
+
+		// Reset the listener event before issuing the overlapped call to
+		// avoid immediate Wake due to previously signaled state.
+		ResetEvent(m_ListenerEvent);
+
+		OVERLAPPED ov;
+		ZeroMemory(&ov, sizeof(ov));
+		ov.hEvent = m_ListenerEvent;
+
+		HRESULT hr = FilterGetMessage(m_Port, (PFILTER_MESSAGE_HEADER)buf, REPLY_MAX, &ov);
+		DWORD bytesTransferred = 0;
+
+		if (hr == S_OK) {
+			// completed synchronously; get the size
+			if (!GetOverlappedResult(m_Port, &ov, &bytesTransferred, FALSE)) {
+				DWORD err = GetLastError();
+				app.GetETW().Log(L"RunListenerLoop: GetOverlappedResult(sync) failed (%u)\n", err);
+				if (err == ERROR_OPERATION_ABORTED || err == ERROR_INVALID_HANDLE) break;
+				continue;
+			}
+		} else if (hr == HRESULT_FROM_WIN32(ERROR_IO_PENDING)) {
+			// Wait for either the shared listener event (message) or worker-exit
+			HANDLE waitHandles[2] = { m_ListenerEvent, m_WorkExitEvent };
+			DWORD wait = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
+			if (wait == WAIT_OBJECT_0 + 1) {
+				// stop signaled - cancel pending I/O and exit
+				CancelIoEx(m_Port, &ov);
+				break;
+			} else if (wait == WAIT_OBJECT_0) {
+				// message ready
+				if (!GetOverlappedResult(m_Port, &ov, &bytesTransferred, FALSE)) {
+					DWORD err = GetLastError();
+					app.GetETW().Log(L"RunListenerLoop: GetOverlappedResult(wait) failed (%u)\n", err);
+					if (err == ERROR_OPERATION_ABORTED || err == ERROR_INVALID_HANDLE) break;
+					continue;
+				}
+			} else {
+				// unexpected wait result
+				continue;
+			}
+		} else {
+			app.GetETW().Log(L"FilterGetMessage failed (async): 0x%08x\n", hr);
+			break;
+		}
+
+		if (bytesTransferred >= sizeof(FILTER_MESSAGE_HEADER) + UMHH_MSG_HEADER_SIZE) {
+			// Interpret buffer as FILTER_MESSAGE_HEADER followed by the
+			// UMHH_COMMAND_MESSAGE payload. The FILTER_MESSAGE_HEADER layout
+			// contains ReplyLength (ULONG) and MessageId (ULONGLONG). Use
+			// ReplyLength when it appears valid; otherwise fall back to
+			// bytesTransferred.
+			PFILTER_MESSAGE_HEADER fmh = (PFILTER_MESSAGE_HEADER)buf;
+			size_t headerSize = sizeof(FILTER_MESSAGE_HEADER);
+			size_t totalMsgBytes = bytesTransferred;
+			if (fmh->ReplyLength != 0 && fmh->ReplyLength <= bytesTransferred) {
+				totalMsgBytes = fmh->ReplyLength;
+			}
+
+			size_t availableAfterHeader = 0;
+			if (totalMsgBytes > headerSize) availableAfterHeader = totalMsgBytes - headerSize;
+			if (availableAfterHeader < UMHH_MSG_HEADER_SIZE) {
+				// malformed or truncated message, ignore
+				continue;
+			}
+
+			// UMHH payload starts immediately after the FILTER_MESSAGE_HEADER
+			PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)(buf + headerSize);
+			size_t payloadBytes = availableAfterHeader - UMHH_MSG_HEADER_SIZE;
+			if (msg->m_Cmd == CMD_PROCESS_NOTIFY) {
+				size_t need = sizeof(DWORD) + sizeof(BOOLEAN);
+				if (payloadBytes >= need) {
+					DWORD pid = 0;
+					BOOLEAN create = 0;
+					memcpy(&pid, msg->m_Data, sizeof(DWORD));
+					memcpy(&create, msg->m_Data + sizeof(DWORD), sizeof(BOOLEAN));
+
+					// Check if there's an optional null-terminated WCHAR process name
+					const wchar_t* procName = NULL;
+					size_t nameBytes = payloadBytes - need;
+					if (nameBytes >= sizeof(WCHAR)) {
+						// Ensure null-termination within the received buffer
+						size_t wcharCount = nameBytes / sizeof(WCHAR);
+						// temp pointer into msg->m_Data after pid+create
+						const wchar_t* wptr = (const wchar_t*)(msg->m_Data + need);
+						// Ensure the last WCHAR is NUL or else create a local copy
+						if (wptr[wcharCount - 1] == L'\0') {
+							procName = wptr;
+						} else {
+							// create a temporary null-terminated buffer
+							std::wstring tmp(wptr, wcharCount);
+							tmp.push_back(L'\0');
+							// store in a static thread_local so we can pass ptr safely
+							static thread_local std::wstring holder;
+							holder = std::move(tmp);
+							procName = holder.c_str();
+						}
+					}
+
+					if (m_ProcessNotifyCb) {
+						app.GetETW().Log(L"process notify from kernel: process %s pid %d create %b\n", procName, pid, create);
+						m_ProcessNotifyCb(pid, create, procName, m_ProcessNotifyCtx);
+					}
 				}
 			}
 		}
@@ -154,6 +214,15 @@ void Filter::RegisterProcessNotifyCallback(ProcessNotifyCb cb, void* ctx) {
 void Filter::UnregisterProcessNotifyCallback() {
 	m_ProcessNotifyCb = NULL;
 	m_ProcessNotifyCtx = NULL;
+}
+
+void Filter::StartListener() {
+	if (m_ListenerStarted) return;
+	m_ListenerStarted = true;
+	if (!QueueUserWorkItem(ListenerWorkItem, this, 0)) {
+		Helper::Fatal(L"QueueUserWorkItem (RtlQueueWorkItem) failed in StartListener");
+	}
+	app.GetETW().Log(L"user mode miniport listener queued into work item\n");
 }
 
 
@@ -231,7 +300,7 @@ bool Filter::FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath) {
 
 	if (hResult != S_OK || bytesOut == 0) {
 		if (hResult == HRESULT_FROM_WIN32(ERROR_NOT_FOUND)) {
-			app.GetETW().Log(L"process terminated on the fly, can not get ntpath\n");
+			// app.GetETW().Log(L"process terminated on the fly, can not get ntpath\n");
 			return false;
 		}
 		Helper::Fatal(L"FLTCOMM_GetImagePathByPid: FilterSendMessage failed or returned no data");
@@ -280,16 +349,16 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 	memcpy(msg->m_Data, &hash, sizeof(ULONGLONG));
 	memcpy((BYTE*)msg->m_Data + sizeof(ULONGLONG), ntPath.c_str(), pathBytes);
 
-	NTSTATUS st = STATUS_UNSUCCESSFUL;
+	LONG st = (LONG)0xC0000001; // fallback non-success value
 	DWORD bytesOut = 0;
 	HRESULT hResult = FilterSendMessage(m_Port,
 		msg,
 		(DWORD)msgSize,
 		&st,
-		sizeof(NTSTATUS),
+		sizeof(LONG),
 		&bytesOut);
 	free(msg);
-	if (hResult == S_OK && NT_SUCCESS(st)) {
+	if (hResult == S_OK && st >= 0) {
 		SetLastError(ERROR_SUCCESS);
 		return true;
 	}
@@ -327,4 +396,24 @@ bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	SetLastError(21); // ERROR_NOT_READY as sentinel for fatal
 	Helper::Fatal(L"FLTCOMM_RemoveHookByHash: kernel or IPC failure while removing hook");
 	return false;
+}
+
+Filter::~Filter() {
+	// Signal the listener to stop and wait for worker to exit.
+	m_StopListener = true;
+	if (m_Port != INVALID_HANDLE_VALUE) {
+		// Cancel any pending overlapped FilterGetMessage calls on this handle.
+		CancelIoEx(m_Port, NULL);
+	}
+	if (m_WorkExitEvent) {
+		// Wait a short time for the worker to exit; if it doesn't, continue
+		// with cleanup to avoid hangs during shutdown.
+		WaitForSingleObject(m_WorkExitEvent, 2000);
+	}
+	if (m_WorkExitEvent) { CloseHandle(m_WorkExitEvent); m_WorkExitEvent = NULL; }
+	if (m_ListenerEvent) { CloseHandle(m_ListenerEvent); m_ListenerEvent = NULL; }
+	if (m_Port && m_Port != INVALID_HANDLE_VALUE) {
+		CloseHandle(m_Port);
+		m_Port = INVALID_HANDLE_VALUE;
+	}
 }
