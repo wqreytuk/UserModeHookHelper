@@ -74,6 +74,56 @@ void CUMControllerDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_LIST_PROC, m_ProcListCtrl);
 }
 
+// Column click handler declaration
+void CUMControllerDlg::OnLvnColumnclickListProc(NMHDR *pNMHDR, LRESULT *pResult)
+{
+	LPNMLISTVIEW pNMLV = reinterpret_cast<LPNMLISTVIEW>(pNMHDR);
+	int col = pNMLV->iSubItem;
+	if (m_SortColumn == col) {
+		m_SortAscending = !m_SortAscending;
+	} else {
+		m_SortColumn = col;
+		m_SortAscending = true;
+	}
+	m_ProcListCtrl.SortItems(ProcListCompareFunc, (LPARAM)this);
+	*pResult = 0;
+}
+
+int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
+{
+	CUMControllerDlg* pDlg = reinterpret_cast<CUMControllerDlg*>(lParamSort);
+	int idx1 = (int)lParam1;
+	int idx2 = (int)lParam2;
+
+	// Validate indices
+	if (idx1 < 0 || idx1 >= (int)g_ProcessList.size() || idx2 < 0 || idx2 >= (int)g_ProcessList.size())
+		return 0;
+
+	const ProcessEntry &a = g_ProcessList[idx1];
+	const ProcessEntry &b = g_ProcessList[idx2];
+
+	int res = 0;
+	switch (pDlg->m_SortColumn) {
+	case 0: // PID numeric
+		if (a.pid < b.pid) res = -1;
+		else if (a.pid > b.pid) res = 1;
+		else res = 0;
+		break;
+	case 1: // name
+		res = _wcsicmp(a.name.c_str(), b.name.c_str());
+		break;
+	case 2: // InHookList: Yes before No when ascending
+		if (a.bInHookList == b.bInHookList) res = 0;
+		else if (a.bInHookList) res = -1;
+		else res = 1;
+		break;
+	default:
+		res = 0;
+	}
+
+	return pDlg->m_SortAscending ? res : -res;
+}
+
 // Custom message used to signal a fatal error from any thread.
 #define WM_APP_FATAL (WM_APP + 0x100)
 BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
@@ -82,6 +132,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_WM_QUERYDRAGICON()
 	ON_EN_CHANGE(IDC_EDIT_SEARCH, &CUMControllerDlg::OnEnChangeEditSearch)
 	ON_NOTIFY(NM_RCLICK, IDC_LIST_PROC, &CUMControllerDlg::OnNMRClickListProc)
+	ON_NOTIFY(LVN_COLUMNCLICK, IDC_LIST_PROC, &CUMControllerDlg::OnLvnColumnclickListProc)
 	ON_COMMAND(ID_MENU_ADD_HOOK, &CUMControllerDlg::OnAddHook)
 	ON_COMMAND(ID_MENU_REMOVE_HOOK, &CUMControllerDlg::OnRemoveHook)
 	ON_COMMAND(ID_MENU_INJECT_DLL, &CUMControllerDlg::OnInjectDll)
@@ -106,6 +157,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 
 	m_ProcListCtrl.InsertColumn(0, L"PID", LVCFMT_LEFT, 100);
 	m_ProcListCtrl.InsertColumn(1, L"Process Name", LVCFMT_LEFT, 200);
+	m_ProcListCtrl.InsertColumn(2, L"InHookList", LVCFMT_LEFT, 80);
 	m_ProcListCtrl.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
 
 	CMenu* pSysMenu = GetSystemMenu(FALSE);
@@ -179,13 +231,13 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 	int i = 0;
 	for (size_t idx = 0; idx < g_ProcessList.size(); idx++) {
 		if (filter.empty() || g_ProcessList[idx].name.find(filter) != std::wstring::npos) {
-			int nIndex =m_ProcListCtrl.InsertItem(i, g_ProcessList[idx].name.c_str());
-			m_ProcListCtrl.SetItemText(i, 1, std::to_wstring(g_ProcessList[idx].pid).c_str());
-			
+			// Insert PID in column 0, process name in column 1, and InHookList in column 2
+			int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(g_ProcessList[idx].pid).c_str());
+			m_ProcListCtrl.SetItemText(nIndex, 1, g_ProcessList[idx].name.c_str());
+			m_ProcListCtrl.SetItemText(nIndex, 2, g_ProcessList[idx].bInHookList ? L"Yes" : L"No");
+
 			// save idx of g_ProcessList vector, so we know if this entry is in hook list
 			// in right click menu handler
-			// otherwise we'll need to call CheckHookList for every process list netry
-			// which is very dumb code
 			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)idx);
 			i++;
 		}

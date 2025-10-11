@@ -53,9 +53,14 @@ public:
 
 	afx_msg void OnEnChangeEditSearch();
 	afx_msg void OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult);
+	afx_msg void OnLvnColumnclickListProc(NMHDR *pNMHDR, LRESULT *pResult);
 private:
 	Filter m_Filter;
 	CListCtrl m_ProcListCtrl;
 	bool CheckHookList(const std::wstring& imagePath);
     afx_msg LRESULT OnFatalMessage(WPARAM wParam, LPARAM lParam);
+	// Sorting state
+	int m_SortColumn = 0;
+	bool m_SortAscending = true;
+	static int CALLBACK ProcListCompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort);
 };
