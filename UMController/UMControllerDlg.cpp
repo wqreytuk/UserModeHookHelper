@@ -12,6 +12,7 @@
 #include "FilterCommPort.h"
 #include "UMController.h" // for app
 #include <unordered_map>
+#include <unordered_set>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -20,6 +21,9 @@
 std::vector<ProcessEntry> g_ProcessList;
 std::unordered_map<DWORD,int> g_ProcessIndexMap;
 CRITICAL_SECTION g_ProcessLock;
+// Track PIDs for which we've already spawned an exit-waiter thread so we
+// don't create duplicate waiters when multiple exit notifications arrive.
+std::unordered_set<DWORD> g_PidExitWaiters;
 
 
 // CAboutDlg dialog used for App About
@@ -664,10 +668,47 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 		// If we couldn't find an entry to remove, nothing to do
 		if (found < 0) return 0;
 
-		// If process exists and startTimes match, ignore this exit (stale)
+		// If process exists and startTimes match, the kernel notification may
+		// have fired before the process object is fully torn down. Instead of
+		// immediately returning (and potentially missing the real exit), spawn
+		// a short waiter that polls the PID for a bounded time and then posts
+		// the exit message when the process actually disappears. Guard with
+		// g_PidExitWaiters so we don't spawn duplicate waiters for the same PID.
 		if (processExists && CompareFileTime(&curCreate, &storedStart) == 0) {
-			app.GetETW().Log(L"OnUpdateProcess get process terminate, but process exists and startTimes match, pid: %d\n", pid);
-			return 0; // same process still running, spurious exit
+			app.GetETW().Log(L"OnUpdateProcess detected early terminate notification, spawning waiter for pid: %d\n", pid);
+			bool spawn = false;
+			EnterCriticalSection(&g_ProcessLock);
+			if (g_PidExitWaiters.find(pid) == g_PidExitWaiters.end()) {
+				g_PidExitWaiters.insert(pid);
+				spawn = true;
+			}
+			LeaveCriticalSection(&g_ProcessLock);
+
+			if (spawn) {
+				std::thread([this, pid]() {
+					const int MAX_WAIT_MS = 2000; // 2s max
+					const int SLEEP_MS = 50;
+					int waited = 0;
+					while (waited < MAX_WAIT_MS) {
+						HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+						if (!h) break; // process gone
+						// Try to observe whether process is still accessible; if OpenProcess worked
+						// we'll consider it still running until OpenProcess fails.
+						CloseHandle(h);
+						std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MS));
+						waited += SLEEP_MS;
+					}
+
+					EnterCriticalSection(&g_ProcessLock);
+					g_PidExitWaiters.erase(pid);
+					LeaveCriticalSection(&g_ProcessLock);
+
+					// Post exit to trigger removal path
+					// ::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
+				}).detach();
+				goto FULL_EXIT;
+			}
+			return 0;
 		}
 
 		if (processExists && CompareFileTime(&curCreate, &storedStart) != 0) {
@@ -725,7 +766,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 
 			return 0;
 		}
-
+FULL_EXIT:
 		// Process truly exited: remove entry
 		EnterCriticalSection(&g_ProcessLock);
 		auto itrem = g_ProcessIndexMap.find(pid);
