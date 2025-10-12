@@ -11,21 +11,7 @@
 #include <unordered_map>
 #include <thread>
 #include <unordered_set>
-struct ProcessEntry {
-	DWORD pid;
-	std::wstring name;
-	std::wstring path;
-	std::wstring cmdline; // process start parameters (command line)
-	bool bInHookList;
-	// Process creation time (UTC FILETIME) sampled when the entry is added.
-	// Used to detect PID reuse when updates arrive later.
-	FILETIME startTime = {0,0};
-};
-extern std::vector<ProcessEntry> g_ProcessList;
-extern std::unordered_map<DWORD,int> g_ProcessIndexMap;
-
-// Protects g_ProcessList and g_ProcessIndexMap
-extern CRITICAL_SECTION g_ProcessLock;
+#include "ProcessManager.h"
 
 // CUMControllerDlg dialog
 class CUMControllerDlg : public CDialogEx

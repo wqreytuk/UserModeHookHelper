@@ -286,6 +286,7 @@
     <ClInclude Include="framework.h" />
     <ClInclude Include="Helper.h" />
     <ClInclude Include="pch.h" />
+    <ClInclude Include="ProcessManager.h" />
     <ClInclude Include="ProcList.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
@@ -304,6 +305,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Out|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="ProcessManager.cpp" />
     <ClCompile Include="ProcList.cpp" />
     <ClCompile Include="UMController.cpp" />
     <ClCompile Include="UMControllerDlg.cpp" />

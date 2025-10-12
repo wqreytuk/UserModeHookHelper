@@ -187,7 +187,7 @@ void Filter::RunListenerLoop() {
 					}
 
 					if (m_ProcessNotifyCb) {
-						app.GetETW().Log(L"process notify from kernel: process %s pid %d create %b\n", procName, pid, create);
+						app.GetETW().Log(L"process notify from kernel: process %ws pid %d create %b\n", procName, pid, create);
 						m_ProcessNotifyCb(pid, create, procName, m_ProcessNotifyCtx);
 					}
 				}
