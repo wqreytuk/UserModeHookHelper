@@ -7,7 +7,10 @@ typedef struct _COMM_CONTEXT {
 	HANDLE			m_UserProcessId;
 	PFLT_PORT		m_ClientPort; 
 	LONG			m_RefCount;
-    BOOLEAN			m_Removed; /* TRUE when removed/unloading */
+	BOOLEAN			m_Removed; /* TRUE when removed/unloading */
+	// Optional null-terminated UTF-16LE directory supplied by user-mode client.
+	// Allocated from NonPagedPool when set; freed during context cleanup.
+	PWSTR               m_UserDir;
 }COMM_CONTEXT, *PCOMM_CONTEXT;
 
 

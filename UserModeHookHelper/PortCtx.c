@@ -144,3 +144,24 @@ VOID PortCtx_FreeSnapshot(PCOMM_CONTEXT* array, ULONG count) {
     }
     ExFreePoolWithTag(array, tag_ctx);
 }
+
+NTSTATUS PortCtx_SetUserDir(PCOMM_CONTEXT ctx, PCWSTR userDir, SIZE_T bytes) {
+    if (!ctx) return STATUS_INVALID_PARAMETER;
+    if (!userDir || bytes == 0) return STATUS_INVALID_PARAMETER;
+    // Ensure bytes is even and at least room for one WCHAR NUL
+    if (bytes % sizeof(WCHAR) != 0) return STATUS_INVALID_PARAMETER;
+
+    // Allocate new buffer
+    PWSTR buf = ExAllocatePoolWithTag(NonPagedPool, bytes, tag_ctx);
+    if (!buf) return STATUS_INSUFFICIENT_RESOURCES;
+    RtlCopyMemory(buf, userDir, bytes);
+
+    // Replace atomically under list lock to avoid races with readers
+    ExAcquireResourceExclusiveLite(&s_PortCtxListLock, TRUE);
+    if (ctx->m_UserDir) {
+        ExFreePoolWithTag(ctx->m_UserDir, tag_ctx);
+    }
+    ctx->m_UserDir = buf;
+    ExReleaseResourceLite(&s_PortCtxListLock);
+    return STATUS_SUCCESS;
+}

@@ -68,6 +68,33 @@ Filter::Filter() {
 	else
 		app.GetETW().Log(L"successfully connect to minifilterport: 0x%p\n", m_Port);
 
+	// Immediately inform kernel of our user-mode base directory where DLLs live.
+	{
+		// Use current module directory as the base; GetModuleFileName then strip filename
+		WCHAR buf[MAX_PATH];
+		DWORD n = GetModuleFileNameW(NULL, buf, MAX_PATH);
+		if (n > 0 && n < MAX_PATH) {
+			// strip to directory
+			WCHAR* last = wcsrchr(buf, L'\\');
+			if (last) *last = L'\0';
+			// Build message
+			size_t bytes = (wcslen(buf) + 1) * sizeof(WCHAR);
+			size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) - 1 + bytes;
+			PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+			if (msg) {
+				memset(msg, 0, msgSize);
+				msg->m_Cmd = CMD_SET_USER_DIR;
+				memcpy(msg->m_Data, buf, bytes);
+				DWORD bytesOut = 0;
+				HRESULT hr2 = FilterSendMessage(m_Port, msg, (DWORD)msgSize, NULL, 0, &bytesOut);
+				if (hr2 != S_OK) {
+					app.GetETW().Log(L"FilterSendMessage(CMD_SET_USER_DIR) failed: 0x%08x\n", hr2);
+				}
+				free(msg);
+			}
+		}
+	}
+
 	// Listener is started explicitly via StartListener
 	m_StopListener = false;
 	m_WorkExitEvent = CreateEvent(NULL, TRUE, FALSE, NULL);

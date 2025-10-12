@@ -47,6 +47,7 @@ NTSTATUS
 	// initialize modules
 	HookList_Init();
 	PortCtx_Init();
+	InitPendingInjectList();
 
 	// register minifilter
 	PFLT_FILTER filter = NULL;

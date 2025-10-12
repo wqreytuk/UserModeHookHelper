@@ -192,3 +192,24 @@ LoadImageNotify(
 		}
 	}
 }
+
+NTSTATUS InitPendingInjectList(VOID) {
+	InitializeListHead(&s_PendingInjectList);
+	KeInitializeSpinLock(&s_PendingInjectLock);
+	return STATUS_SUCCESS;
+}
+
+VOID UninitPendingInjectList(VOID) {
+	// Free any remaining entries
+	KIRQL oldIrql;
+	KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
+	PLIST_ENTRY e = s_PendingInjectList.Flink;
+	while (e != &s_PendingInjectList) {
+		PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
+		e = e->Flink;
+		RemoveEntryList(&p->ListEntry);
+		ExFreePoolWithTag(p, 'gInP');
+	}
+	InitializeListHead(&s_PendingInjectList);
+	KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
+}

@@ -12,6 +12,8 @@
 #define CMD_REMOVE_HOOK 3
 // Kernel -> user notification for process create/exit. Payload: DWORD pid; BOOLEAN Create (1=create,0=exit)
 #define CMD_PROCESS_NOTIFY 4
+// User-mode sends its base directory where DLLs live so kernel can locate DLL to inject.
+#define CMD_SET_USER_DIR 5
 
 typedef struct _UMHH_COMMAND_MESSAGE {
 	DWORD m_Cmd;

@@ -2,6 +2,8 @@
 #define SYSCALLBACK_H
 #include "Common.h"
 NTSTATUS SetSysNotifiers();
+NTSTATUS InitPendingInjectList(VOID);
+VOID UninitPendingInjectList(VOID);
  
 VOID
 ProcessCrNotify(

@@ -148,6 +148,45 @@ Comm_MessageNotify(
 	pPortCtxCallerRef = PortCtx_FindAndReferenceByCookie(ConnectionCookie);
 
 	switch (msg->m_Cmd) {
+	case CMD_SET_USER_DIR: {
+		// Payload is a UTF-16LE null-terminated directory path. Accept any
+		// size > 0 (must be at least 2 bytes for NUL). We'll copy bytes as-is.
+		SIZE_T payloadBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE;
+		if (payloadBytes < sizeof(WCHAR)) {
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
+		}
+		// Ensure buffer contains a terminating NUL within payloadBytes
+		PCWSTR w = (PCWSTR)msg->m_Data;
+		SIZE_T wcharCount = payloadBytes / sizeof(WCHAR);
+		BOOLEAN foundNull = FALSE;
+		for (SIZE_T i = 0; i < wcharCount; ++i) {
+			if (w[i] == L'\0') { foundNull = TRUE; break; }
+		}
+		if (!foundNull) {
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			status = STATUS_INVALID_PARAMETER;
+			goto cleanup;
+		}
+
+		// Caller reference must be present to set per-connection data
+		if (!pPortCtxCallerRef) {
+			status = STATUS_INVALID_DEVICE_STATE;
+			goto cleanup;
+		}
+		NTSTATUS st = PortCtx_SetUserDir(pPortCtxCallerRef, w, (SIZE_T)(wcharCount * sizeof(WCHAR)));
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
+			*(NTSTATUS*)OutputBuffer = st;
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
+			status = STATUS_SUCCESS;
+			goto cleanup;
+		} else {
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
+		}
+	}
 	case CMD_ADD_HOOK: {
 		// Expect at least an 8-byte hash. Remainder may contain a null-terminated
 		// UTF-16LE NT path string (optional). Layout: [8-byte hash][WCHAR path...\0]

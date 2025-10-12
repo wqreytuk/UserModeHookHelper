@@ -14,6 +14,8 @@ MiniUnload(
 	UNREFERENCED_PARAMETER(Flags);
 
 	// free port context related resources (encapsulated in PortCtx module)
+	// Uninitialize pending-inject list before tearing down port contexts
+	UninitPendingInjectList();
 	PortCtx_Uninit();
 
 	// free hook list entries (encapsulated in HookList module)
