@@ -66,6 +66,24 @@ BOOL CUMControllerDlg::PreCreateWindow(CREATESTRUCT& cs)
 	return(TRUE);
 }
 
+BOOL CUMControllerDlg::PreTranslateMessage(MSG* pMsg)
+{
+	// Intercept Enter/Escape when the search edit has focus so the dialog
+	// doesn't treat Enter as default button (which can close the dialog).
+	if (pMsg && pMsg->message == WM_KEYDOWN) {
+		HWND hFocus = ::GetFocus();
+		INT id = 0;
+		if (hFocus) id = ::GetDlgCtrlID(hFocus);
+		if (id == IDC_EDIT_SEARCH) {
+			if (pMsg->wParam == VK_RETURN || pMsg->wParam == VK_ESCAPE) {
+				// Let the edit control handle it; don't translate to dialog
+				return TRUE; // message handled
+			}
+		}
+	}
+	return CDialogEx::PreTranslateMessage(pMsg);
+}
+
 CUMControllerDlg::CUMControllerDlg(CWnd* pParent /*=nullptr*/)
 	: CDialogEx(IDD_UMCONTROLLER_DIALOG, pParent)
 {

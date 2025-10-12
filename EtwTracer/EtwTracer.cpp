@@ -76,7 +76,7 @@ void WaitThreadProc() {
 	HANDLE hEvent = OpenEvent(SYNCHRONIZE, FALSE, SIGNALEVENTNAME);
 	WaitForSingleObject(hEvent, INFINITE);
 	CloseHandle(hEvent);
-	MessageBoxA(NULL, "CloseConfirm", "EVT", MB_OK);
+	// MessageBoxA(NULL, "CloseConfirm", "EVT", MB_OK);
 	TraceStop();
 	exit(0);
 }
