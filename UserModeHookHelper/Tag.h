@@ -4,4 +4,5 @@
 #define tag_hlst		'LHtG' // Hook list allocations (pool tag)
 // Port context pool tag
 #define tag_ctx			'CtxP'
+#define tag_apc			'KaPc'
 #endif 

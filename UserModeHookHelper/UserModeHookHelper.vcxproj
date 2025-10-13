@@ -61,6 +61,7 @@
     <ClCompile Include="Inject.c" />
     <ClCompile Include="ListLib.c" />
     <ClCompile Include="mini.c" />
+    <ClCompile Include="pe.c" />
     <ClCompile Include="PortCtx.c" />
     <ClCompile Include="StrLib.c" />
     <ClCompile Include="SysCallback.c" />
@@ -330,6 +331,7 @@
     <ClInclude Include="ListLib.h" />
     <ClInclude Include="MacroDef.h" />
     <ClInclude Include="mini.h" />
+    <ClInclude Include="pe.h" />
     <ClInclude Include="PortCtx.h" />
     <ClInclude Include="StrLib.h" />
     <ClInclude Include="SysCallback.h" />

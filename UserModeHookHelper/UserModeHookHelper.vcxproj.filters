@@ -60,6 +60,9 @@
     <ClCompile Include="Inject.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="pe.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Trace.h">
@@ -102,6 +105,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Inject.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pe.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

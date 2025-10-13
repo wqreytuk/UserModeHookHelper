@@ -54,7 +54,9 @@ ProcessCrNotify(
 	// Perform kernel-side hash check & pending-inject queueing using the
 	// same imageName buffer (if available). Delegate to Inject module.
 	if (imageName) {
-		Inject_CheckAndQueue(imageName, pid);
+		if (process) {
+			Inject_CheckAndQueue(imageName, process);
+		}
 		ExFreePool(imageName);
 		imageName = NULL;
 	}
@@ -70,14 +72,15 @@ LoadImageNotify(
 	IN PIMAGE_INFO ImageInfo
 ) {
 	(ImageInfo);
+	(ProcessId);
 	// Only act when we have a valid image name.
 	if (!FullImageName || FullImageName->Length == 0) return;
-	DWORD pid = (DWORD)(ULONG_PTR)ProcessId;
 
 	// We no longer compute the full-image hash here because matching is
 	// performed at process-create time in ProcessCrNotify (SeLocateProcessImageName).
 	// Here we only look for ntdll.dll loads and perform injection for any
-	// PIDs previously queued via PendingInject_Add.
-	Inject_OnImageLoad(FullImageName, pid);
+	// processes previously queued via PendingInject_Add. We pass the current
+	// process object directly.
+	Inject_OnImageLoad(FullImageName, PsGetCurrentProcess(), ImageInfo);
 }
  
