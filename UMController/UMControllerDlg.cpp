@@ -13,6 +13,7 @@
 #include "UMController.h" // for app
 #include <unordered_map>
 #include <unordered_set>
+#include "IPC.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -264,7 +265,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 	// we duplicate the string and pass the pointer as lParam to the UI thread
 	// via PostMessage; the UI will copy and free it.
 	m_Filter.RegisterProcessNotifyCallback([](DWORD pid, BOOLEAN create, const wchar_t* name, void* ctx) {
-		app.GetETW().Log(L"process notify handler get process %ws pid %d create %d\n", name, pid, create);
+		// app.GetETW().Log(L"process notify handler get process %ws pid %d create %d\n", name, pid, create);
 		HWND hwnd = NULL;
 		if (ctx) hwnd = (HWND)ctx;
 		if (hwnd) {
@@ -372,6 +373,37 @@ void CUMControllerDlg::OnRemoveHook() {
 }
 void CUMControllerDlg::OnInjectDll() {
 
+	// Get selected item PID
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) {
+		MessageBox(L"Please select a target process first.", L"Inject DLL", MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+
+	DWORD pid = (DWORD)m_ProcListCtrl.GetItemData(nItem);
+
+	// Show file open dialog for DLL selection
+	wchar_t szFile[MAX_PATH] = {0};
+	OPENFILENAME ofn = {0};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = this->GetSafeHwnd();
+	ofn.lpstrFile = szFile;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = L"DLL Files\0*.dll\0All Files\0*.*\0";
+	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+	ofn.lpstrTitle = L"Select DLL to inject";
+
+	if (!GetOpenFileName(&ofn)) return;
+
+	// Call IPC_SendInject (UMController/IPC.cpp)
+	BOOL ok = IPC_SendInject(pid, szFile);
+	if (ok) {
+		app.GetETW().Log(L"IPC_SendInject succeeded for pid %u dll %s\n", pid, szFile);
+		MessageBox(L"Injection request sent.", L"Inject DLL", MB_OK | MB_ICONINFORMATION);
+	} else {
+		app.GetETW().Log(L"IPC_SendInject failed for pid %u dll %s\n", pid, szFile);
+		MessageBox(L"Failed to send injection request.", L"Inject DLL", MB_OK | MB_ICONERROR);
+	}
 
 }
 
@@ -486,7 +518,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 	// Create event: high bit set in wParam
 	if ((wParam & PROCESS_NOTIFY_CREATE_FLAG) != 0) {
 		DWORD pid = (DWORD)(wParam & 0x7FFFFFFFu);
-		app.GetETW().Log(L"OnUpdateProcess get process create, pid: %d\n", pid);
+		// app.GetETW().Log(L"OnUpdateProcess get process create, pid: %d\n", pid);
 		ProcessEntry entry;
 		entry.pid = pid;
 		entry.name.clear();
@@ -553,7 +585,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			std::wstring ntPath;
 			// Single attempt: if resolve fails, assume process exited while resolving
 			if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) { 
-				app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
+				// app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
 				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
 				return;
 			}
@@ -619,7 +651,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 	// Otherwise treat wParam as PID for exit
 	{
 		DWORD pid = (DWORD)wParam;
-		app.GetETW().Log(L"OnUpdateProcess get process terminate, pid: %d\n", pid);
+		// app.GetETW().Log(L"OnUpdateProcess get process terminate, pid: %d\n", pid);
 		// Locate the entry under lock and capture its index and startTime
 		int found = -1;
 		FILETIME storedStart = { 0,0 };
@@ -649,7 +681,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 		// the exit message when the process actually disappears. Guard with
 		// g_PidExitWaiters so we don't spawn duplicate waiters for the same PID.
 		if (processExists && CompareFileTime(&curCreate, &storedStart) == 0) {
-			app.GetETW().Log(L"OnUpdateProcess detected early terminate notification, spawning waiter for pid: %d\n", pid);
+			// app.GetETW().Log(L"OnUpdateProcess detected early terminate notification, spawning waiter for pid: %d\n", pid);
 			if (PM_TryReserveExitWaiter(pid)) {
 				std::thread([this, pid]() {
 					const int MAX_WAIT_MS = 2000; // 2s max
@@ -692,7 +724,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			std::thread([this, pid]() {
 				std::wstring ntPath;
 				if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) {
-					app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
+					// app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
 					::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
 					return;
 				}
@@ -712,7 +744,7 @@ FULL_EXIT:
 		// Process truly exited: remove entry via ProcessManager
 		ProcessEntry removedCopy;
 		PM_RemoveByPid(pid);
-		app.GetETW().Log(L"removing process pid %d from process list\n", pid);
+		// app.GetETW().Log(L"removing process pid %d from process list\n", pid);
 		int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
 		while (item != -1) {
 			if ((DWORD)m_ProcListCtrl.GetItemData(item) == pid) break;
