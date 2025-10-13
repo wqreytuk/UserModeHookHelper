@@ -7,7 +7,7 @@
 //
 #define NTDLL_NO_INLINE_INIT_STRING
 #include <ntdll.h>
-
+#include "../UMController/ETW.h"
 #if defined(_M_IX86)
 #  define ARCH_A          "x86"
 #  define ARCH_W         L"x86"
@@ -39,20 +39,23 @@
 // redirects calls to these functions to the ntdll.dll.
 //
 
-#define EventActivityIdControl  EtwEventActivityIdControl
-#define EventEnabled            EtwEventEnabled
-#define EventProviderEnabled    EtwEventProviderEnabled
-#define EventRegister           EtwEventRegister
-#define EventSetInformation     EtwEventSetInformation
-#define EventUnregister         EtwEventUnregister
-#define EventWrite              EtwEventWrite
-#define EventWriteEndScenario   EtwEventWriteEndScenario
-#define EventWriteEx            EtwEventWriteEx
-#define EventWriteStartScenario EtwEventWriteStartScenario
-#define EventWriteString        EtwEventWriteString
-#define EventWriteTransfer      EtwEventWriteTransfer
+// Map Event* symbols to the standard ETW APIs provided by evntprov.h
+#define EventActivityIdControl  EventActivityIdControl
+#define EventEnabled            EventEnabled
+#define EventProviderEnabled    EventProviderEnabled
+#define EventRegister           EventRegister
+#define EventSetInformation     EventSetInformation
+#define EventUnregister         EventUnregister
+#define EventWrite              EventWrite
+#define EventWriteEndScenario   EventWriteEndScenario
+#define EventWriteEx            EventWriteEx
+#define EventWriteStartScenario EventWriteStartScenario
+#define EventWriteString        EventWriteString
+#define EventWriteTransfer      EventWriteTransfer
 
 #include <evntprov.h>
+
+#include "../UMController/ETW.h"
 
 //
 // Include Detours.
@@ -113,117 +116,16 @@ inline _vsnwprintf_fn_t _vsnwprintf = nullptr;
 // GUID:
 //   {a4b4ba50-a667-43f5-919b-1e52a6d69bd5}
 //
-
-GUID ProviderGuid = {
-  0xa4b4ba50, 0xa667, 0x43f5, { 0x91, 0x9b, 0x1e, 0x52, 0xa6, 0xd6, 0x9b, 0xd5 }
-};
-
-REGHANDLE ProviderHandle;
+ 
+REGHANDLE ProviderHandle = 0;
 
 //
 // Hooking functions and prototypes.
 //
 
-inline decltype(NtQuerySystemInformation)* OrigNtQuerySystemInformation = nullptr;
 
-EXTERN_C
-NTSTATUS
-NTAPI
-HookNtQuerySystemInformation(
-	_In_ SYSTEM_INFORMATION_CLASS SystemInformationClass,
-	_Out_writes_bytes_opt_(SystemInformationLength) PVOID SystemInformation,
-	_In_ ULONG SystemInformationLength,
-	_Out_opt_ PULONG ReturnLength
-)
-{
-	//
-	// Log the function call.
-	//
 
-	WCHAR Buffer[128];
-	_snwprintf(Buffer,
-		RTL_NUMBER_OF(Buffer),
-		L"NtQuerySystemInformation(%i, %p, %i)",
-		SystemInformationClass,
-		SystemInformation,
-		SystemInformationLength);
-
-	EtwEventWriteString(ProviderHandle, 0, 0, Buffer);
-
-	//
-	// Call original function.
-	//
-
-	return OrigNtQuerySystemInformation(SystemInformationClass,
-		SystemInformation,
-		SystemInformationLength,
-		ReturnLength);
-}
-
-inline decltype(NtCreateThreadEx)* OrigNtCreateThreadEx = nullptr;
-
-NTSTATUS
-NTAPI
-HookNtCreateThreadEx(
-	_Out_ PHANDLE ThreadHandle,
-	_In_ ACCESS_MASK DesiredAccess,
-	_In_opt_ POBJECT_ATTRIBUTES ObjectAttributes,
-	_In_ HANDLE ProcessHandle,
-	_In_ PVOID StartRoutine, // PUSER_THREAD_START_ROUTINE
-	_In_opt_ PVOID Argument,
-	_In_ ULONG CreateFlags, // THREAD_CREATE_FLAGS_*
-	_In_ SIZE_T ZeroBits,
-	_In_ SIZE_T StackSize,
-	_In_ SIZE_T MaximumStackSize,
-	_In_opt_ PPS_ATTRIBUTE_LIST AttributeList
-)
-{
-	//
-	// Log the function call.
-	//
-
-	WCHAR Buffer[128];
-	_snwprintf(Buffer,
-		RTL_NUMBER_OF(Buffer),
-		L"NtCreateThreadEx(%p, %p)",
-		ProcessHandle,
-		StartRoutine);
-
-	EtwEventWriteString(ProviderHandle, 0, 0, Buffer);
-
-	//
-	// Call original function.
-	//
-
-	return OrigNtCreateThreadEx(ThreadHandle,
-		DesiredAccess,
-		ObjectAttributes,
-		ProcessHandle,
-		StartRoutine,
-		Argument,
-		CreateFlags,
-		ZeroBits,
-		StackSize,
-		MaximumStackSize,
-		AttributeList);
-}
-
-NTSTATUS
-NTAPI
-ThreadRoutine(
-	_In_ PVOID ThreadParameter
-)
-{
-	LARGE_INTEGER Delay;
-	Delay.QuadPart = -10 * 1000 * 100; // 100ms
-
-	for (;;)
-	{
-		// EtwEventWriteString(ProviderHandle, 0, 0, L"NtDelayExecution(100ms)");
-
-		NtDelayExecution(FALSE, &Delay);
-	}
-}
+// Removed unused detour hook functions and helper thread routine to reduce dead code.
 
 NTSTATUS
 NTAPI
@@ -233,11 +135,11 @@ EnableDetours(
 {
 	// DetourTransactionBegin();
 	// {
-	// 	OrigNtQuerySystemInformation = NtQuerySystemInformation;
-	// 	DetourAttach((PVOID*)&OrigNtQuerySystemInformation, HookNtQuerySystemInformation);
+	//     OrigNtQuerySystemInformation = NtQuerySystemInformation;
+	//     DetourAttach((PVOID*)&OrigNtQuerySystemInformation, HookNtQuerySystemInformation);
 	// 
-	// 	OrigNtCreateThreadEx = NtCreateThreadEx;
-	// 	DetourAttach((PVOID*)&OrigNtCreateThreadEx, HookNtCreateThreadEx);
+	//     OrigNtCreateThreadEx = NtCreateThreadEx;
+	//     DetourAttach((PVOID*)&OrigNtCreateThreadEx, HookNtCreateThreadEx);
 	// }
 	// DetourTransactionCommit();
 
@@ -430,8 +332,6 @@ PFN_NtDelayExecution pNtDelay = 0;
 PFN_LdrLoadDll pLdrLoadDll = 0;
 PNtDeleteFile pNtDeleteFile = 0;
 PRtlGetCurrentProcessId pRtlGetCurrentProcessId = 0;
-int SleepUsingNtDelay(DWORD ms, BOOLEAN alertable)
-;
 
 // Returns TRUE if file exists (NT view), FALSE otherwise.
 
@@ -492,7 +392,7 @@ VOID EtwLog(_In_ PCWSTR Format, ...)
 
 	Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0'; // ensure null-termination
 
-	EtwEventWriteString(ProviderHandle, 0, 0, Buffer);
+	EventWriteString(ProviderHandle, 0, 0, Buffer);
 }
 // mainn
 
@@ -536,22 +436,10 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&pNtWaitForSingleObject);
 
 
-	// 创建事件
-	UNICODE_STRING eventName;
-	RtlInitUnicodeString(&eventName, L"\\BaseNamedObjects\\MySyncEventForSignal.binReadAndDelete");
 
-	OBJECT_ATTRIBUTES oa;
-	InitializeObjectAttributes(&oa, &eventName, OBJ_CASE_INSENSITIVE | OBJ_OPENIF, NULL, NULL);
-
-	//HANDLE hEvent;
-	//NTSTATUS status = NtCreateEvent(&hEvent,
-	//  EVENT_ALL_ACCESS,
-	//  &oa,
-	//  NotificationEvent,
-	//  FALSE);
 
 	WCHAR pathBuf[64];
-	HANDLE pid =  NtCurrentProcessId();
+	HANDLE pid = NtCurrentProcessId();
 
 	ConcatPidToPath(pathBuf, sizeof(pathBuf) / sizeof(WCHAR), pid);
 
@@ -709,9 +597,7 @@ OnProcessAttach(
 {
 
 
-	ANSI_STRING
-
-		RoutineName;
+	ANSI_STRING RoutineName;
 	RtlInitAnsiString(&RoutineName, (PSTR)"_snwprintf");
 
 	UNICODE_STRING NtdllPath;
@@ -727,7 +613,7 @@ OnProcessAttach(
 	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&_vsnwprintf);
 
 
-	EtwEventRegister(&ProviderGuid,
+	EventRegister(&ProviderGUID,
 		NULL,
 		NULL,
 		&ProviderHandle);
@@ -743,97 +629,7 @@ OnProcessAttach(
 		NULL,
 		NULL);
 
-	return 0;
-	//
-	// First, resolve address of the _snwprintf function.
-	//
-
-	//
-	// Make us unloadable (by FreeLibrary calls).
-	//
-
-	LdrAddRefDll(LDR_ADDREF_DLL_PIN, ModuleHandle);
-
-	//
-	// Hide this DLL from the PEB.
-	//
-
-	PPEB Peb = NtCurrentPeb();
-	PLIST_ENTRY ListEntry;
-
-	for (ListEntry = Peb->Ldr->InLoadOrderModuleList.Flink;
-		ListEntry != &Peb->Ldr->InLoadOrderModuleList;
-		ListEntry = ListEntry->Flink)
-	{
-		PLDR_DATA_TABLE_ENTRY LdrEntry = CONTAINING_RECORD(ListEntry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-
-		//
-		// ModuleHandle is same as DLL base address.
-		//
-
-		if (LdrEntry->DllBase == ModuleHandle)
-		{
-			RemoveEntryList(&LdrEntry->InLoadOrderLinks);
-			RemoveEntryList(&LdrEntry->InInitializationOrderLinks);
-			RemoveEntryList(&LdrEntry->InMemoryOrderLinks);
-			RemoveEntryList(&LdrEntry->HashLinks);
-
-			break;
-		}
-	}
-
-	//
-	// Create exports for Wow64Log* functions in
-	// the PE header of this DLL.
-	//
-
-	// Wow64LogCreateExports(ModuleHandle);
-
-
-	//
-	// Register ETW provider.
-	//
-
-	EtwEventRegister(&ProviderGuid,
-		NULL,
-		NULL,
-		&ProviderHandle);
-
-	//
-	// Create dummy thread - used for testing.
-	//
-
-	// RtlCreateUserThread(NtCurrentProcess(),
-	//                     NULL,
-	//                     FALSE,
-	//                     0,
-	//                     0,
-	//                     0,
-	//                     &ThreadRoutine,
-	//                     NULL,
-	//                     NULL,
-	//                     NULL);
-
-	//
-	// Get command line of the current process and send it.
-	//
-
-	PWSTR CommandLine = Peb->ProcessParameters->CommandLine.Buffer;
-
-	WCHAR Buffer[1024];
-	_snwprintf(Buffer,
-		RTL_NUMBER_OF(Buffer),
-		L"Arch: %s, CommandLine: '%s'",
-		ARCH_W,
-		CommandLine);
-
-	EtwEventWriteString(ProviderHandle, 0, 0, Buffer);
-
-	//
-	// Hook all functions.
-	//
-
-	return EnableDetours();
+	return 0; // Early exit: remaining legacy code removed as unreachable
 }
 
 NTSTATUS
@@ -846,7 +642,12 @@ OnProcessDetach(
 	// Unhook all functions.
 	//
 
-	return DisableDetours();
+	if (ProviderHandle) {
+		EventUnregister(ProviderHandle);
+		ProviderHandle = 0;
+	}
+
+	return 0;
 }
 
 EXTERN_C
@@ -860,10 +661,7 @@ NtDllMain(
 {
 	switch (Reason)
 	{
-	case DLL_PROCESS_ATTACH:
-
-		// Sleep(60000);
-	 //  __debugbreak();
+	case DLL_PROCESS_ATTACH: 
 		OnProcessAttach(ModuleHandle);
 		break;
 
