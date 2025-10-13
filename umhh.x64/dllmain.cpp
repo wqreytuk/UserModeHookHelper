@@ -23,7 +23,9 @@
 #else
 #  error Unknown architecture
 #endif
-
+#define WIDEN2(x) L##x
+#define WIDEN(x) WIDEN2(x)
+#define WFILE WIDEN(__FILE__)
 
 // size_t strlen(const char * str)
 // {
@@ -224,6 +226,11 @@ typedef NTSTATUS(NTAPI *PNtWaitForSingleObject)(
 	BOOLEAN Alertable,
 	PLARGE_INTEGER Timeout OPTIONAL
 	);
+
+// Native section/map function pointers (NT APIs)
+typedef NTSTATUS(NTAPI *PFN_NtCreateSection)(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes OPTIONAL, PLARGE_INTEGER MaximumSize OPTIONAL, ULONG SectionPageProtection, ULONG AllocationAttributes, HANDLE FileHandle OPTIONAL);
+typedef NTSTATUS(NTAPI *PFN_NtMapViewOfSection)(HANDLE SectionHandle, HANDLE ProcessHandle, PVOID *BaseAddress, ULONG_PTR ZeroBits, SIZE_T CommitSize, PLARGE_INTEGER SectionOffset, PSIZE_T ViewSize, ULONG InheritDisposition, ULONG AllocationType, ULONG Win32Protect);
+typedef NTSTATUS(NTAPI *PFN_NtUnmapViewOfSection)(HANDLE ProcessHandle, PVOID BaseAddress);
 
 typedef NTSTATUS(NTAPI *PFN_NtClose)(HANDLE Handle);
 static NTSTATUS ReadBytesFromFileNt(
@@ -435,62 +442,88 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 	RtlInitAnsiString(&RoutineName, (PSTR)"NtWaitForSingleObject");
 	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&pNtWaitForSingleObject);
 
+	// Resolve section/map NT API pointers
+	PFN_NtCreateSection pNtCreateSection = NULL;
+	PFN_NtMapViewOfSection pNtMapViewOfSection = NULL;
+	PFN_NtUnmapViewOfSection pNtUnmapViewOfSection = NULL;
+	RtlInitAnsiString(&RoutineName, (PSTR)"NtCreateSection");
+	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&pNtCreateSection);
+	RtlInitAnsiString(&RoutineName, (PSTR)"NtMapViewOfSection");
+	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&pNtMapViewOfSection);
+	RtlInitAnsiString(&RoutineName, (PSTR)"NtUnmapViewOfSection");
+	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&pNtUnmapViewOfSection);
 
 
 
-	WCHAR pathBuf[64];
-	HANDLE pid = NtCurrentProcessId();
 
-	ConcatPidToPath(pathBuf, sizeof(pathBuf) / sizeof(WCHAR), pid);
+	// Create native named section and event for IPC
+	WCHAR sectionName[128];
+	WCHAR eventName[128];
+	HANDLE curPid = NtCurrentProcessId();
+	_snwprintf(sectionName, RTL_NUMBER_OF(sectionName), L"\\BaseNamedObjects\\inject_section.%u", (ULONG)(ULONG_PTR)curPid);
+	_snwprintf(eventName, RTL_NUMBER_OF(eventName), L"\\BaseNamedObjects\\inject_event.%u", (ULONG)(ULONG_PTR)curPid);
 
-	while (1)
-	{
-		if (FileExistsViaNtOpenFile(pathBuf)) {
-			EtwLog(L"current process is signaled to inject a dll\n");
-			char dllPath[256] = { 0 };
-			int pid = ReadFileParsePidAndDllPath(pathBuf, dllPath);
-			EtwLog(L"get to be injected dll path: %S\n", dllPath);
-			{
+	UNICODE_STRING usSection;
+	UNICODE_STRING usEvent;
+	RtlInitUnicodeString(&usSection, sectionName);
+	RtlInitUnicodeString(&usEvent, eventName);
 
-				UNICODE_STRING uPath;
-				OBJECT_ATTRIBUTES oa;
-				RtlInitUnicodeString(&uPath, pathBuf);
-				InitializeObjectAttributes(&oa, &uPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+	OBJECT_ATTRIBUTES secAttr;
+	InitializeObjectAttributes(&secAttr, &usSection, OBJ_CASE_INSENSITIVE | OBJ_OPENIF, NULL, NULL);
 
-				NTSTATUS status = pNtDeleteFile(&oa);
-			}
-			// 当前进程就是将要被注入dll的目标进程
-			UNICODE_STRING str;
-			WCHAR buffer[260];
-			{
-				PUNICODE_STRING ustr = &str;
-				USHORT i = 0;
-				char* src = dllPath;
-				while (src[i] && (i * sizeof(WCHAR) + sizeof(WCHAR)) <= 256) {
-					buffer[i] = (WCHAR)(unsigned char)src[i]; // simple widening
-					i++;
-				}
-				buffer[i] = L'\0';
+	HANDLE hSection = NULL;
+	if (pNtCreateSection) {
+		NTSTATUS st = pNtCreateSection(&hSection, SECTION_ALL_ACCESS, &secAttr, NULL, PAGE_READWRITE, SEC_COMMIT, NULL);
+		if (!NT_SUCCESS(st)) {
+			EtwLog(L"NtCreateSection failed: 0x%08x\n", st);
+			hSection = NULL;
+		}
+	}
 
-				ustr->Buffer = buffer;
-				ustr->Length = i * sizeof(WCHAR);
-				ustr->MaximumLength = (i + 1) * sizeof(WCHAR);
+	SIZE_T viewSize = 4096;
+	PVOID baseAddress = NULL;
+	if (hSection && pNtMapViewOfSection) {
+		NTSTATUS st = pNtMapViewOfSection(hSection, NtCurrentProcess(), &baseAddress, 0, 0, NULL, &viewSize, 1, 0, PAGE_READWRITE);
+		if (!NT_SUCCESS(st)) {
+			EtwLog(L"NtMapViewOfSection failed: 0x%08x\n", st);
+			baseAddress = NULL;
+		}
+	}
 
-				EtwLog(L"wide char dll path character count: %d\n", i);// unicode string for t obe injected dll path : %wZ\n", ustr);// dllPath);
-				EtwLog(L"constructed unicode string for to be injected dll path: %wZ\n", ustr);// dllPath);
+	// Create or open event
+	HANDLE hEvent = NULL;
+	if (pNtCreateEvent) {
+		OBJECT_ATTRIBUTES evAttr;
+		InitializeObjectAttributes(&evAttr, &usEvent, OBJ_CASE_INSENSITIVE | OBJ_OPENIF, NULL, NULL);
+		NTSTATUS st = pNtCreateEvent(&hEvent, EVENT_ALL_ACCESS, &evAttr, NotificationEvent, FALSE);
+		if (!NT_SUCCESS(st)) {
+			EtwLog(L"NtCreateEvent failed: 0x%08x\n", st);
+			hEvent = NULL;
+		}
+	}
 
-				pLdrLoadDll(0, 0, ustr, (PHANDLE)dllPath);
-			}
-
-
-
+	// Server loop: wait on event, read WCHAR path from section, load, zero buffer
+	for (;;) {
+		if (!hEvent || !baseAddress) {
+			EtwLog(L"%s(%d) - unexpected (!hEvent || !baseAddress)\n", WFILE, __LINE__);
+			LARGE_INTEGER li;
+			li.QuadPart = -(LONGLONG)1000 * 10000LL;
+			pNtDelay((BOOLEAN)0, &li);
+			continue;
 		}
 
-		LARGE_INTEGER li;
-		li.QuadPart = -(LONGLONG)500 * 10000LL;
+		pNtWaitForSingleObject(hEvent, FALSE, NULL);
 
-		pNtDelay((BOOLEAN)0, &li);
-
+		if (baseAddress) {
+			WCHAR *wbuf = (WCHAR*)baseAddress;
+			if (wbuf[0] != L'\0') {
+				UNICODE_STRING ustr;
+				RtlInitUnicodeString(&ustr, wbuf);
+				EtwLog(L"section signaled, loading dll: %wZ\n", &ustr);
+				pLdrLoadDll(0, 0, &ustr, NULL);
+				RtlZeroMemory(baseAddress, viewSize);
+			}
+		}
 	}
 
 
