@@ -209,6 +209,12 @@ static BOOLEAN ImageNameIsNtdll_Internal(PUNICODE_STRING ImageName)
 NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 {
 	NTSTATUS status = STATUS_SUCCESS;
+
+	// Validate parameters
+	if (!ImageInfo || !ImageInfo->ImageBase) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
 	PVOID dllBase = ImageInfo->ImageBase;
 	PVOID ldrFuncAddr = PE_GetExport(dllBase, "LdrLoadDll");
 	if (!ldrFuncAddr) {
@@ -223,11 +229,15 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 		NULL,
 		NULL);
 
-
-	HANDLE SectionHandle;
+	// resource tracking - initialize early so CLEAN_UP can safely release
+	HANDLE SectionHandle = NULL;
+	PVOID SectionMemoryAddress = NULL;
+	PKAPC Apc = NULL;
+	BOOLEAN Inserted = FALSE;
 	SIZE_T SectionSize = PAGE_SIZE;
 	LARGE_INTEGER MaximumSize;
 	MaximumSize.QuadPart = SectionSize;
+
 	status = ZwCreateSection(&SectionHandle,
 		GENERIC_READ | GENERIC_WRITE,
 		&ObjectAttributes,
@@ -240,8 +250,6 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 		goto CLEAN_UP;
 	}
 
-
-	PVOID SectionMemoryAddress = NULL;
 	status = ZwMapViewOfSection(SectionHandle,
 		ZwCurrentProcess(),
 		&SectionMemoryAddress,
@@ -256,6 +264,7 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 		Log(L"failed to call ZwMapViewOfSection from Inject_Perform: 0x%x\n", status);
 		goto CLEAN_UP;
 	}
+
 	BOOLEAN x64 = PE_IsProcessX86(Process);
 	PVOID ApcRoutineAddress = SectionMemoryAddress;
 	// 0 for x86, 1 for x64
@@ -267,10 +276,12 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 	WCHAR dllPath[MAX_PATH] = { 0 };
 	SL_ConcatWideString(DriverCtx_GetUserDir(), L"\\", dllPath, MAX_PATH);
 	SL_ConcatWideString(dllPath, x64 ? X64_DLL : X86_DLL, dllPath, MAX_PATH);
-	RtlCopyMemory(DllPath, dllPath, wcslen(dllPath));
+	// copy wide string including terminating NUL
+	RtlCopyMemory(DllPath, dllPath, (wcslen(dllPath) + 1) * sizeof(WCHAR));
 	Log(L"to be injected dll path: %ws\n", dllPath);
+
 	// remap to get execution privilege
-	ZwUnmapViewOfSection(ZwCurrentProcess(), SectionMemoryAddress);
+	status = ZwUnmapViewOfSection(ZwCurrentProcess(), SectionMemoryAddress);
 	if (!NT_SUCCESS(status)) {
 		Log(L"failed to call ZwUnmapViewOfSection from Inject_Perform: 0x%x\n", status);
 		goto CLEAN_UP;
@@ -298,41 +309,56 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 	PVOID ApcArgument1 = (PVOID)DllPath;
 	PVOID ApcArgument2 = (PVOID)wcslen(dllPath);
 
-
 	PKNORMAL_ROUTINE ApcRoutine = (PKNORMAL_ROUTINE)(ULONG_PTR)ApcRoutineAddress;
 	KPROCESSOR_MODE ApcMode = UserMode;
 	PKNORMAL_ROUTINE NormalRoutine = ApcRoutine;
-	PVOID NormalContext = ApcContext;			  
-	PVOID SystemArgument1 = ApcArgument1;		  
-	PVOID SystemArgument2 = ApcArgument2;		  
+	PVOID NormalContext = ApcContext;
+	PVOID SystemArgument1 = ApcArgument1;
+	PVOID SystemArgument2 = ApcArgument2;
 
-	PKAPC Apc = ExAllocatePoolWithTag(NonPagedPoolNx,sizeof(KAPC),tag_apc);
+	Apc = ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(KAPC), tag_apc);
 	if (!Apc)
 	{
-		Log(L"failed to call ExAllocatePoolWithTag, force bailout\n");
-		RtlFailFast((ULONG)STATUS_NO_MEMORY);
+		Log(L"failed to call ExAllocatePoolWithTag, aborting\n");
+		status = STATUS_NO_MEMORY;
+		goto CLEAN_UP;
 	}
 
-	KeInitializeApc((PVOID)Apc,                      // Apc
-		(PVOID)PsGetCurrentThread(),                 // Thread
-		(PVOID)OriginalApcEnvironment,               // Environment
-		(PVOID)&Inject_ApcKernelRoutine,			  // KernelRoutine
-		(PVOID)NULL,                                 // RundownRoutine
-		(PVOID)NormalRoutine,                        // NormalRoutine
-		ApcMode,                              // ApcMode
-		(PVOID)NormalContext);                       // NormalContext
+	KeInitializeApc((PVOID)Apc,
+		(PVOID)PsGetCurrentThread(),
+		(PVOID)OriginalApcEnvironment,
+		(PVOID)&Inject_ApcKernelRoutine,
+		(PVOID)NULL,
+		(PVOID)NormalRoutine,
+		ApcMode,
+		(PVOID)NormalContext);
 
-	BOOLEAN Inserted = KeInsertQueueApc(Apc,              // Apc
-		SystemArgument1,  // SystemArgument1
-		SystemArgument2,  // SystemArgument2
-		0);               // Increment
-
-	if (!Inserted)
-	{
-		Log(L"failed to call KeInsertQueueApc\n");
-	}
+	Inserted = KeInsertQueueApc(Apc,
+		SystemArgument1,
+		SystemArgument2,
+		0);
 
 CLEAN_UP:
+
+	// If we allocated an APC but didn't successfully queue it, free it now.
+	if (Apc && !Inserted) {
+		Log(L"failed to call KeInsertQueueApc\n");
+		status = STATUS_UNSUCCESSFUL;
+		ExFreePoolWithTag(Apc, tag_apc);
+		Apc = NULL;
+	}
+
+	// Unmap any mapped view in our process
+	if (SectionMemoryAddress) {
+		(VOID)ZwUnmapViewOfSection(ZwCurrentProcess(), SectionMemoryAddress);
+		SectionMemoryAddress = NULL;
+	}
+
+	// Close section handle if created
+	if (SectionHandle) {
+		ZwClose(SectionHandle);
+		SectionHandle = NULL;
+	}
 
 	return status;
 }
