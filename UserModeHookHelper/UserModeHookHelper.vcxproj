@@ -58,6 +58,7 @@
     <ClCompile Include="DriverCtx.c" />
     <ClCompile Include="FltCommPort.c" />
     <ClCompile Include="HookList.c" />
+    <ClCompile Include="Inject.c" />
     <ClCompile Include="ListLib.c" />
     <ClCompile Include="mini.c" />
     <ClCompile Include="PortCtx.c" />
@@ -325,6 +326,7 @@
     <ClInclude Include="DriverCtx.h" />
     <ClInclude Include="FltCommPort.h" />
     <ClInclude Include="HookList.h" />
+    <ClInclude Include="Inject.h" />
     <ClInclude Include="ListLib.h" />
     <ClInclude Include="MacroDef.h" />
     <ClInclude Include="mini.h" />

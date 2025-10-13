@@ -5,6 +5,7 @@
 #include "HookList.h"
 #include "PortCtx.h"
 #include "DriverCtx.h"
+#include "Inject.h"
  
 CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
 	{ IRP_MJ_CREATE,
@@ -47,7 +48,7 @@ NTSTATUS
 	// initialize modules
 	HookList_Init();
 	PortCtx_Init();
-	InitPendingInjectList();
+	Inject_Init();
 
 	// register minifilter
 	PFLT_FILTER filter = NULL;

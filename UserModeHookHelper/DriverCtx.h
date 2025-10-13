@@ -32,4 +32,10 @@ PFLT_PORT DriverCtx_GetServerPort(VOID);
 VOID DriverCtx_ClearServerPort(VOID);
 VOID DriverCtx_ClearFilter(VOID);
 
+// User-mode base directory where DLLs are located (UTF-16LE string allocated
+// from NonPagedPool). These helpers set/get/clear a single global value.
+NTSTATUS DriverCtx_SetUserDir(PCWSTR dir, SIZE_T bytes);
+PWSTR DriverCtx_GetUserDir(VOID);
+VOID DriverCtx_ClearUserDir(VOID);
+
 #endif

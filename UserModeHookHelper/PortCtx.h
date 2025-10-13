@@ -55,9 +55,4 @@ PCOMM_CONTEXT PortCtx_FindAndReferenceByCookie(PVOID ConnectionCookie);
 NTSTATUS PortCtx_Snapshot(PCOMM_CONTEXT** outArray, PULONG outCount);
 VOID PortCtx_FreeSnapshot(PCOMM_CONTEXT* array, ULONG count);
 
-// Set the per-connection user directory. The string should be a null-terminated
-// UTF-16LE buffer. This function will make an internal copy from NonPagedPool
-// and free any previous value.
-NTSTATUS PortCtx_SetUserDir(PCOMM_CONTEXT ctx, PCWSTR userDir, SIZE_T bytes);
-
 #endif

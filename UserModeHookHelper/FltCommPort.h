@@ -8,9 +8,6 @@ typedef struct _COMM_CONTEXT {
 	PFLT_PORT		m_ClientPort; 
 	LONG			m_RefCount;
 	BOOLEAN			m_Removed; /* TRUE when removed/unloading */
-	// Optional null-terminated UTF-16LE directory supplied by user-mode client.
-	// Allocated from NonPagedPool when set; freed during context cleanup.
-	PWSTR               m_UserDir;
 }COMM_CONTEXT, *PCOMM_CONTEXT;
 
 
@@ -52,5 +49,6 @@ Comm_MessageNotify(
 // This is safe to call at APC level; it will iterate PortCtx list and send a
 // small message to each client port. Returns number of clients successfully
 // notified via outNotifiedCount (may be NULL).
-NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG outNotifiedCount);
+// If imageName is non-NULL the caller retains ownership and must free it.
+NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG outNotifiedCount, PUNICODE_STRING imageName);
 #endif

@@ -6,6 +6,7 @@
 #include "HookList.h"
 #include "PortCtx.h"
 #include "DriverCtx.h"
+#include "Inject.h"
 NTSTATUS
 MiniUnload(
 	FLT_FILTER_UNLOAD_FLAGS Flags
@@ -14,8 +15,8 @@ MiniUnload(
 	UNREFERENCED_PARAMETER(Flags);
 
 	// free port context related resources (encapsulated in PortCtx module)
-	// Uninitialize pending-inject list before tearing down port contexts
-	UninitPendingInjectList();
+	// Uninitialize injection module before tearing down port contexts
+	Inject_Uninit();
 	PortCtx_Uninit();
 
 	// free hook list entries (encapsulated in HookList module)

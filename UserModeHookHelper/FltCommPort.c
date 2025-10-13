@@ -149,15 +149,13 @@ Comm_MessageNotify(
 
 	switch (msg->m_Cmd) {
 	case CMD_SET_USER_DIR: {
-		// Payload is a UTF-16LE null-terminated directory path. Accept any
-		// size > 0 (must be at least 2 bytes for NUL). We'll copy bytes as-is.
+		// Single global user-dir is expected (only UMController.exe will send this).
 		SIZE_T payloadBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE;
 		if (payloadBytes < sizeof(WCHAR)) {
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 			status = STATUS_BUFFER_TOO_SMALL;
 			goto cleanup;
 		}
-		// Ensure buffer contains a terminating NUL within payloadBytes
 		PCWSTR w = (PCWSTR)msg->m_Data;
 		SIZE_T wcharCount = payloadBytes / sizeof(WCHAR);
 		BOOLEAN foundNull = FALSE;
@@ -169,13 +167,7 @@ Comm_MessageNotify(
 			status = STATUS_INVALID_PARAMETER;
 			goto cleanup;
 		}
-
-		// Caller reference must be present to set per-connection data
-		if (!pPortCtxCallerRef) {
-			status = STATUS_INVALID_DEVICE_STATE;
-			goto cleanup;
-		}
-		NTSTATUS st = PortCtx_SetUserDir(pPortCtxCallerRef, w, (SIZE_T)(wcharCount * sizeof(WCHAR)));
+		NTSTATUS st = DriverCtx_SetUserDir(w, (SIZE_T)(wcharCount * sizeof(WCHAR)));
 		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
 			*(NTSTATUS*)OutputBuffer = st;
 			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
@@ -331,43 +323,22 @@ cleanup:
 	return status;
 }
 
-NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG outNotifiedCount) {
+NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG outNotifiedCount, PUNICODE_STRING imageName) {
 	NTSTATUS status = STATUS_SUCCESS;
 	PCOMM_CONTEXT* arr = NULL;
 	ULONG count = 0;
 	if (outNotifiedCount) *outNotifiedCount = 0;
-
 	status = PortCtx_Snapshot(&arr, &count);
 	if (!NT_SUCCESS(status)) return status;
 	if (count == 0) return STATUS_SUCCESS;
-	// Attempt to obtain the process image name so we can include it in the
-	// notification payload. This is optional; if retrieval fails we'll send
-	// only PID+Create flag. We fetch the image name here once per broadcast
-	// so the same payload is sent to all connected clients.
-	PUNICODE_STRING imageName = NULL;
-	PEPROCESS process = NULL;
 	SIZE_T nameBytes = 0;
-	NTSTATUS stLookup = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)ProcessId, &process);
-	if (NT_SUCCESS(stLookup) && process != NULL) {
-		NTSTATUS stName = SeLocateProcessImageName(process, &imageName);
-		if (NT_SUCCESS(stName) && imageName != NULL && imageName->Length > 0) {
-			// imageName->Length is in bytes
-			nameBytes = imageName->Length;
-		} else {
-			if (imageName) { ExFreePool(imageName); imageName = NULL; }
-			nameBytes = 0;
-		}
-		// We're done with the referenced process object now
-		ObDereferenceObject(process);
-		process = NULL;
-	}
+	if (imageName && imageName->Buffer && imageName->Length > 0) nameBytes = imageName->Length;
 
 	// Build message: [DWORD pid][BOOLEAN create][optional WCHAR name...\0]
 	ULONG payloadSize = (ULONG)(sizeof(DWORD) + sizeof(BOOLEAN) + nameBytes + (nameBytes ? sizeof(WCHAR) : 0));
 	ULONG msgSize = UMHH_MSG_HEADER_SIZE + payloadSize;
 	PUMHH_COMMAND_MESSAGE msg = ExAllocatePoolWithTag(NonPagedPool, msgSize, tag_port);
 	if (!msg) {
-		if (imageName) ExFreePool(imageName);
 		PortCtx_FreeSnapshot(arr, count);
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
@@ -383,9 +354,8 @@ NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG out
 		// Null-terminate
 		WCHAR* term = (WCHAR*)(dest + nameBytes);
 		*term = L'\0';
-		// Free the imageName structure allocated by SeLocateProcessImageName
-		ExFreePool(imageName);
-		imageName = NULL;
+		// NOTE: caller retains ownership of imageName and is responsible for
+		// freeing it after this call.
 	}
 
 	ULONG notified = 0;

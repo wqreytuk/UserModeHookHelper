@@ -2,6 +2,7 @@
 
 static PFLT_FILTER s_Filter = NULL;
 static PFLT_PORT s_ServerPort = NULL;
+static PWSTR s_UserDir = NULL;
 
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter) {
     s_Filter = Filter;
@@ -20,4 +21,27 @@ VOID DriverCtx_ClearServerPort(VOID) {
 }
 VOID DriverCtx_ClearFilter(VOID) {
     s_Filter = NULL;
+}
+
+NTSTATUS DriverCtx_SetUserDir(PCWSTR dir, SIZE_T bytes) {
+    if (!dir || bytes == 0) return STATUS_INVALID_PARAMETER;
+    if (bytes % sizeof(WCHAR) != 0) return STATUS_INVALID_PARAMETER;
+    PWSTR buf = ExAllocatePoolWithTag(NonPagedPool, bytes, tag_ctx);
+    if (!buf) return STATUS_INSUFFICIENT_RESOURCES;
+    RtlCopyMemory(buf, dir, bytes);
+    // Free old one
+    if (s_UserDir) ExFreePoolWithTag(s_UserDir, tag_ctx);
+    s_UserDir = buf;
+    return STATUS_SUCCESS;
+}
+
+PWSTR DriverCtx_GetUserDir(VOID) {
+    return s_UserDir;
+}
+
+VOID DriverCtx_ClearUserDir(VOID) {
+    if (s_UserDir) {
+        ExFreePoolWithTag(s_UserDir, tag_ctx);
+        s_UserDir = NULL;
+    }
 }

@@ -57,6 +57,9 @@
     <ClCompile Include="DriverCtx.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Inject.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Trace.h">
@@ -96,6 +99,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DriverCtx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Inject.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
