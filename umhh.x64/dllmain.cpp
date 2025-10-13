@@ -1,96 +1,7 @@
-﻿
-#define _ARM_WINAPI_PARTITION_DESKTOP_SDK_AVAILABLE 1
-
-
-//
-// Include NTDLL-related headers.
-//
-#define NTDLL_NO_INLINE_INIT_STRING
-#include <ntdll.h>
+﻿#include <ntdll.h>
 #include "../UMController/ETW.h"
-#if defined(_M_IX86)
-#  define ARCH_A          "x86"
-#  define ARCH_W         L"x86"
-#elif defined(_M_AMD64)
-#  define ARCH_A          "x64"
-#  define ARCH_W         L"x64"
-#elif defined(_M_ARM)
-#  define ARCH_A          "ARM32"
-#  define ARCH_W         L"ARM32"
-#elif defined(_M_ARM64)
-#  define ARCH_A          "ARM64"
-#  define ARCH_W         L"ARM64"
-#else
-#  error Unknown architecture
-#endif
-
-
-// size_t strlen(const char * str)
-// {
-//   const char *s;
-//   for (s = str; *s; ++s) {}
-//   return(s - str);
-// }
-
-//
-// Include support for ETW logging.
-// Note that following functions are mocked, because they're
-// located in advapi32.dll.  Fortunatelly, advapi32.dll simply
-// redirects calls to these functions to the ntdll.dll.
-//
-
-// Map Event* symbols to the standard ETW APIs provided by evntprov.h
-#define EventActivityIdControl  EventActivityIdControl
-#define EventEnabled            EventEnabled
-#define EventProviderEnabled    EventProviderEnabled
-#define EventRegister           EventRegister
-#define EventSetInformation     EventSetInformation
-#define EventUnregister         EventUnregister
-#define EventWrite              EventWrite
-#define EventWriteEndScenario   EventWriteEndScenario
-#define EventWriteEx            EventWriteEx
-#define EventWriteStartScenario EventWriteStartScenario
-#define EventWriteString        EventWriteString
-#define EventWriteTransfer      EventWriteTransfer
-
 #include <evntprov.h>
 
-#include "../UMController/ETW.h"
-
-//
-// Include Detours.
-//
-
-
-// This is necessary for x86 builds because of SEH,
-// which is used by Detours.  Look at loadcfg.c file
-// in Visual Studio's CRT source codes for the original
-// implementation.
-//
-
-#if defined(_M_IX86) || defined(_X86_)
-
-EXTERN_C PVOID __safe_se_handler_table[]; /* base of safe handler entry table */
-EXTERN_C BYTE  __safe_se_handler_count;   /* absolute symbol whose address is
-											 the count of table entries */
-EXTERN_C
-CONST
-DECLSPEC_SELECTANY
-IMAGE_LOAD_CONFIG_DIRECTORY
-_load_config_used = {
-	sizeof(_load_config_used),
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	(SIZE_T)__safe_se_handler_table,
-	(SIZE_T)&__safe_se_handler_count,
-};
-
-#endif
-
-//
-// Unfortunatelly sprintf-like functions are not exposed
-// by ntdll.lib, which we're linking against.  We have to
-// load them dynamically.
-//
 
 using _snwprintf_fn_t = int(__cdecl*)(
 	wchar_t *buffer,
@@ -108,59 +19,10 @@ using _vsnwprintf_fn_t = int(__cdecl*)(
 	);
 
 inline _vsnwprintf_fn_t _vsnwprintf = nullptr;
-//
-// ETW provider GUID and global provider handle.
-//
 
-//
-// GUID:
-//   {a4b4ba50-a667-43f5-919b-1e52a6d69bd5}
-//
  
 REGHANDLE ProviderHandle = 0;
 
-//
-// Hooking functions and prototypes.
-//
-
-
-
-// Removed unused detour hook functions and helper thread routine to reduce dead code.
-
-NTSTATUS
-NTAPI
-EnableDetours(
-	VOID
-)
-{
-	// DetourTransactionBegin();
-	// {
-	//     OrigNtQuerySystemInformation = NtQuerySystemInformation;
-	//     DetourAttach((PVOID*)&OrigNtQuerySystemInformation, HookNtQuerySystemInformation);
-	// 
-	//     OrigNtCreateThreadEx = NtCreateThreadEx;
-	//     DetourAttach((PVOID*)&OrigNtCreateThreadEx, HookNtCreateThreadEx);
-	// }
-	// DetourTransactionCommit();
-
-	return STATUS_SUCCESS;
-}
-
-NTSTATUS
-NTAPI
-DisableDetours(
-	VOID
-)
-{
-	// DetourTransactionBegin();
-	// {
-	// 	DetourDetach((PVOID*)&OrigNtQuerySystemInformation, HookNtQuerySystemInformation);
-	// 	DetourDetach((PVOID*)&OrigNtCreateThreadEx, HookNtCreateThreadEx);
-	// }
-	// DetourTransactionCommit();
-
-	return STATUS_SUCCESS;
-}
 typedef NTSTATUS(NTAPI *PNtDeleteFile)(
 	POBJECT_ATTRIBUTES ObjectAttributes
 	);
@@ -301,30 +163,7 @@ static NTSTATUS ReadBytesFromFileNt(
 
 	pNtClose(hFile);
 	return status;
-}
-// Read a 32-bit unsigned integer from start of file
-BOOL ReadUint32FromFile(_In_z_ PCWSTR path, _Out_ UINT32 *out)
-{
-	if (!path || !out) return FALSE;
-	UINT32 val = 0;
-	ULONG bytesRead = 0;
-	NTSTATUS st = ReadBytesFromFileNt(path, &val, sizeof(val), &bytesRead);
-	if (!NT_SUCCESS(st) || bytesRead < sizeof(val)) return FALSE;
-	*out = val;
-	return TRUE;
-}
-
-// Read a 64-bit unsigned integer from start of file
-BOOL ReadUint64FromFile(_In_z_ PCWSTR path, _Out_ UINT64 *out)
-{
-	if (!path || !out) return FALSE;
-	UINT64 val = 0;
-	ULONG bytesRead = 0;
-	NTSTATUS st = ReadBytesFromFileNt(path, &val, sizeof(val), &bytesRead);
-	if (!NT_SUCCESS(st) || bytesRead < sizeof(val)) return FALSE;
-	*out = val;
-	return TRUE;
-}
+}  
 PFN_NtOpenFile pNtOpenFile = 0;
 PFN_NtReadFile pNtReadFile = 0;
 PFN_NtClose pNtClose = 0;
@@ -398,12 +237,6 @@ VOID EtwLog(_In_ PCWSTR Format, ...)
 
 
 NTSTATUS mycode(_In_ PVOID ThreadParameter) {
-
-
-
-
-
-
 	UNICODE_STRING NtdllPath;
 	RtlInitUnicodeString(&NtdllPath, (PWSTR)L"ntdll.dll");
 
@@ -521,14 +354,12 @@ int ReadFileParsePidAndDllPath(WCHAR* patbuf, char* dllPath) {
 		FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
 
 	if (status != 0) {
-
-		// 打开文件失败
+		 
 		return -1;
 	}
 	IO_STATUS_BLOCK isb = { 0 };
 	char fileContextBuffer[256] = { 0 };
-	if (0 != pNtReadFile(hFile, 0, 0, 0, &isb, fileContextBuffer, 256, 0, 0)) {
-		// 读取失败
+	if (0 != pNtReadFile(hFile, 0, 0, 0, &isb, fileContextBuffer, 256, 0, 0)) { 
 		pNtClose(hFile);
 		return -2;
 	}
@@ -637,11 +468,7 @@ NTAPI
 OnProcessDetach(
 	_In_ HANDLE ModuleHandle
 )
-{
-	//
-	// Unhook all functions.
-	//
-
+{  
 	if (ProviderHandle) {
 		EventUnregister(ProviderHandle);
 		ProviderHandle = 0;
@@ -689,9 +516,6 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	switch (ul_reason_for_call)
 	{
 	case DLL_PROCESS_ATTACH:
-
-		// Sleep(60000);
-	 //  __debugbreak();
 		OnProcessAttach(hModule);
 		break;
 
