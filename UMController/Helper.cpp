@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <TlHelp32.h>
 // COM/WMI headers
 #include <comdef.h>
 #include <Wbemidl.h>
@@ -201,4 +202,55 @@ cleanup:
 	if (pLoc) pLoc->Release();
 	if (coInit) CoUninitialize();
 	return result;
+}
+
+bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
+	// UMController is always built as x64. Simplify logic: detect WOW64.
+	typedef BOOL (WINAPI *IsWow64Process2_t)(HANDLE, USHORT*, USHORT*);
+	typedef BOOL (WINAPI *IsWow64Process_t)(HANDLE, PBOOL);
+	static IsWow64Process2_t s_pIsWow64Process2 = nullptr;
+	static IsWow64Process_t  s_pIsWow64Process  = nullptr;
+	static bool s_resolved = false;
+	if (!s_resolved) {
+		HMODULE hK32 = GetModuleHandleW(L"kernel32.dll");
+		if (hK32) {
+			s_pIsWow64Process2 = (IsWow64Process2_t)GetProcAddress(hK32, "IsWow64Process2");
+			s_pIsWow64Process  = (IsWow64Process_t)GetProcAddress(hK32, "IsWow64Process");
+		}
+		s_resolved = true;
+	}
+
+	HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	if (!h) return false;
+	bool is64 = true; // assume 64-bit unless proven WOW64
+	if (s_pIsWow64Process2) {
+		USHORT pMachine = 0, nMachine = 0;
+		if (!s_pIsWow64Process2(h, &pMachine, &nMachine)) { CloseHandle(h); return false; }
+		is64 = (pMachine == 0); // pMachine != 0 => WOW64 (i.e., 32-bit process)
+	} else if (s_pIsWow64Process) {
+		BOOL wow = FALSE;
+		if (!s_pIsWow64Process(h, &wow)) { CloseHandle(h); return false; }
+		is64 = !wow;
+	}
+	CloseHandle(h);
+	outIs64 = is64;
+	return true;
+}
+
+bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) {
+	if (!baseName || !*baseName) return false;
+	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+	if (snap == INVALID_HANDLE_VALUE) return false;
+	MODULEENTRY32W me = { sizeof(me) };
+	bool ok = false;
+	bool present = false;
+	if (Module32FirstW(snap, &me)) {
+		do {
+			if (_wcsicmp(me.szModule, baseName) == 0) { present = true; break; }
+		} while (Module32NextW(snap, &me));
+		ok = true;
+	}
+	CloseHandle(snap);
+	if (ok) outPresent = present;
+	return ok;
 }

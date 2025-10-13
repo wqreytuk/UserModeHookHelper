@@ -26,6 +26,15 @@ public:
 	// return quickly. If not set, Fatal() will log and return.
 	static void SetFatalHandler(FatalHandlerType handler);
 	static void Fatal(const wchar_t* message);
+
+	// Determine whether the target process is 64-bit. Returns true on success
+	// and sets outIs64. On failure returns false and leaves outIs64 unchanged.
+	static bool IsProcess64(DWORD pid, bool& outIs64);
+
+	// Check if a module with the given (case-insensitive) base name is loaded
+	// in the target process. Returns true on success and sets outPresent.
+	// Fails (returns false) if the process cannot be opened or enumerated.
+	static bool IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent);
 private:
 	// Shared reusable buffer for path queries. Protected by m_bufMutex.
 	static std::unique_ptr<TCHAR[]> m_sharedBuf;

@@ -6,6 +6,7 @@
 #include "framework.h"
 #include "UMController.h"
 #include "UMControllerDlg.h"
+#include "ProcFlags.h"
 #include "afxdialogex.h"
 #include "ETW.h"
 #include "Helper.h"
@@ -423,12 +424,19 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 		for (wchar_t c : all[idx].name) nameLower.push_back(towlower(c));
 
 		if (filter.empty() || nameLower.find(filterLower) != std::wstring::npos) {
+				bool is64=false; Helper::IsProcess64(all[idx].pid, is64);
+				bool dllLoaded=false; Helper::IsModuleLoaded(all[idx].pid, is64? MASTER_X64_DLL_BASENAME: MASTER_X86_DLL_BASENAME, dllLoaded);
+				DWORD flags = 0;
+				if (all[idx].bInHookList) flags |= PF_IN_HOOK_LIST;
+				if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+				if (is64) flags |= PF_IS_64BIT;
+				PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
 				int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(all[idx].pid).c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 1, all[idx].name.c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 2, all[idx].bInHookList ? L"Yes" : L"No");
 				m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
-				m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)all[idx].pid);
+				m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)packed);
 			i++;
 		}
 	}
@@ -479,7 +487,14 @@ void CUMControllerDlg::LoadProcessList() {
 		m_ProcListCtrl.SetItemText(nIndex, 2, all[idx].bInHookList ? L"Yes" : L"No");
 		m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
 		m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
-		m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)all[idx].pid);
+		bool is64=false; Helper::IsProcess64(all[idx].pid, is64);
+		bool dllLoaded=false; Helper::IsModuleLoaded(all[idx].pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+		DWORD flags = 0;
+		if (all[idx].bInHookList) flags |= PF_IN_HOOK_LIST;
+		if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+		if (is64) flags |= PF_IS_64BIT;
+		PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
+		m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)packed);
 		// ProcessManager already maintains the index mapping
 		i++;
 	}
@@ -577,7 +592,13 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			m_ProcListCtrl.SetItemText(nIndex, 2, L"No");
 			m_ProcListCtrl.SetItemText(nIndex, 3, L"");
 			m_ProcListCtrl.SetItemText(nIndex, 4, L"");
-			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)pid);
+			bool is64=false; Helper::IsProcess64(pid, is64);
+			bool dllLoaded=false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+			DWORD flags = 0;
+			if (entry.bInHookList) flags |= PF_IN_HOOK_LIST;
+			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+			if (is64) flags |= PF_IS_64BIT;
+			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
 		}
 
 			// Resolver thread: single-call resolver
@@ -638,13 +659,27 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			m_ProcListCtrl.SetItemText(newItem, 2, e.bInHookList ? L"Yes" : L"No");
 			m_ProcListCtrl.SetItemText(newItem, 3, e.path.c_str());
 			m_ProcListCtrl.SetItemText(newItem, 4, e.cmdline.c_str());
-			m_ProcListCtrl.SetItemData(newItem, (DWORD_PTR)pid);
+			bool is64=false; Helper::IsProcess64(pid, is64);
+			bool dllLoaded=false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+			DWORD flags = 0;
+			if (e.bInHookList) flags |= PF_IN_HOOK_LIST;
+			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+			if (is64) flags |= PF_IS_64BIT;
+			m_ProcListCtrl.SetItemData(newItem, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
 			item = newItem;
 		}
 
 		m_ProcListCtrl.SetItemText(item, 2, inHook ? L"Yes" : L"No");
 		m_ProcListCtrl.SetItemText(item, 3, path.c_str());
 		m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
+		// refresh flags
+		bool is64=false; Helper::IsProcess64(pid, is64);
+		bool dllLoaded=false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+		DWORD flags = 0;
+		if (inHook) flags |= PF_IN_HOOK_LIST;
+		if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+		if (is64) flags |= PF_IS_64BIT;
+		m_ProcListCtrl.SetItemData(item, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
 		return 0;
 	}
 
@@ -827,7 +862,8 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	if (nItem == -1)
 		return;
 
-	DWORD pid = (DWORD)m_ProcListCtrl.GetItemData(nItem);
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
 	ProcessEntry item;
 	int idx = -1;
 	if (!PM_GetEntryCopyByPid(pid, item, &idx)) return;
@@ -840,9 +876,12 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	menu.AppendMenu(MF_STRING, ID_MENU_INJECT_DLL, L"Inject DLL");
 
 	// grey out certai menu based on bInHookList
-	menu.EnableMenuItem(ID_MENU_ADD_HOOK, item.bInHookList ? MF_GRAYED : MF_ENABLED);
-	menu.EnableMenuItem(ID_MENU_REMOVE_HOOK, item.bInHookList ? MF_ENABLED : MF_GRAYED);
-	menu.EnableMenuItem(ID_MENU_INJECT_DLL, item.bInHookList ? MF_ENABLED : MF_GRAYED);
+	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
+	bool inHook = (flags & PF_IN_HOOK_LIST) != 0;
+	bool dllLoaded = (flags & PF_MASTER_DLL_LOADED) != 0;
+	menu.EnableMenuItem(ID_MENU_ADD_HOOK, inHook ? MF_GRAYED : MF_ENABLED);
+	menu.EnableMenuItem(ID_MENU_REMOVE_HOOK, inHook ? MF_ENABLED : MF_GRAYED);
+	menu.EnableMenuItem(ID_MENU_INJECT_DLL, inHook ? MF_ENABLED : MF_GRAYED);
 
 
 	CPoint point;
