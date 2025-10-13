@@ -64,3 +64,4 @@ x86/
 
 # Git Large File Storage hints (do not track build artifacts via LFS)
 *.zip filter=lfs diff=lfs merge=lfs -textscripts/*.ps1
+code_for_copilot_to_learn/
