@@ -986,7 +986,9 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	bool dllLoaded = (flags & PF_MASTER_DLL_LOADED) != 0;
 	menu.EnableMenuItem(ID_MENU_ADD_HOOK, inHook ? MF_GRAYED : MF_ENABLED);
 	menu.EnableMenuItem(ID_MENU_REMOVE_HOOK, inHook ? MF_ENABLED : MF_GRAYED);
-	menu.EnableMenuItem(ID_MENU_INJECT_DLL, inHook ? MF_ENABLED : MF_GRAYED);
+	// Only allow injecting the master DLL when the master DLL is already
+	// present inside the target process (PF_MASTER_DLL_LOADED).
+	menu.EnableMenuItem(ID_MENU_INJECT_DLL, dllLoaded ? MF_ENABLED : MF_GRAYED);
 
 
 	CPoint point;
