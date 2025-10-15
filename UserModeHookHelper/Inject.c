@@ -110,7 +110,7 @@ static INJ_THUNK       InjThunk[2] = {
 
 // Simple FNV-1a 64-bit over UTF-16LE bytes
 static ULONGLONG ComputeNtPathHash(PUNICODE_STRING Path)
-{
+{	
     if (!Path || !Path->Buffer || Path->Length == 0) return 0;
     const ULONGLONG FNV_offset = 14695981039346656037ULL;
     const ULONGLONG FNV_prime = 1099511628211ULL;
