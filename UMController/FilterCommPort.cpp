@@ -265,7 +265,8 @@ boolean Filter::FLTCOMM_CheckHookList(const std::wstring& ntPath) {
 
 	// Interpret the WCHAR buffer as bytes for hashing (UTF-16LE)
 	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
-	DWORD64 hash = Helper::GetNtPathHash(const_cast<UCHAR*>(bytes));
+	size_t bytesLen = ntPath.size() * sizeof(wchar_t);
+	DWORD64 hash = Helper::GetNtPathHash(bytes, bytesLen);
 
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD64));
 	if (!msg) {
@@ -362,7 +363,8 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 
 	// Compute hash
 	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
-	DWORD64 hash = Helper::GetNtPathHash(const_cast<UCHAR*>(bytes));
+	size_t bytesLen = ntPath.size() * sizeof(wchar_t);
+	DWORD64 hash = Helper::GetNtPathHash(bytes, bytesLen);
 
 	// Build message: ULONGLONG hash followed by null-terminated WCHAR path
 	size_t pathBytes = (ntPath.size() + 1) * sizeof(WCHAR);

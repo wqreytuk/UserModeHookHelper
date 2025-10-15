@@ -7,6 +7,18 @@
 #include "UMController.h"
 #include "UMControllerDlg.h"
 #include "ProcFlags.h"
+
+// Helper to format the InHookList column text based on packed itemdata flags.
+static std::wstring FormatHookColumn(PROC_ITEMDATA packed, bool bInHookList) {
+	if (!bInHookList) return std::wstring(L"No");
+	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
+	bool master = (flags & PF_MASTER_DLL_LOADED) != 0;
+	bool is64 = (flags & PF_IS_64BIT) != 0;
+	wchar_t buf[128];
+	// Format: Yes (master=Yes, x64)
+	swprintf_s(buf, _countof(buf), L"Yes (master=%s, %s)", master ? L"Yes" : L"No", is64 ? L"x64" : L"x86");
+	return std::wstring(buf);
+}
 #include "afxdialogex.h"
 #include "ETW.h"
 #include "Helper.h"
@@ -214,8 +226,8 @@ BOOL CUMControllerDlg::OnInitDialog()
 
 	m_ProcListCtrl.InsertColumn(0, L"PID", LVCFMT_LEFT, 100);
 	m_ProcListCtrl.InsertColumn(1, L"Process Name", LVCFMT_LEFT, 200);
-	// Column 2: InHookList (Yes/No), Column 3: NT Path, Column 4: Start Params
-	m_ProcListCtrl.InsertColumn(2, L"InHookList", LVCFMT_LEFT, 80);
+	// Column 2: HookState (Yes/No/master/x86|x64), Column 3: NT Path, Column 4: Start Params
+	m_ProcListCtrl.InsertColumn(2, L"HookState", LVCFMT_LEFT, 120);
 	m_ProcListCtrl.InsertColumn(3, L"NT Path", LVCFMT_LEFT, 400);
 	m_ProcListCtrl.InsertColumn(4, L"Start Params", LVCFMT_LEFT, 300);
 	m_ProcListCtrl.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
@@ -367,10 +379,94 @@ void CUMControllerDlg::OnDestroy()
 
 
 void CUMControllerDlg::OnAddHook() {
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) {
+		MessageBox(L"Please select a process to add to the hook list.", L"Add Hook", MB_OK | MB_ICONINFORMATION);
+		return;
+	}
 
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+
+	// Resolve NT image path for the PID
+	std::wstring ntPath;
+	if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) {
+		app.GetETW().Log(L"OnAddHook: failed to resolve NT path for pid %u\n", pid);
+		MessageBox(L"Failed to resolve process image path. The process may have exited.", L"Add Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	app.GetETW().Log(L"OnAddHook: adding hook for pid %u ntpath=%s\n", pid, ntPath.c_str());
+
+	// Call into Filter module to add hook entry
+	bool ok = m_Filter.FLTCOMM_AddHook(ntPath);
+	if (!ok) {
+		app.GetETW().Log(L"OnAddHook: FLTCOMM_AddHook failed for %s\n", ntPath.c_str());
+		MessageBox(L"Failed to add hook entry in kernel.", L"Add Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// Update ProcessManager and UI: set bInHookList and refresh flags in itemdata
+	PM_UpdateEntryFields(pid, ntPath, true, L"" );
+
+	// recompute flags and update UI row
+	bool is64 = false; Helper::IsProcess64(pid, is64);
+	bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+	DWORD flags = PF_IN_HOOK_LIST;
+	if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+	if (is64) flags |= PF_IS_64BIT;
+	PROC_ITEMDATA newPacked = MAKE_ITEMDATA(pid, flags);
+	m_ProcListCtrl.SetItemData(nItem, (DWORD_PTR)newPacked);
+	m_ProcListCtrl.SetItemText(nItem, 2, FormatHookColumn(newPacked, true).c_str());
+
+	MessageBox(L"Process added to hook list.", L"Add Hook", MB_OK | MB_ICONINFORMATION);
 }
 void CUMControllerDlg::OnRemoveHook() {
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) {
+		MessageBox(L"Please select a process to remove from the hook list.", L"Remove Hook", MB_OK | MB_ICONINFORMATION);
+		return;
+	}
 
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+
+	// Resolve NT path for PID (needed to compute hash)
+	std::wstring ntPath;
+	if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) {
+		app.GetETW().Log(L"OnRemoveHook: failed to resolve NT path for pid %u\n", pid);
+		MessageBox(L"Failed to resolve process image path. The process may have exited.", L"Remove Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// Compute hash (reuse Helper's function via conversion to UCHAR*)
+	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+	size_t bytesLen = ntPath.size() * sizeof(wchar_t);
+	ULONGLONG hash = (ULONGLONG)Helper::GetNtPathHash(bytes, bytesLen);
+
+	app.GetETW().Log(L"OnRemoveHook: removing hook for pid %u ntpath=%s hash=0x%I64x\n", pid, ntPath.c_str(), hash);
+
+	bool ok = m_Filter.FLTCOMM_RemoveHookByHash(hash);
+	if (!ok) {
+		app.GetETW().Log(L"OnRemoveHook: FLTCOMM_RemoveHookByHash failed for hash=0x%I64x\n", hash);
+		MessageBox(L"Failed to remove hook from kernel.", L"Remove Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// Update ProcessManager and UI: clear in-hook flag
+	PM_UpdateEntryFields(pid, ntPath, false, L"");
+
+	// recompute flags and update UI row
+	bool is64 = false; Helper::IsProcess64(pid, is64);
+	bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+	DWORD flags = 0;
+	if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+	if (is64) flags |= PF_IS_64BIT;
+	PROC_ITEMDATA newPacked = MAKE_ITEMDATA(pid, flags);
+	m_ProcListCtrl.SetItemData(nItem, (DWORD_PTR)newPacked);
+	m_ProcListCtrl.SetItemText(nItem, 2, FormatHookColumn(newPacked, false).c_str());
+
+	MessageBox(L"Process removed from hook list.", L"Remove Hook", MB_OK | MB_ICONINFORMATION);
 }
 void CUMControllerDlg::OnInjectDll() {
 
@@ -433,7 +529,7 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 				PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
 				int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(all[idx].pid).c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 1, all[idx].name.c_str());
-				m_ProcListCtrl.SetItemText(nIndex, 2, all[idx].bInHookList ? L"Yes" : L"No");
+				m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(packed, all[idx].bInHookList).c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
 				m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)packed);
@@ -484,16 +580,17 @@ void CUMControllerDlg::LoadProcessList() {
 	for (size_t idx = 0; idx < all.size(); idx++) {
 		int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(all[idx].pid).c_str());
 		m_ProcListCtrl.SetItemText(nIndex, 1, all[idx].name.c_str());
-		m_ProcListCtrl.SetItemText(nIndex, 2, all[idx].bInHookList ? L"Yes" : L"No");
-		m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
-		m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
-		bool is64=false; Helper::IsProcess64(all[idx].pid, is64);
-		bool dllLoaded=false; Helper::IsModuleLoaded(all[idx].pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+		// compute flags and packed itemdata before formatting the hook column
+		bool is64 = false; Helper::IsProcess64(all[idx].pid, is64);
+		bool dllLoaded = false; Helper::IsModuleLoaded(all[idx].pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
 		DWORD flags = 0;
 		if (all[idx].bInHookList) flags |= PF_IN_HOOK_LIST;
 		if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
 		if (is64) flags |= PF_IS_64BIT;
 		PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
+		m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(packed, all[idx].bInHookList).c_str());
+		m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
+		m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
 		m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)packed);
 		// ProcessManager already maintains the index mapping
 		i++;
@@ -516,7 +613,11 @@ void CUMControllerDlg::LoadProcessList() {
 				continue;
 			}
 
+			// Log the NT path being checked and the result to help diagnose
+			// cases where many processes report being in the hook list.
+			// app.GetETW().Log(L"Resolver: checking hook list for pid %u ntpath=%s\n", pid, ntPath.c_str());
 			bool inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
+			// app.GetETW().Log(L"Resolver: FLTCOMM_CheckHookList returned %d for pid %u ntpath=%s\n", inHook, pid, ntPath.c_str());
 			std::wstring cmdline;
 			Helper::GetProcessCommandLineByPID(pid, cmdline);
 
@@ -589,7 +690,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			} else {
 				m_ProcListCtrl.SetItemText(nIndex, 1, L"(resolving)");
 			}
-			m_ProcListCtrl.SetItemText(nIndex, 2, L"No");
+			m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(MAKE_ITEMDATA(pid, 0), false).c_str());
 			m_ProcListCtrl.SetItemText(nIndex, 3, L"");
 			m_ProcListCtrl.SetItemText(nIndex, 4, L"");
 			bool is64=false; Helper::IsProcess64(pid, is64);
@@ -610,7 +711,11 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
 				return;
 			}
+			// Log the NT path being checked and the result to help diagnose
+			// cases where many processes report being in the hook list.
+			// app.GetETW().Log(L"Notify resolver: checking hook list for pid %u ntpath=%s\n", pid, ntPath.c_str());
 			bool inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
+			// app.GetETW().Log(L"Notify resolver: FLTCOMM_CheckHookList returned %d for pid %u ntpath=%s\n", inHook, pid, ntPath.c_str());
 			std::wstring cmdline;
 			Helper::GetProcessCommandLineByPID(pid, cmdline);
 
@@ -656,7 +761,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			// Insert new item for this PID
 			int newItem = m_ProcListCtrl.InsertItem(idx, std::to_wstring(pid).c_str());
 			m_ProcListCtrl.SetItemText(newItem, 1, e.name.c_str());
-			m_ProcListCtrl.SetItemText(newItem, 2, e.bInHookList ? L"Yes" : L"No");
+			m_ProcListCtrl.SetItemText(newItem, 2, FormatHookColumn(MAKE_ITEMDATA(pid, (e.bInHookList?PF_IN_HOOK_LIST:0)), e.bInHookList).c_str());
 			m_ProcListCtrl.SetItemText(newItem, 3, e.path.c_str());
 			m_ProcListCtrl.SetItemText(newItem, 4, e.cmdline.c_str());
 			bool is64=false; Helper::IsProcess64(pid, is64);
@@ -669,17 +774,17 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			item = newItem;
 		}
 
-		m_ProcListCtrl.SetItemText(item, 2, inHook ? L"Yes" : L"No");
-		m_ProcListCtrl.SetItemText(item, 3, path.c_str());
-		m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
-		// refresh flags
-		bool is64=false; Helper::IsProcess64(pid, is64);
-		bool dllLoaded=false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
-		DWORD flags = 0;
-		if (inHook) flags |= PF_IN_HOOK_LIST;
-		if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-		if (is64) flags |= PF_IS_64BIT;
-		m_ProcListCtrl.SetItemData(item, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
+	// compute flags (is64/master dll) before formatting the column text
+	bool is64 = false; Helper::IsProcess64(pid, is64);
+	bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+	DWORD flags = 0;
+	if (inHook) flags |= PF_IN_HOOK_LIST;
+	if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+	if (is64) flags |= PF_IS_64BIT;
+	m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(MAKE_ITEMDATA(pid, flags), inHook).c_str());
+	m_ProcListCtrl.SetItemText(item, 3, path.c_str());
+	m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
+	m_ProcListCtrl.SetItemData(item, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
 		return 0;
 	}
 

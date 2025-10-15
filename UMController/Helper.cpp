@@ -44,13 +44,19 @@ void Helper::Fatal(const wchar_t* message) {
 }
 
 
-DWORD64 Helper::GetNtPathHash(UCHAR* str) {
+DWORD64 Helper::GetNtPathHash(const UCHAR* buf, size_t byteLen) {
 	const uint64_t FNV_prime = 1099511628211u;
 	uint64_t hash = 14695981039346656037u;
 
-	for (; *str; ++str) {
-		hash ^= (unsigned char)(*str);
+	// Process exact number of bytes provided by the caller. This ensures
+	// UTF-16LE buffers (which may contain embedded zero bytes) are hashed
+	// correctly.
+	const UCHAR* p = buf;
+	const UCHAR* end = buf + byteLen;
+	while (p < end) {
+		hash ^= (uint64_t)(*p);
 		hash *= FNV_prime;
+		++p;
 	}
 	return hash;
 }

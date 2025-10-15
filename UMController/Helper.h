@@ -9,7 +9,10 @@ class Helper{
 public:
 	typedef void(*FatalHandlerType)(const wchar_t* message);
 	// Hash an NT-style path (as byte buffer). Returns 64-bit FNV-1a hash.
-	static DWORD64 GetNtPathHash(UCHAR* str);
+	// NOTE: The caller must provide the byte length of the buffer. Do not
+	// rely on zero bytes within UTF-16LE strings as a terminator for byte
+	// buffers.
+	static DWORD64 GetNtPathHash(const UCHAR* buf, size_t byteLen);
 	// NEW: get NT (native) image path for a PID. Returns true on success and
 	// fills outNtPath with an NT-style path (e.g. "\Device\HarddiskVolume2\...").
 	static bool GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath);
