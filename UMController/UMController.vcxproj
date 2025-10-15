@@ -285,13 +285,16 @@
     <ClInclude Include="FilterCommPort.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="Helper.h" />
+    <ClInclude Include="HookActions.h" />
     <ClInclude Include="IPC.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="ProcessManager.h" />
+    <ClInclude Include="ProcessResolver.h" />
     <ClInclude Include="ProcFlags.h" />
     <ClInclude Include="ProcList.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="UIHelpers.h" />
     <ClInclude Include="UMController.h" />
     <ClInclude Include="UMControllerDlg.h" />
   </ItemGroup>
@@ -299,6 +302,7 @@
     <ClCompile Include="ETW.cpp" />
     <ClCompile Include="FilterCommPort.cpp" />
     <ClCompile Include="Helper.cpp" />
+    <ClCompile Include="HookActions.cpp" />
     <ClCompile Include="IPC.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -309,7 +313,9 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Out|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="ProcessManager.cpp" />
+    <ClCompile Include="ProcessResolver.cpp" />
     <ClCompile Include="ProcList.cpp" />
+    <ClCompile Include="UIHelpers.cpp" />
     <ClCompile Include="UMController.cpp" />
     <ClCompile Include="UMControllerDlg.cpp" />
   </ItemGroup>

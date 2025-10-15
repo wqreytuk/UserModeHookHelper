@@ -8,17 +8,9 @@
 #include "UMControllerDlg.h"
 #include "ProcFlags.h"
 
-// Helper to format the InHookList column text based on packed itemdata flags.
-static std::wstring FormatHookColumn(PROC_ITEMDATA packed, bool bInHookList) {
-	if (!bInHookList) return std::wstring(L"No");
-	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
-	bool master = (flags & PF_MASTER_DLL_LOADED) != 0;
-	bool is64 = (flags & PF_IS_64BIT) != 0;
-	wchar_t buf[128];
-	// Format: Yes (master=Yes, x64)
-	swprintf_s(buf, _countof(buf), L"Yes (master=%s, %s)", master ? L"Yes" : L"No", is64 ? L"x64" : L"x86");
-	return std::wstring(buf);
-}
+#include "UIHelpers.h"
+#include "HookActions.h"
+#include "ProcessResolver.h"
 #include "afxdialogex.h"
 #include "ETW.h"
 #include "Helper.h"
@@ -186,13 +178,8 @@ int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam
 	return pDlg->m_SortAscending ? res : -res;
 }
 
-// Custom message used to signal a fatal error from any thread.
-#define WM_APP_FATAL (WM_APP + 0x100)
-// Message to update a single process row from background thread.
-#define WM_APP_UPDATE_PROCESS (WM_APP + 0x101)
-// lParam values for WM_APP_UPDATE_PROCESS to identify the source
-#define UPDATE_SOURCE_LOAD 1
-#define UPDATE_SOURCE_NOTIFY 2
+// Shared message IDs used by dialog and resolver
+#include "UMControllerMsgs.h"
 BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
@@ -380,128 +367,24 @@ void CUMControllerDlg::OnDestroy()
 
 void CUMControllerDlg::OnAddHook() {
 	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
-	if (nItem == -1) {
-		MessageBox(L"Please select a process to add to the hook list.", L"Add Hook", MB_OK | MB_ICONINFORMATION);
-		return;
-	}
-
+	if (nItem == -1) return;
 	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
 	DWORD pid = PID_FROM_ITEMDATA(packed);
-
-	// Resolve NT image path for the PID
-	std::wstring ntPath;
-	if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) {
-		app.GetETW().Log(L"OnAddHook: failed to resolve NT path for pid %u\n", pid);
-		MessageBox(L"Failed to resolve process image path. The process may have exited.", L"Add Hook", MB_OK | MB_ICONERROR);
-		return;
-	}
-
-	app.GetETW().Log(L"OnAddHook: adding hook for pid %u ntpath=%s\n", pid, ntPath.c_str());
-
-	// Call into Filter module to add hook entry
-	bool ok = m_Filter.FLTCOMM_AddHook(ntPath);
-	if (!ok) {
-		app.GetETW().Log(L"OnAddHook: FLTCOMM_AddHook failed for %s\n", ntPath.c_str());
-		MessageBox(L"Failed to add hook entry in kernel.", L"Add Hook", MB_OK | MB_ICONERROR);
-		return;
-	}
-
-	// Update ProcessManager and UI: set bInHookList and refresh flags in itemdata
-	PM_UpdateEntryFields(pid, ntPath, true, L"" );
-
-	// recompute flags and update UI row
-	bool is64 = false; Helper::IsProcess64(pid, is64);
-	bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
-	DWORD flags = PF_IN_HOOK_LIST;
-	if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-	if (is64) flags |= PF_IS_64BIT;
-	PROC_ITEMDATA newPacked = MAKE_ITEMDATA(pid, flags);
-	m_ProcListCtrl.SetItemData(nItem, (DWORD_PTR)newPacked);
-	m_ProcListCtrl.SetItemText(nItem, 2, FormatHookColumn(newPacked, true).c_str());
-
-	MessageBox(L"Process added to hook list.", L"Add Hook", MB_OK | MB_ICONINFORMATION);
+	HookActions::HandleAddHook(this, &m_Filter, &m_ProcListCtrl, nItem, pid);
 }
 void CUMControllerDlg::OnRemoveHook() {
 	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
-	if (nItem == -1) {
-		MessageBox(L"Please select a process to remove from the hook list.", L"Remove Hook", MB_OK | MB_ICONINFORMATION);
-		return;
-	}
-
+	if (nItem == -1) return;
 	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
 	DWORD pid = PID_FROM_ITEMDATA(packed);
-
-	// Resolve NT path for PID (needed to compute hash)
-	std::wstring ntPath;
-	if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) {
-		app.GetETW().Log(L"OnRemoveHook: failed to resolve NT path for pid %u\n", pid);
-		MessageBox(L"Failed to resolve process image path. The process may have exited.", L"Remove Hook", MB_OK | MB_ICONERROR);
-		return;
-	}
-
-	// Compute hash (reuse Helper's function via conversion to UCHAR*)
-	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
-	size_t bytesLen = ntPath.size() * sizeof(wchar_t);
-	ULONGLONG hash = (ULONGLONG)Helper::GetNtPathHash(bytes, bytesLen);
-
-	app.GetETW().Log(L"OnRemoveHook: removing hook for pid %u ntpath=%s hash=0x%I64x\n", pid, ntPath.c_str(), hash);
-
-	bool ok = m_Filter.FLTCOMM_RemoveHookByHash(hash);
-	if (!ok) {
-		app.GetETW().Log(L"OnRemoveHook: FLTCOMM_RemoveHookByHash failed for hash=0x%I64x\n", hash);
-		MessageBox(L"Failed to remove hook from kernel.", L"Remove Hook", MB_OK | MB_ICONERROR);
-		return;
-	}
-
-	// Update ProcessManager and UI: clear in-hook flag
-	PM_UpdateEntryFields(pid, ntPath, false, L"");
-
-	// recompute flags and update UI row
-	bool is64 = false; Helper::IsProcess64(pid, is64);
-	bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
-	DWORD flags = 0;
-	if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-	if (is64) flags |= PF_IS_64BIT;
-	PROC_ITEMDATA newPacked = MAKE_ITEMDATA(pid, flags);
-	m_ProcListCtrl.SetItemData(nItem, (DWORD_PTR)newPacked);
-	m_ProcListCtrl.SetItemText(nItem, 2, FormatHookColumn(newPacked, false).c_str());
-
-	MessageBox(L"Process removed from hook list.", L"Remove Hook", MB_OK | MB_ICONINFORMATION);
+	HookActions::HandleRemoveHook(this, &m_Filter, &m_ProcListCtrl, nItem, pid);
 }
 void CUMControllerDlg::OnInjectDll() {
-
-	// Get selected item PID
 	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
-	if (nItem == -1) {
-		MessageBox(L"Please select a target process first.", L"Inject DLL", MB_OK | MB_ICONINFORMATION);
-		return;
-	}
-
-	DWORD pid = (DWORD)m_ProcListCtrl.GetItemData(nItem);
-
-	// Show file open dialog for DLL selection
-	wchar_t szFile[MAX_PATH] = {0};
-	OPENFILENAME ofn = {0};
-	ofn.lStructSize = sizeof(ofn);
-	ofn.hwndOwner = this->GetSafeHwnd();
-	ofn.lpstrFile = szFile;
-	ofn.nMaxFile = MAX_PATH;
-	ofn.lpstrFilter = L"DLL Files\0*.dll\0All Files\0*.*\0";
-	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-	ofn.lpstrTitle = L"Select DLL to inject";
-
-	if (!GetOpenFileName(&ofn)) return;
-
-	// Call IPC_SendInject (UMController/IPC.cpp)
-	BOOL ok = IPC_SendInject(pid, szFile);
-	if (ok) {
-		app.GetETW().Log(L"IPC_SendInject succeeded for pid %u dll %s\n", pid, szFile);
-		MessageBox(L"Injection request sent.", L"Inject DLL", MB_OK | MB_ICONINFORMATION);
-	} else {
-		app.GetETW().Log(L"IPC_SendInject failed for pid %u dll %s\n", pid, szFile);
-		MessageBox(L"Failed to send injection request.", L"Inject DLL", MB_OK | MB_ICONERROR);
-	}
-
+	if (nItem == -1) return;
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+	HookActions::HandleInjectDll(this, &m_Filter, &m_ProcListCtrl, nItem, pid);
 }
 
 void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
@@ -596,38 +479,8 @@ void CUMControllerDlg::LoadProcessList() {
 		i++;
 	}
 
-	// Start background thread to resolve details (NT path, hook membership, cmdline)
-	// Use a stable snapshot of PIDs so the resolver won't race with list mutations.
-	std::vector<DWORD> loaderPids = pids; // copy snapshot captured earlier
-	std::thread([this, loaderPids]() {
-		for (DWORD pid : loaderPids) {
-			std::wstring ntPath;
-			// Call ResolveProcessNtImagePath exactly once. If it returns false,
-			// assume the target process exited while resolving and post an exit
-			// message so the existing exit handling will remove the entry.
-			bool havePath = Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath);
-			if (!havePath) {
-				// app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
-				// Post an exit to trigger removal of any transient entry
-				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
-				continue;
-			}
-
-			// Log the NT path being checked and the result to help diagnose
-			// cases where many processes report being in the hook list.
-			// app.GetETW().Log(L"Resolver: checking hook list for pid %u ntpath=%s\n", pid, ntPath.c_str());
-			bool inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
-			// app.GetETW().Log(L"Resolver: FLTCOMM_CheckHookList returned %d for pid %u ntpath=%s\n", inHook, pid, ntPath.c_str());
-			std::wstring cmdline;
-			Helper::GetProcessCommandLineByPID(pid, cmdline);
-
-			// Update shared data via ProcessManager
-			PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
-
-			// Post update to UI thread for this PID (from initial loader)
-			::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_LOAD);
-		}
-	}).detach();
+	// Start background resolver using ProcessResolver helper
+	ProcessResolver::StartLoaderResolver(this, pids, &m_Filter);
 }
 
 LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
@@ -702,27 +555,8 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
 		}
 
-			// Resolver thread: single-call resolver
-		std::thread([this, pid]() {
-			std::wstring ntPath;
-			// Single attempt: if resolve fails, assume process exited while resolving
-			if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) { 
-				// app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
-				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
-				return;
-			}
-			// Log the NT path being checked and the result to help diagnose
-			// cases where many processes report being in the hook list.
-			// app.GetETW().Log(L"Notify resolver: checking hook list for pid %u ntpath=%s\n", pid, ntPath.c_str());
-			bool inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
-			// app.GetETW().Log(L"Notify resolver: FLTCOMM_CheckHookList returned %d for pid %u ntpath=%s\n", inHook, pid, ntPath.c_str());
-			std::wstring cmdline;
-			Helper::GetProcessCommandLineByPID(pid, cmdline);
-
-			PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
-
-			::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
-		}).detach();
+			// Start resolver for this PID using ProcessResolver helper
+			ProcessResolver::StartSingleResolver(this, pid, &m_Filter);
 
 		return 0;
 	}
@@ -860,23 +694,8 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 				m_ProcListCtrl.SetItemText(item, 4, L"");
 			}
 
-			// Start resolver thread for this PID (same as create handler)
-			std::thread([this, pid]() {
-				std::wstring ntPath;
-				if (!Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath)) {
-					// app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
-					::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
-					return;
-				}
-				bool inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
-				std::wstring cmdline;
-				Helper::GetProcessCommandLineByPID(pid, cmdline);
-
-				// Update shared structures via ProcessManager
-				PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
-
-				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
-			}).detach();
+			// Start resolver for this PID using ProcessResolver helper
+			ProcessResolver::StartSingleResolver(this, pid, &m_Filter);
 
 			return 0;
 		}

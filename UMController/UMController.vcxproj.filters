@@ -54,6 +54,15 @@
     <ClInclude Include="ProcFlags.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="HookActions.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ProcessResolver.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="UIHelpers.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="UMController.cpp">
@@ -81,6 +90,15 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="IPC.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="HookActions.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ProcessResolver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="UIHelpers.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
