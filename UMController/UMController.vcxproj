@@ -285,8 +285,10 @@
     <ClInclude Include="FilterCommPort.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="Helper.h" />
+    <ClInclude Include="IPC.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="ProcessManager.h" />
+    <ClInclude Include="ProcFlags.h" />
     <ClInclude Include="ProcList.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
@@ -297,6 +299,7 @@
     <ClCompile Include="ETW.cpp" />
     <ClCompile Include="FilterCommPort.cpp" />
     <ClCompile Include="Helper.cpp" />
+    <ClCompile Include="IPC.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

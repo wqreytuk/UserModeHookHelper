@@ -4,8 +4,7 @@
 #include "pe.h"
 #include "DriverCtx.h"
 #include "StrLib.h"
-#define X64_DLL L"umhh.x64.dll"
-#define X86_DLL L"umhh.x86.dll"
+#include "UKShared.h"
 
 BOOLEAN
 KeInsertQueueApc(

@@ -86,8 +86,9 @@ Filter::Filter() {
 				msg->m_Cmd = CMD_SET_USER_DIR;
 				memcpy(msg->m_Data, buf, bytes);
 				DWORD bytesOut = 0;
-				HRESULT hr2 = FilterSendMessage(m_Port, msg, (DWORD)msgSize, NULL, 0, &bytesOut);
-				if (hr2 != S_OK) {
+				DWORD outbuffer = 0;
+				HRESULT hr2 = FilterSendMessage(m_Port, msg, (DWORD)msgSize, &outbuffer, sizeof(outbuffer), &bytesOut);
+				if ((hr2 != S_OK)||(outbuffer != 0)) {	
 					app.GetETW().Log(L"FilterSendMessage(CMD_SET_USER_DIR) failed: 0x%08x\n", hr2);
 				}
 				free(msg);
@@ -214,7 +215,7 @@ void Filter::RunListenerLoop() {
 					}
 
 					if (m_ProcessNotifyCb) {
-						app.GetETW().Log(L"process notify from kernel: process %ws pid %d create %d\n", procName, pid, create);
+						// app.GetETW().Log(L"process notify from kernel: process %ws pid %d create %d\n", procName, pid, create);
 						m_ProcessNotifyCb(pid, create, procName, m_ProcessNotifyCtx);
 					}
 				}

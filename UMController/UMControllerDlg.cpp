@@ -510,7 +510,7 @@ void CUMControllerDlg::LoadProcessList() {
 			// message so the existing exit handling will remove the entry.
 			bool havePath = Helper::ResolveProcessNtImagePath(pid, m_Filter, ntPath);
 			if (!havePath) {
-				app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
+				// app.GetETW().Log(L"process %d terminated during we resolving its ntpath\n", pid);
 				// Post an exit to trigger removal of any transient entry
 				::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
 				continue;

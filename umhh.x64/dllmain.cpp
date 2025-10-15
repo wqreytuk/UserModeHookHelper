@@ -7,6 +7,7 @@
 //
 #define NTDLL_NO_INLINE_INIT_STRING
 #include <ntdll.h>
+#include "../UMController/IPC.h"
 #include "../UMController/ETW.h"
 #if defined(_M_IX86)
 #  define ARCH_A          "x86"
@@ -59,6 +60,8 @@
 
 #include "../UMController/ETW.h"
 
+#include <stdarg.h>
+
 //
 // Include Detours.
 //
@@ -94,22 +97,23 @@ _load_config_used = {
 // load them dynamically.
 //
 
-using _snwprintf_fn_t = int(__cdecl*)(
+typedef int(__cdecl * _snwprintf_fn_t)(
 	wchar_t *buffer,
 	size_t count,
 	const wchar_t *format,
 	...
 	);
 
-inline _snwprintf_fn_t _snwprintf = nullptr;
-using _vsnwprintf_fn_t = int(__cdecl*)(
+// vsnwprintf signature and function pointer (we'll resolve at runtime)
+typedef int(__cdecl * _vsnwprintf_fn_t)(
 	wchar_t *buffer,
 	size_t count,
 	const wchar_t *format,
 	va_list args
 	);
 
-inline _vsnwprintf_fn_t _vsnwprintf = nullptr;
+static _snwprintf_fn_t _snwprintf = NULL;
+static _vsnwprintf_fn_t _vsnwprintf = NULL;
 //
 // ETW provider GUID and global provider handle.
 //

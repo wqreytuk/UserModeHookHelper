@@ -48,6 +48,12 @@
     <ClInclude Include="ProcessManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="IPC.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ProcFlags.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="UMController.cpp">
@@ -72,6 +78,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="ProcessManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="IPC.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

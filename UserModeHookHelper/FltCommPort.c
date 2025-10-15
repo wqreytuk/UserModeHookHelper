@@ -123,12 +123,6 @@ Comm_MessageNotify(
 	__out PULONG ReturnOutputBufferLength
 ) {
 	NTSTATUS status = STATUS_SUCCESS;
-	(ConnectionCookie);
-	(InputBuffer);
-	(InputBufferSize);
-	(OutputBuffer);
-	(OutputBufferSize);
-	(ReturnOutputBufferLength);
 	/* Initialize caller-ref variables early so cleanup always sees defined
 	 * values even when we jump to cleanup before the later assignment.
 	 */

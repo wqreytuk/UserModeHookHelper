@@ -22,4 +22,6 @@ typedef struct _UMHH_COMMAND_MESSAGE {
 
 #define UMHH_MSG_HEADER_SIZE FIELD_OFFSET(UMHH_COMMAND_MESSAGE, m_Data)
 
+#define X64_DLL L"umhh.x64.dll"
+#define X86_DLL L"umhh.x86.dll"
 #endif
