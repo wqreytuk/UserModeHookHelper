@@ -27,6 +27,12 @@ public:
 	void RegisterProcessNotifyCallback(ProcessNotifyCb cb, void* ctx);
 	void UnregisterProcessNotifyCallback();
 
+	// Register a callback invoked when the kernel sends a CMD_APC_QUEUED
+	// notification. The callback receives the PID and the ctx pointer.
+	typedef void(__cdecl *ProcessApcQueuedCb)(DWORD pid, void* ctx);
+	void RegisterApcQueuedCallback(ProcessApcQueuedCb cb, void* ctx);
+	void UnregisterApcQueuedCallback();
+
 private:
 	HANDLE m_Port = INVALID_HANDLE_VALUE;
 	// listener state for async messages
@@ -36,6 +42,10 @@ private:
     HANDLE m_ListenerEvent = NULL; // event used with OVERLAPPED FilterGetMessage
 	ProcessNotifyCb m_ProcessNotifyCb = NULL;
 	void* m_ProcessNotifyCtx = NULL;
+
+	// APC queued callback and context
+	ProcessApcQueuedCb m_ApcQueuedCb = NULL;
+	void* m_ApcQueuedCtx = NULL;
 	void RunListenerLoop();
 	static VOID NTAPI ListenerWorkItem(PVOID context, PVOID systemArg1, PVOID systemArg2);
 };

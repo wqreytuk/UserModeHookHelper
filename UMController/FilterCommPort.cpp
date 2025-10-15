@@ -203,7 +203,8 @@ void Filter::RunListenerLoop() {
 						// Ensure the last WCHAR is NUL or else create a local copy
 						if (wptr[wcharCount - 1] == L'\0') {
 							procName = wptr;
-						} else {
+						}
+						else {
 							// create a temporary null-terminated buffer
 							std::wstring tmp(wptr, wcharCount);
 							tmp.push_back(L'\0');
@@ -219,6 +220,21 @@ void Filter::RunListenerLoop() {
 						m_ProcessNotifyCb(pid, create, procName, m_ProcessNotifyCtx);
 					}
 				}
+			}
+			else if (msg->m_Cmd == CMD_APC_QUEUED) {
+					// Payload: DWORD pid
+					if (payloadBytes >= sizeof(DWORD)) {
+						DWORD pid = 0;
+						memcpy(&pid, msg->m_Data, sizeof(DWORD));
+						// Prefer the dedicated APC-queued callback if registered. For
+						// backwards compatibility fall back to the process-notify callback
+						// (treated as a create notification) if no APC callback is installed.
+						if (m_ApcQueuedCb) {
+							m_ApcQueuedCb(pid, m_ApcQueuedCtx);
+						} else  {
+							Helper::Fatal(L"m_ApcQueuedCb is not registered\n");
+						}
+					}
 			}
 		}
 		// Loop
@@ -242,6 +258,16 @@ void Filter::RegisterProcessNotifyCallback(ProcessNotifyCb cb, void* ctx) {
 void Filter::UnregisterProcessNotifyCallback() {
 	m_ProcessNotifyCb = NULL;
 	m_ProcessNotifyCtx = NULL;
+}
+
+void Filter::RegisterApcQueuedCallback(ProcessApcQueuedCb cb, void* ctx) {
+	m_ApcQueuedCb = cb;
+	m_ApcQueuedCtx = ctx;
+}
+
+void Filter::UnregisterApcQueuedCallback() {
+	m_ApcQueuedCb = NULL;
+	m_ApcQueuedCtx = NULL;
 }
 
 void Filter::StartListener() {

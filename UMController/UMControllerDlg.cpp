@@ -294,6 +294,17 @@ BOOL CUMControllerDlg::OnInitDialog()
 		}
 	}, this->GetSafeHwnd());
 
+	// Register APC-queued callback so we can start a short-lived checker
+	// that watches for the master DLL to be loaded after the kernel queues
+	// an APC into a target process. Use the ProcessResolver helper to run
+	// the polling/check logic on a background thread.
+	m_Filter.RegisterApcQueuedCallback([](DWORD pid, void* ctx) {
+		CUMControllerDlg* dlg = (CUMControllerDlg*)ctx;
+		if (!dlg) return;
+		// Start the checker (non-blocking)
+		ProcessResolver::StartCreateChecker(dlg, pid, &dlg->m_Filter);
+	}, this->GetSafeHwnd());
+
 	// Start the asynchronous listener now that the initial list is populated
 	m_Filter.StartListener();
 

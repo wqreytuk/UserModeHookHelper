@@ -12,4 +12,9 @@ namespace ProcessResolver {
 
     // Start single-PID resolver (used for create notifications)
     void StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filter* filter);
+
+    // Start a short-lived checker invoked after the kernel queues an APC into
+    // a target process. This polls for up to 10s to detect whether the
+    // master DLL has been loaded and then updates ProcessManager/UI.
+    void StartCreateChecker(CUMControllerDlg* dlg, DWORD pid, Filter* filter);
 }
