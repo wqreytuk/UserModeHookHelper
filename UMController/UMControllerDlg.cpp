@@ -939,7 +939,7 @@ void CUMControllerDlg::OnPaint()
 }
 
 // The system calls this function to obtain the cursor to display while the user drags
-//  the minimized window.
+//  the minimized window
 HCURSOR CUMControllerDlg::OnQueryDragIcon()
 {
 	return static_cast<HCURSOR>(m_hIcon);
