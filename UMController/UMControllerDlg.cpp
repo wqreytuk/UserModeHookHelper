@@ -299,10 +299,15 @@ BOOL CUMControllerDlg::OnInitDialog()
 	// an APC into a target process. Use the ProcessResolver helper to run
 	// the polling/check logic on a background thread.
 	m_Filter.RegisterApcQueuedCallback([](DWORD pid, void* ctx) {
-		CUMControllerDlg* dlg = (CUMControllerDlg*)ctx;
-		if (!dlg) return;
-		// Start the checker (non-blocking)
-		ProcessResolver::StartCreateChecker(dlg, pid, &dlg->m_Filter);
+		HWND hwnd = NULL;
+		if (ctx) hwnd = (HWND)ctx;
+		if (hwnd) {
+			// Start the checker (non-blocking)
+			ProcessResolver::StartCreateChecker(hwnd, pid);
+		}
+		else {
+			Helper::Fatal(L"you can not pass hwnd as null to ApcQueuedCallback\n");
+		}
 	}, this->GetSafeHwnd());
 
 	// Start the asynchronous listener now that the initial list is populated
@@ -666,7 +671,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 		// the exit message when the process actually disappears. Guard with
 		// g_PidExitWaiters so we don't spawn duplicate waiters for the same PID.
 		if (processExists && CompareFileTime(&curCreate, &storedStart) == 0) {
-			// app.GetETW().Log(L"OnUpdateProcess detected early terminate notification, spawning waiter for pid: %d\n", pid);
+			app.GetETW().Log(L"OnUpdateProcess detected early terminate notification, spawning waiter for pid: %d\n", pid);
 			if (PM_TryReserveExitWaiter(pid)) {
 				std::thread([this, pid]() {
 					const int MAX_WAIT_MS = 2000; // 2s max
@@ -714,7 +719,7 @@ FULL_EXIT:
 		// Process truly exited: remove entry via ProcessManager
 		ProcessEntry removedCopy;
 		PM_RemoveByPid(pid);
-		// app.GetETW().Log(L"removing process pid %d from process list\n", pid);
+		app.GetETW().Log(L"removing process pid %d from process list\n", pid);
 		int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
 		while (item != -1) {
 			if ((DWORD)m_ProcListCtrl.GetItemData(item) == pid) break;

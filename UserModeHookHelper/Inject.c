@@ -1,10 +1,11 @@
 ﻿#include "Inject.h"
 #include "Trace.h"
 #include "HookList.h"
-#include "pe.h"
+#include "PE.h"
 #include "DriverCtx.h"
 #include "StrLib.h"
 #include "UKShared.h"
+#include "FltCommPort.h"
 
 BOOLEAN
 KeInsertQueueApc(
@@ -155,6 +156,7 @@ static VOID PendingInject_Add_Internal(PEPROCESS Process)
     KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
 }
 
+// this function is actually not used, because Process is removed in PendingInject_PopForInject
 static VOID PendingInject_Remove_Internal(PEPROCESS Process)
 {
     KIRQL oldIrql;
@@ -264,7 +266,7 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 		goto CLEAN_UP;
 	}
 
-	BOOLEAN x64 = PE_IsProcessX86(Process);
+	BOOLEAN x64 = !PE_IsProcessX86(Process);
 	PVOID ApcRoutineAddress = SectionMemoryAddress;
 	// 0 for x86, 1 for x64
 	RtlCopyMemory(ApcRoutineAddress,
@@ -336,6 +338,17 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 		SystemArgument1,
 		SystemArgument2,
 		0);
+
+	// Notify user-mode that we queued an APC for this process so the user-mode
+	// controller can start a short-lived checker (e.g. 10s) to detect when the
+	// master DLL is loaded and update the process hook-state accordingly.
+	// This uses Comm_BroadcastProcessNotify which is safe to call from here.
+	{
+		ULONG notified = 0;
+		DWORD pid = (DWORD)(ULONG_PTR)PsGetProcessId(Process);
+		NTSTATUS st = Comm_BroadcastApcQueued(pid, &notified);
+		Log(L"Inject: broadcast apc queued notify for pid %u result 0x%08x notified=%u\n", pid, st, notified);
+	}
 
 CLEAN_UP:
 

@@ -331,7 +331,7 @@
     <ClInclude Include="ListLib.h" />
     <ClInclude Include="MacroDef.h" />
     <ClInclude Include="mini.h" />
-    <ClInclude Include="pe.h" />
+    <ClInclude Include="PE.h" />
     <ClInclude Include="PortCtx.h" />
     <ClInclude Include="StrLib.h" />
     <ClInclude Include="SysCallback.h" />

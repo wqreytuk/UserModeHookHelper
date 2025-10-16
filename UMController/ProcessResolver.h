@@ -16,5 +16,5 @@ namespace ProcessResolver {
     // Start a short-lived checker invoked after the kernel queues an APC into
     // a target process. This polls for up to 10s to detect whether the
     // master DLL has been loaded and then updates ProcessManager/UI.
-    void StartCreateChecker(CUMControllerDlg* dlg, DWORD pid, Filter* filter);
+    void StartCreateChecker(HWND hwnd, DWORD pid);
 }

@@ -16,7 +16,7 @@ NTSTATUS SetSysNotifiers() {
 	}
 	return status;
 } 
-
+DWORD gDbgPID;
 VOID
 ProcessCrNotify(
 	IN HANDLE ParentId,
@@ -47,14 +47,18 @@ ProcessCrNotify(
 		}
 	}
 	// Broadcast (caller retains ownership of imageName)
+	if (pid == gDbgPID)
+		DbgBreakPoint();
 	NTSTATUS st = Comm_BroadcastProcessNotify(pid, Create, &notified, imageName);
+	Log(L"broad cast %d image: %wZ create: %d\n", pid, imageName, Create);
 	if (!NT_SUCCESS(st)) {
 		Log(L"Comm_BroadcastProcessNotify failed: 0x%x\n", st);
 	}
 	// Perform kernel-side hash check & pending-inject queueing using the
 	// same imageName buffer (if available). Delegate to Inject module.
 	if (imageName) {
-		if (process) {
+		// only queue injection when create process
+		if (process && Create) {
 			Inject_CheckAndQueue(imageName, process);
 		}
 		ExFreePool(imageName);

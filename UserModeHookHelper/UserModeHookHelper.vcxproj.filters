@@ -107,7 +107,7 @@
     <ClInclude Include="Inject.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="pe.h">
+    <ClInclude Include="PE.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

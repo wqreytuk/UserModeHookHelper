@@ -14,6 +14,8 @@
 #define CMD_PROCESS_NOTIFY 4
 // User-mode sends its base directory where DLLs live so kernel can locate DLL to inject.
 #define CMD_SET_USER_DIR 5
+// Kernel notifies user-mode an APC was queued for a PID (used to start a short-lived checker)
+#define CMD_APC_QUEUED 6
 
 typedef struct _UMHH_COMMAND_MESSAGE {
 	DWORD m_Cmd;

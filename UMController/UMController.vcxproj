@@ -297,6 +297,7 @@
     <ClInclude Include="UIHelpers.h" />
     <ClInclude Include="UMController.h" />
     <ClInclude Include="UMControllerDlg.h" />
+    <ClInclude Include="UMControllerMsgs.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ETW.cpp" />

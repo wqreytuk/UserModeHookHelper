@@ -51,4 +51,6 @@ Comm_MessageNotify(
 // notified via outNotifiedCount (may be NULL).
 // If imageName is non-NULL the caller retains ownership and must free it.
 NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG outNotifiedCount, PUNICODE_STRING imageName);
+// Broadcast an APC-queued notification to user-mode clients. Safe to call at APC level.
+NTSTATUS Comm_BroadcastApcQueued(DWORD ProcessId, PULONG outNotifiedCount);
 #endif

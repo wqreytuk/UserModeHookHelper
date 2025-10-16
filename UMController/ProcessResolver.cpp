@@ -44,37 +44,27 @@ void ProcessResolver::StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filt
     }).detach();
 }
 
-void ProcessResolver::StartCreateChecker(CUMControllerDlg* dlg, DWORD pid, Filter* filter) {
-    std::thread([dlg, pid, filter]() {
-        const int MAX_MS = 10000; // 10s
-        const int INTERVAL_MS = 250;
-        int waited = 0;
-        bool dllLoaded = false;
-        while (waited < MAX_MS) {
-            bool is64 = false;
-            Helper::IsProcess64(pid, is64);
-            const wchar_t* targetName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
-            Helper::IsModuleLoaded(pid, targetName, dllLoaded);
-            if (dllLoaded) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS));
-            waited += INTERVAL_MS;
-        }
+void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
+	std::thread([hwnd, pid]() {
+		const int MAX_MS = 10000; // 10s
+		const int INTERVAL_MS = 250;
+		int waited = 0;
+		bool dllLoaded = false;
+		while (waited < MAX_MS) {
+			bool is64 = false;
+			Helper::IsProcess64(pid, is64);
+			const wchar_t* targetName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+			Helper::IsModuleLoaded(pid, targetName, dllLoaded);
+			if (dllLoaded) break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS));
+			waited += INTERVAL_MS;
+		}
 
-        // If DLL loaded, try to resolve path and check hook list; otherwise
-        // still update UI to clear any transient state.
-        if (dllLoaded) {
-            std::wstring ntPath;
-            if (Helper::ResolveProcessNtImagePath(pid, *filter, ntPath)) {
-                bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
-                std::wstring cmdline;
-                Helper::GetProcessCommandLineByPID(pid, cmdline);
-                PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
-                ::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
-                return;
-            }
-        }
-
-        // Not loaded or failed to resolve: ensure UI refresh so flags are updated
-        ::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
-    }).detach();
+		// If DLL loaded, try to resolve path and check hook list; otherwise
+		// still update UI to clear any transient state.
+		if (dllLoaded) {
+			::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
+		}
+		return;
+	}).detach();
 }

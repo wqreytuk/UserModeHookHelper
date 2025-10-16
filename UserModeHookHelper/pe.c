@@ -1,4 +1,6 @@
-#include "pe.h"
+#include "PE.h"
+#include "mini.h"
+#include "Trace.h"
 #include <ntifs.h>
 // Some WDK versions may not declare PsGetProcessWow64Process; forward declare it.
 extern PVOID PsGetProcessWow64Process(IN PEPROCESS Process);
@@ -123,7 +125,11 @@ PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName)
 // Note: this function does not take or drop a reference on Process.
 BOOLEAN PE_IsProcessX86(IN PEPROCESS Process)
 {
-    if (!Process) return FALSE;
+	if (!Process) {
+		Log(L"you can not pass Process parameter as NULL\n");
+		MiniUnload(0);
+		return FALSE;
+	}
 
     // PsGetProcessWow64Process returns the WoW64 context pointer if present.
     PVOID wow64 = PsGetProcessWow64Process(Process);
