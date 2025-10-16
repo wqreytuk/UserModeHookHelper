@@ -358,7 +358,50 @@ NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG out
 		if (!ctx || ctx->m_ClientPort == NULL) continue;
 		NTSTATUS st = FltSendMessage(DriverCtx_GetFilter(), &ctx->m_ClientPort, msg, msgSize, NULL, 0, NULL);
 		if (NT_SUCCESS(st)) notified++;
-		// Ignore failures for now; clients may have disconnected.
+		else {
+			// Diagnostic log for failed sends to aid correlation during stress tests.
+			Log(L"Comm_BroadcastProcessNotify: FltSendMessage failed for client pid %d port %p st=0x%x\n",
+				ctx->m_UserProcessId, ctx->m_ClientPort, st);
+		}
+	}
+
+	ExFreePool(msg);
+	PortCtx_FreeSnapshot(arr, count);
+	if (outNotifiedCount) *outNotifiedCount = notified;
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS Comm_BroadcastApcQueued(DWORD ProcessId, PULONG outNotifiedCount) {
+	NTSTATUS status = STATUS_SUCCESS;
+	PCOMM_CONTEXT* arr = NULL;
+	ULONG count = 0;
+	if (outNotifiedCount) *outNotifiedCount = 0;
+	status = PortCtx_Snapshot(&arr, &count);
+	if (!NT_SUCCESS(status)) return status;
+	if (count == 0) return STATUS_SUCCESS;
+
+	// Build message: [DWORD pid]
+	ULONG payloadSize = (ULONG)sizeof(DWORD);
+	ULONG msgSize = UMHH_MSG_HEADER_SIZE + payloadSize;
+	PUMHH_COMMAND_MESSAGE msg = ExAllocatePoolWithTag(NonPagedPool, msgSize, tag_port);
+	if (!msg) {
+		PortCtx_FreeSnapshot(arr, count);
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	RtlZeroMemory(msg, msgSize);
+	msg->m_Cmd = CMD_APC_QUEUED;
+	RtlCopyMemory(msg->m_Data, &ProcessId, sizeof(DWORD));
+
+	ULONG notified = 0;
+	for (ULONG i = 0; i < count; ++i) {
+		PCOMM_CONTEXT ctx = arr[i];
+		if (!ctx || ctx->m_ClientPort == NULL) continue;
+		NTSTATUS st = FltSendMessage(DriverCtx_GetFilter(), &ctx->m_ClientPort, msg, msgSize, NULL, 0, NULL);
+		if (NT_SUCCESS(st)) notified++;
+		else {
+			Log(L"Comm_BroadcastApcQueued: FltSendMessage failed for client pid %d port %p st=0x%x\n",
+				ctx->m_UserProcessId, ctx->m_ClientPort, st);
+		}
 	}
 
 	ExFreePool(msg);

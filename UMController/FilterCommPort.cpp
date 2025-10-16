@@ -105,7 +105,8 @@ Filter::Filter() {
 
 void Filter::RunListenerLoop() {
 	if (m_StopListener) return;
-	const ULONG REPLY_MAX = 4096;
+	// Larger reply buffer to accommodate NT paths and diagnostic payloads.
+	const ULONG REPLY_MAX = 32768;
 	std::unique_ptr<BYTE[]> reply(new BYTE[REPLY_MAX]);
 
 	while (!m_StopListener) {
@@ -163,21 +164,31 @@ void Filter::RunListenerLoop() {
 
 		if (bytesTransferred >= sizeof(FILTER_MESSAGE_HEADER) + UMHH_MSG_HEADER_SIZE) {
 			// Interpret buffer as FILTER_MESSAGE_HEADER followed by the
-			// UMHH_COMMAND_MESSAGE payload. The FILTER_MESSAGE_HEADER layout
-			// contains ReplyLength (ULONG) and MessageId (ULONGLONG). Use
-			// ReplyLength when it appears valid; otherwise fall back to
-			// bytesTransferred.
+			// UMHH_COMMAND_MESSAGE payload. Use bytesTransferred as the
+			// authoritative size returned by GetOverlappedResult. ReplyLength
+			// in the header is diagnostic-only here because some driver-side
+			// messages may not populate it reliably when messages are sent
+			// in quick succession.
 			PFILTER_MESSAGE_HEADER fmh = (PFILTER_MESSAGE_HEADER)buf;
 			size_t headerSize = sizeof(FILTER_MESSAGE_HEADER);
-			size_t totalMsgBytes = bytesTransferred;
-			if (fmh->ReplyLength != 0 && fmh->ReplyLength <= bytesTransferred) {
-				totalMsgBytes = fmh->ReplyLength;
+			size_t totalMsgBytes = bytesTransferred; // authoritative
+
+			// Diagnostic log to correlate kernel-side ReplyLength with the
+			// actual bytes received by the user-mode listener.
+			try {
+				app.GetETW().Log(L"RunListenerLoop: bytesTransferred=%u ReplyLength=%u MessageId=0x%llx\n",
+					(ULONG)bytesTransferred,
+					(ULONG)fmh->ReplyLength,
+					(unsigned long long)fmh->MessageId);
+			} catch (...) {
+				// swallow any ETW logging exceptions in debug paths
 			}
 
 			size_t availableAfterHeader = 0;
 			if (totalMsgBytes > headerSize) availableAfterHeader = totalMsgBytes - headerSize;
 			if (availableAfterHeader < UMHH_MSG_HEADER_SIZE) {
 				// malformed or truncated message, ignore
+				app.GetETW().Log(L"RunListenerLoop: truncated message (availableAfterHeader=%u) - ignoring\n", (ULONG)availableAfterHeader);
 				continue;
 			}
 
@@ -216,7 +227,7 @@ void Filter::RunListenerLoop() {
 					}
 
 					if (m_ProcessNotifyCb) {
-						// app.GetETW().Log(L"process notify from kernel: process %ws pid %d create %d\n", procName, pid, create);
+						app.GetETW().Log(L"process notify from kernel: process %ws pid %d create %d\n", procName, pid, create);
 						m_ProcessNotifyCb(pid, create, procName, m_ProcessNotifyCtx);
 					}
 				}
@@ -229,6 +240,7 @@ void Filter::RunListenerLoop() {
 						// Prefer the dedicated APC-queued callback if registered. For
 						// backwards compatibility fall back to the process-notify callback
 						// (treated as a create notification) if no APC callback is installed.
+						
 						if (m_ApcQueuedCb) {
 							m_ApcQueuedCb(pid, m_ApcQueuedCtx);
 						} else  {
@@ -274,7 +286,7 @@ void Filter::StartListener() {
 	if (m_ListenerStarted) return;
 	m_ListenerStarted = true;
 	if (!QueueUserWorkItem(ListenerWorkItem, this, 0)) {
-		Helper::Fatal(L"QueueUserWorkItem (RtlQueueWorkItem) failed in StartListener");
+		Helper::Fatal(L"QueueUserWorkItem (RtlQueueWorkItem) failed in StartListener\n");
 	}
 	app.GetETW().Log(L"user mode miniport listener queued into work item\n");
 }
