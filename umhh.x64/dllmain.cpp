@@ -30,12 +30,7 @@
 #define WIDEN(x) WIDEN2(x)
 #define WFILE WIDEN(__FILE__)
 
-// size_t strlen(const char * str)
-// {
-//   const char *s;
-//   for (s = str; *s; ++s) {}
-//   return(s - str);
-// }
+
 
 //
 // Include support for ETW logging.
@@ -60,9 +55,8 @@
 
 #include <evntprov.h>
 
-#include "../UMController/ETW.h"
-
 #include <stdarg.h>
+
 
 //
 // Include Detours.
@@ -133,42 +127,7 @@ REGHANDLE ProviderHandle = 0;
 
 
 
-// Removed unused detour hook functions and helper thread routine to reduce dead code.
 
-NTSTATUS
-NTAPI
-EnableDetours(
-	VOID
-)
-{
-	// DetourTransactionBegin();
-	// {
-	//     OrigNtQuerySystemInformation = NtQuerySystemInformation;
-	//     DetourAttach((PVOID*)&OrigNtQuerySystemInformation, HookNtQuerySystemInformation);
-	// 
-	//     OrigNtCreateThreadEx = NtCreateThreadEx;
-	//     DetourAttach((PVOID*)&OrigNtCreateThreadEx, HookNtCreateThreadEx);
-	// }
-	// DetourTransactionCommit();
-
-	return STATUS_SUCCESS;
-}
-
-NTSTATUS
-NTAPI
-DisableDetours(
-	VOID
-)
-{
-	// DetourTransactionBegin();
-	// {
-	// 	DetourDetach((PVOID*)&OrigNtQuerySystemInformation, HookNtQuerySystemInformation);
-	// 	DetourDetach((PVOID*)&OrigNtCreateThreadEx, HookNtCreateThreadEx);
-	// }
-	// DetourTransactionCommit();
-
-	return STATUS_SUCCESS;
-}
 typedef NTSTATUS(NTAPI *PNtDeleteFile)(
 	POBJECT_ATTRIBUTES ObjectAttributes
 	);
@@ -233,10 +192,8 @@ typedef NTSTATUS(NTAPI *PNtWaitForSingleObject)(
 	PLARGE_INTEGER Timeout OPTIONAL
 	);
 
-// Native section/map function pointers (NT APIs)
-typedef NTSTATUS(NTAPI *PFN_NtCreateSection)(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes OPTIONAL, PLARGE_INTEGER MaximumSize OPTIONAL, ULONG SectionPageProtection, ULONG AllocationAttributes, HANDLE FileHandle OPTIONAL);
-typedef NTSTATUS(NTAPI *PFN_NtMapViewOfSection)(HANDLE SectionHandle, HANDLE ProcessHandle, PVOID *BaseAddress, ULONG_PTR ZeroBits, SIZE_T CommitSize, PLARGE_INTEGER SectionOffset, PSIZE_T ViewSize, ULONG InheritDisposition, ULONG AllocationType, ULONG Win32Protect);
-typedef NTSTATUS(NTAPI *PFN_NtUnmapViewOfSection)(HANDLE ProcessHandle, PVOID BaseAddress);
+// Section/map support removed — this DLL no longer creates native sections for IPC.
+// IPC uses an event-based signal and file for the payload; keep event APIs only.
 
 typedef NTSTATUS(NTAPI *PFN_NtClose)(HANDLE Handle);
 static NTSTATUS ReadBytesFromFileNt(
@@ -362,8 +319,8 @@ PNtWaitForSingleObject         pNtWaitForSingleObject = 0;
 VOID ConcatPidToPath(PWCHAR outBuffer, USHORT bufferLenInWchars, HANDLE pid)
 {
 	// Base path
-	const WCHAR basePath[] = L"\\??\\C:\\users\\public\\signal.bin.";
-
+	WCHAR basePath[128] = { 0 };
+	_snwprintf(basePath, RTL_NUMBER_OF(basePath), DLL_IPC_SIGNAL_FILE_FMT, (ULONG)(ULONG_PTR)pid);
 	USHORT i = 0;
 	// Copy base path
 	while (basePath[i] && i < bufferLenInWchars - 1) {
@@ -448,56 +405,17 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 	RtlInitAnsiString(&RoutineName, (PSTR)"NtWaitForSingleObject");
 	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&pNtWaitForSingleObject);
 
-	// Resolve section/map NT API pointers
-	PFN_NtCreateSection pNtCreateSection = NULL;
-	PFN_NtMapViewOfSection pNtMapViewOfSection = NULL;
-	PFN_NtUnmapViewOfSection pNtUnmapViewOfSection = NULL;
-	RtlInitAnsiString(&RoutineName, (PSTR)"NtCreateSection");
-	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&pNtCreateSection);
-	RtlInitAnsiString(&RoutineName, (PSTR)"NtMapViewOfSection");
-	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&pNtMapViewOfSection);
-	RtlInitAnsiString(&RoutineName, (PSTR)"NtUnmapViewOfSection");
-	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&pNtUnmapViewOfSection);
 
 
 
 
-	// Create native named section and event for IPC
-	WCHAR sectionName[128];
+	// Event-based IPC only: construct event name for this process and create/open it.
 	WCHAR eventName[128];
 	HANDLE curPid = NtCurrentProcessId();
-	_snwprintf(sectionName, RTL_NUMBER_OF(sectionName), DLL_IPC_SECTION_FMT, (ULONG)(ULONG_PTR)curPid);
-	_snwprintf(eventName, RTL_NUMBER_OF(eventName), DLL_IPC_EVENT_FMT, (ULONG)(ULONG_PTR)curPid);
+	_snwprintf(eventName, RTL_NUMBER_OF(eventName), IPC_EVENT_FMT, (ULONG)(ULONG_PTR)curPid);
 
-	
-
-	UNICODE_STRING usSection;
 	UNICODE_STRING usEvent;
-	RtlInitUnicodeString(&usSection, sectionName);
 	RtlInitUnicodeString(&usEvent, eventName);
-
-	OBJECT_ATTRIBUTES secAttr;
-	InitializeObjectAttributes(&secAttr, &usSection, OBJ_CASE_INSENSITIVE | OBJ_OPENIF, NULL, NULL);
-	EtwLog(L"NtCreateSection with name: %s\n", sectionName);
-	HANDLE hSection = NULL;
-	SIZE_T viewSize = 4096;
-	if (pNtCreateSection) {
-		NTSTATUS st = pNtCreateSection(&hSection, SECTION_ALL_ACCESS, &secAttr, (PLARGE_INTEGER)&viewSize, PAGE_READWRITE, SEC_COMMIT, NULL);
-		if (!NT_SUCCESS(st)) {
-			//EtwLog(L"NtCreateSection failed: 0x%08x\n", st);
-			hSection = NULL;
-		}
-	}
-
-	PVOID baseAddress = NULL;
-	if (hSection && pNtMapViewOfSection) {
-#define VIEW_SHARE 1
-		NTSTATUS st = pNtMapViewOfSection(hSection, NtCurrentProcess(), &baseAddress, 0, PAGE_SIZE, NULL, &viewSize, VIEW_SHARE, 0, PAGE_READWRITE);
-		if (!NT_SUCCESS(st)) {
-			//EtwLog(L"NtMapViewOfSection failed: 0x%08x\n", st);
-			baseAddress = NULL;
-		}
-	}
 
 	// Create or open event
 	HANDLE hEvent = NULL;
@@ -541,7 +459,6 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 			NTSTATUS status = pNtDeleteFile(&oa);
 		}
-		// 当前进程就是将要被注入dll的目标进程
 		UNICODE_STRING str;
 		WCHAR buffer[260];
 		{
@@ -558,7 +475,7 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 			ustr->Length = i * sizeof(WCHAR);
 			ustr->MaximumLength = (i + 1) * sizeof(WCHAR);
 
-			EtwLog(L"wide char dll path character count: %d\n", i);// unicode string for t obe injected dll path : %wZ\n", ustr);// dllPath);
+			// EtwLog(L"wide char dll path character count: %d\n", i);// unicode string for t obe injected dll path : %wZ\n", ustr);// dllPath);
 			EtwLog(L"constructed unicode string for to be injected dll path: %wZ\n", ustr);// dllPath);
 
 			pLdrLoadDll(0, 0, ustr, (PHANDLE)dllPath);
