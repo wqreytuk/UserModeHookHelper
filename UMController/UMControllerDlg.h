@@ -43,6 +43,7 @@ protected:
 	afx_msg void OnAddHook();
 	afx_msg void OnRemoveHook();
 	afx_msg void OnInjectDll();
+	afx_msg void OnAddExecutableToHookList();
 	DECLARE_MESSAGE_MAP()
 public:
 	void LoadProcessList();

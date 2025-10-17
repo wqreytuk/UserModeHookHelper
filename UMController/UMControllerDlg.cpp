@@ -192,6 +192,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_MENU_ADD_HOOK, &CUMControllerDlg::OnAddHook)
 	ON_COMMAND(ID_MENU_REMOVE_HOOK, &CUMControllerDlg::OnRemoveHook)
 	ON_COMMAND(ID_MENU_INJECT_DLL, &CUMControllerDlg::OnInjectDll)
+	ON_COMMAND(ID_MENU_ADD_EXE, &CUMControllerDlg::OnAddExecutableToHookList)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
 END_MESSAGE_MAP()
 
@@ -406,6 +407,57 @@ void CUMControllerDlg::OnInjectDll() {
 	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
 	DWORD pid = PID_FROM_ITEMDATA(packed);
 	HookActions::HandleInjectDll(this, &m_Filter, &m_ProcListCtrl, nItem, pid);
+}
+
+void CUMControllerDlg::OnAddExecutableToHookList() {
+	// Prompt user to select an executable to add to the hook list
+	wchar_t szFile[MAX_PATH] = {0};
+	OPENFILENAME ofn = {0};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = NULL;
+	ofn.lpstrFile = szFile;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = L"Executable Files\0*.exe\0All Files\0*.*\0";
+	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+	ofn.lpstrTitle = L"Select executable to add to hook list";
+
+	if (!GetOpenFileName(&ofn)) return;
+
+	// Verify file exists
+	if (!Helper::IsFileExists(szFile)) {
+		::MessageBoxW(NULL, L"Selected file does not exist.", L"Add Executable", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// Convert DOS path to NT path using GetFinalPathNameByHandleW if possible
+	std::wstring ntPath;
+	HANDLE h = CreateFileW(szFile, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h && h != INVALID_HANDLE_VALUE) {
+		wchar_t finalPath[MAX_PATH];
+		DWORD len = GetFinalPathNameByHandleW(h, finalPath, _countof(finalPath), FILE_NAME_NORMALIZED);
+		CloseHandle(h);
+		if (len > 0 && len < _countof(finalPath)) {
+			// The returned path may be of the form "\\?\C:\..."; convert to DOS path without prefix
+			std::wstring fp(finalPath);
+			const std::wstring prefix = L"\\\\?\\";
+			if (fp.rfind(prefix, 0) == 0) fp = fp.substr(prefix.size());
+			// Convert DOS path to NT path using RtlDosPathNameToNtPathName_U via helper if available
+			// The kernel expects NT-style paths (eg. \Device\HarddiskVolumeX\...); try Filter to resolve
+			// If filter knows the NT path for this file, use it. Otherwise send DOS path; driver may convert.
+			ntPath = fp;
+		}
+	}
+
+	if (ntPath.empty()) ntPath.assign(szFile);
+
+	// Convert to wide string NT-style path expected by FLTCOMM_AddHook (the Filter will accept DOS path and convert if needed)
+	if (!m_Filter.FLTCOMM_AddHook(ntPath)) {
+		::MessageBoxW(NULL, L"Failed to add hook entry in kernel.", L"Add Executable", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	::MessageBoxW(NULL, L"Executable added to hook list.", L"Add Executable", MB_OK | MB_ICONINFORMATION);
 }
 
 void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
