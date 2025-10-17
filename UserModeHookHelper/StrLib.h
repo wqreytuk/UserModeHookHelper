@@ -8,4 +8,13 @@ BOOLEAN SL_EqualWideString(WCHAR* a1, WCHAR* a2, BOOLEAN ignoreCase);
 // wide string. On failure (invalid params or insufficient capacity) returns
 // FALSE and Out contents are undefined.
 BOOLEAN SL_ConcatWideString(_In_opt_ const WCHAR* A, _In_opt_ const WCHAR* B, _Out_writes_(OutChars) PWCHAR Out, SIZE_T OutChars);
+
+BOOLEAN
+NTAPI
+SL_RtlSuffixUnicodeString(
+	_In_ PUNICODE_STRING String1,
+	_In_ PUNICODE_STRING String2,
+	_In_ BOOLEAN CaseInSensitive
+);
+
 #endif

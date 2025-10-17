@@ -7,6 +7,45 @@
 
 // Hook list operations are implemented in HookList.c
 
+// Work item used to defer broadcasts to a system thread when the caller's
+// thread is terminating and cannot complete a synchronous FltSendMessage.
+typedef struct _BROADCAST_WORK {
+	WORK_QUEUE_ITEM WorkItem;
+	PUMHH_COMMAND_MESSAGE Msg;
+	ULONG MsgSize;
+	PCOMM_CONTEXT* Array;
+	ULONG Count;
+} BROADCAST_WORK, *PBROADCAST_WORK;
+
+// Worker routine that performs deferred broadcasts from a safe system
+// context. It iterates the snapshot, sends messages, removes disconnected
+// ports, and frees all transferred resources.
+static VOID
+BroadcastWorkRoutine(
+	PVOID Context
+) {
+	PBROADCAST_WORK w = (PBROADCAST_WORK)Context;
+	if (!w) return;
+
+	for (ULONG j = 0; j < w->Count; ++j) {
+		PCOMM_CONTEXT c = w->Array[j];
+		if (!c || c->m_ClientPort == NULL) continue;
+		NTSTATUS r = FltSendMessage(DriverCtx_GetFilter(), &c->m_ClientPort, w->Msg, w->MsgSize, NULL, 0, NULL);
+		if (!NT_SUCCESS(r)) {
+			Log(L"Deferred broadcast: FltSendMessage failed for client pid %d port %p st=0x%x\n",
+				c->m_UserProcessId, c->m_ClientPort, r);
+			if (r == STATUS_PORT_DISCONNECTED) {
+				PortCtx_Remove(c);
+			}
+		}
+	}
+
+	// Free the snapshot references and buffers that were transferred to us.
+	PortCtx_FreeSnapshot(w->Array, w->Count);
+	ExFreePoolWithTag(w->Msg, tag_port);
+	ExFreePoolWithTag(w, tag_port);
+}
+
 
 // write a scalable code even though I only have one client
 NTSTATUS
@@ -357,18 +396,62 @@ NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG out
 		PCOMM_CONTEXT ctx = arr[i];
 		if (!ctx || ctx->m_ClientPort == NULL) continue;
 		NTSTATUS st = FltSendMessage(DriverCtx_GetFilter(), &ctx->m_ClientPort, msg, msgSize, NULL, 0, NULL);
-		if (NT_SUCCESS(st)) notified++;
+		if (NT_SUCCESS(st)) {
+			notified++;
+		}
 		else {
-			// Diagnostic log for failed sends to aid correlation during stress tests.
-			Log(L"Comm_BroadcastProcessNotify: FltSendMessage failed for client pid %d port %p st=0x%x\n",
-				ctx->m_UserProcessId, ctx->m_ClientPort, st);
+			// If the port is disconnected, proactively remove the port context so
+			// we don't keep attempting to send to a dead client.
+			if (st == STATUS_PORT_DISCONNECTED) {
+				Log(L"Comm_BroadcastProcessNotify: port appears disconnected, removing ctx for pid %d\n", ctx->m_UserProcessId);
+				PortCtx_Remove(ctx);
+			}
+			else if (st == STATUS_THREAD_IS_TERMINATING) {
+				// STATUS_THREAD_IS_TERMINATING observed: caller thread is terminating
+				// and cannot complete the send. Defer the remaining broadcast to a
+				// system worker thread so the message is delivered from a safe
+				// context. We transfer ownership of 'msg' and 'arr' to the worker
+				// and return success here.
+				Log(L"Comm_BroadcastProcessNotify: current thread is terminating, resend with delay work item\n");
+
+				PBROADCAST_WORK work = ExAllocatePoolWithTag(NonPagedPool, sizeof(*work), tag_port);
+				if (work) {
+					RtlZeroMemory(work, sizeof(*work));
+					work->Msg = msg; // transfer ownership
+					work->MsgSize = msgSize;
+					work->Array = arr; // transfer ownership
+					work->Count = count;
+
+					// Worker routine: iterate snapshot and call FltSendMessage from
+					// system worker context. Defined as local lambda-like function
+					// via a static routine below.
+					ExInitializeWorkItem(&work->WorkItem, BroadcastWorkRoutine, work);
+
+					ExQueueWorkItem(&work->WorkItem, DelayedWorkQueue);
+
+					// Prevent the current function from freeing resources below.
+					msg = NULL;
+					arr = NULL;
+					status = STATUS_SUCCESS;
+					if (outNotifiedCount) *outNotifiedCount = notified;
+					return status;
+				}
+				else {
+					// failed to allocate work item; fall through and return the
+					// thread-terminating status to the caller.
+					status = st;
+				}
+			}
+			else {
+				status = st;
+			}
 		}
 	}
 
 	ExFreePool(msg);
 	PortCtx_FreeSnapshot(arr, count);
 	if (outNotifiedCount) *outNotifiedCount = notified;
-	return STATUS_SUCCESS;
+	return status;
 }
 
 NTSTATUS Comm_BroadcastApcQueued(DWORD ProcessId, PULONG outNotifiedCount) {
@@ -397,10 +480,43 @@ NTSTATUS Comm_BroadcastApcQueued(DWORD ProcessId, PULONG outNotifiedCount) {
 		PCOMM_CONTEXT ctx = arr[i];
 		if (!ctx || ctx->m_ClientPort == NULL) continue;
 		NTSTATUS st = FltSendMessage(DriverCtx_GetFilter(), &ctx->m_ClientPort, msg, msgSize, NULL, 0, NULL);
-		if (NT_SUCCESS(st)) notified++;
+		if (NT_SUCCESS(st)) {
+			notified++;
+		}
 		else {
 			Log(L"Comm_BroadcastApcQueued: FltSendMessage failed for client pid %d port %p st=0x%x\n",
 				ctx->m_UserProcessId, ctx->m_ClientPort, st);
+			if (st == STATUS_PORT_DISCONNECTED) {
+				Log(L"Comm_BroadcastApcQueued: port appears disconnected, removing ctx for pid %d\n", ctx->m_UserProcessId);
+				PortCtx_Remove(ctx);
+			}
+			else if (st == (NTSTATUS)0xC000004B) {
+				// Defer remaining sends to a system worker thread as above.
+				PBROADCAST_WORK work = ExAllocatePoolWithTag(NonPagedPool, sizeof(*work), tag_port);
+				if (work) {
+					RtlZeroMemory(work, sizeof(*work));
+					work->Msg = msg;
+					work->MsgSize = msgSize;
+					work->Array = arr;
+					work->Count = count;
+
+					ExInitializeWorkItem(&work->WorkItem, BroadcastWorkRoutine, work);
+					ExQueueWorkItem(&work->WorkItem, DelayedWorkQueue);
+
+					// Transfered ownership; prevent double-free below
+					msg = NULL;
+					arr = NULL;
+					status = STATUS_SUCCESS;
+					if (outNotifiedCount) *outNotifiedCount = notified;
+					return status;
+				}
+				else {
+					status = st;
+				}
+			}
+			else {
+				// other failures
+			}
 		}
 	}
 

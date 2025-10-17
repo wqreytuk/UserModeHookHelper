@@ -16,7 +16,7 @@ NTSTATUS SetSysNotifiers() {
 	}
 	return status;
 } 
-DWORD gDbgPID;
+
 VOID
 ProcessCrNotify(
 	IN HANDLE ParentId,
@@ -29,7 +29,7 @@ ProcessCrNotify(
 	// systems they are truncated, but PIDs fit in 32-bits on Windows.
 	DWORD pid = (DWORD)(ULONG_PTR)ProcessId;
 	ULONG notified = 0;
-	
+
 	// Try to lookup the process object so we can obtain its NT image path
 	// exactly once and reuse the buffer for both the broadcast payload and
 	// the kernel-side hook-list hash check (SysCallback_CheckAndQueue).
@@ -46,11 +46,13 @@ ProcessCrNotify(
 			}
 		}
 	}
+	if (!process) {
+		Log(L"FATAL, can not get EPROCESS by pid");
+		return;
+	}
 	// Broadcast (caller retains ownership of imageName)
-	if (pid == gDbgPID)
-		DbgBreakPoint();
 	NTSTATUS st = Comm_BroadcastProcessNotify(pid, Create, &notified, imageName);
-	Log(L"broad cast %d image: %wZ create: %d\n", pid, imageName, Create);
+	// Log(L"broad cast %d image: %wZ create: %d\n", pid, imageName, Create);
 	if (!NT_SUCCESS(st)) {
 		Log(L"Comm_BroadcastProcessNotify failed: 0x%x\n", st);
 	}
@@ -64,9 +66,12 @@ ProcessCrNotify(
 		ExFreePool(imageName);
 		imageName = NULL;
 	}
-	if (process) {
-		ObDereferenceObject(process);
+	if (!Create) {
+		Inject_RemovePendingInject(process);
 	}
+
+	ObDereferenceObject(process);
+
 }
 
 VOID

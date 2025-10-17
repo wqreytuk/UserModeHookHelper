@@ -9,6 +9,8 @@
 #include <ntdll.h>
 #include "../UMController/IPC.h"
 #include "../UMController/ETW.h"
+
+#define PAGE_SIZE 0x1000
 #if defined(_M_IX86)
 #  define ARCH_A          "x86"
 #  define ARCH_W         L"x86"
@@ -409,7 +411,7 @@ VOID EtwLog(_In_ PCWSTR Format, ...)
 
 
 NTSTATUS mycode(_In_ PVOID ThreadParameter) {
-
+	DbgBreakPoint();
 
 
 
@@ -464,8 +466,10 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 	WCHAR sectionName[128];
 	WCHAR eventName[128];
 	HANDLE curPid = NtCurrentProcessId();
-	_snwprintf(sectionName, RTL_NUMBER_OF(sectionName), L"\\BaseNamedObjects\\inject_section.%u", (ULONG)(ULONG_PTR)curPid);
-	_snwprintf(eventName, RTL_NUMBER_OF(eventName), L"\\BaseNamedObjects\\inject_event.%u", (ULONG)(ULONG_PTR)curPid);
+	_snwprintf(sectionName, RTL_NUMBER_OF(sectionName), DLL_IPC_SECTION_FMT, (ULONG)(ULONG_PTR)curPid);
+	_snwprintf(eventName, RTL_NUMBER_OF(eventName), DLL_IPC_EVENT_FMT, (ULONG)(ULONG_PTR)curPid);
+
+	
 
 	UNICODE_STRING usSection;
 	UNICODE_STRING usEvent;
@@ -474,20 +478,21 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 	OBJECT_ATTRIBUTES secAttr;
 	InitializeObjectAttributes(&secAttr, &usSection, OBJ_CASE_INSENSITIVE | OBJ_OPENIF, NULL, NULL);
-
+	EtwLog(L"NtCreateSection with name: %s\n", sectionName);
 	HANDLE hSection = NULL;
+	SIZE_T viewSize = 4096;
 	if (pNtCreateSection) {
-		NTSTATUS st = pNtCreateSection(&hSection, SECTION_ALL_ACCESS, &secAttr, NULL, PAGE_READWRITE, SEC_COMMIT, NULL);
+		NTSTATUS st = pNtCreateSection(&hSection, SECTION_ALL_ACCESS, &secAttr, (PLARGE_INTEGER)&viewSize, PAGE_READWRITE, SEC_COMMIT, NULL);
 		if (!NT_SUCCESS(st)) {
 			EtwLog(L"NtCreateSection failed: 0x%08x\n", st);
 			hSection = NULL;
 		}
 	}
 
-	SIZE_T viewSize = 4096;
 	PVOID baseAddress = NULL;
 	if (hSection && pNtMapViewOfSection) {
-		NTSTATUS st = pNtMapViewOfSection(hSection, NtCurrentProcess(), &baseAddress, 0, 0, NULL, &viewSize, 1, 0, PAGE_READWRITE);
+#define VIEW_SHARE 1
+		NTSTATUS st = pNtMapViewOfSection(hSection, NtCurrentProcess(), &baseAddress, 0, PAGE_SIZE, NULL, &viewSize, VIEW_SHARE, 0, PAGE_READWRITE);
 		if (!NT_SUCCESS(st)) {
 			EtwLog(L"NtMapViewOfSection failed: 0x%08x\n", st);
 			baseAddress = NULL;
@@ -496,6 +501,7 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 	// Create or open event
 	HANDLE hEvent = NULL;
+	EtwLog(L"NtCreateEvent with name: %s\n", eventName);
 	if (pNtCreateEvent) {
 		OBJECT_ATTRIBUTES evAttr;
 		InitializeObjectAttributes(&evAttr, &usEvent, OBJ_CASE_INSENSITIVE | OBJ_OPENIF, NULL, NULL);

@@ -173,16 +173,6 @@ void Filter::RunListenerLoop() {
 			size_t headerSize = sizeof(FILTER_MESSAGE_HEADER);
 			size_t totalMsgBytes = bytesTransferred; // authoritative
 
-			// Diagnostic log to correlate kernel-side ReplyLength with the
-			// actual bytes received by the user-mode listener.
-			try {
-				app.GetETW().Log(L"RunListenerLoop: bytesTransferred=%u ReplyLength=%u MessageId=0x%llx\n",
-					(ULONG)bytesTransferred,
-					(ULONG)fmh->ReplyLength,
-					(unsigned long long)fmh->MessageId);
-			} catch (...) {
-				// swallow any ETW logging exceptions in debug paths
-			}
 
 			size_t availableAfterHeader = 0;
 			if (totalMsgBytes > headerSize) availableAfterHeader = totalMsgBytes - headerSize;
@@ -227,7 +217,7 @@ void Filter::RunListenerLoop() {
 					}
 
 					if (m_ProcessNotifyCb) {
-						app.GetETW().Log(L"process notify from kernel: process %ws pid %d create %d\n", procName, pid, create);
+					//	app.GetETW().Log(L"process notify from kernel: process %ws pid %d create %d\n", procName, pid, create);
 						m_ProcessNotifyCb(pid, create, procName, m_ProcessNotifyCtx);
 					}
 				}

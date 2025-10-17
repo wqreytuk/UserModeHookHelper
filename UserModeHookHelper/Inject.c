@@ -6,6 +6,35 @@
 #include "StrLib.h"
 #include "UKShared.h"
 #include "FltCommPort.h"
+#include "tag.h"
+
+
+#define LdrLoadDllRoutineName "LdrLoadDll"
+
+NTKERNELAPI
+PCHAR
+NTAPI
+PsGetProcessImageFileName(
+	_In_ PEPROCESS Process
+);
+
+typedef struct _INJ_SYSTEM_DLL_DESCRIPTOR
+{
+	UNICODE_STRING  DllPath;
+	INJ_SYSTEM_DLL  Flag;
+} INJ_SYSTEM_DLL_DESCRIPTOR, *PINJ_SYSTEM_DLL_DESCRIPTOR;
+
+
+INJ_SYSTEM_DLL_DESCRIPTOR InjpSystemDlls[] = {
+  { RTL_CONSTANT_STRING(L"\\SysWow64\\ntdll.dll"),    INJ_SYSWOW64_NTDLL_LOADED    },
+  { RTL_CONSTANT_STRING(L"\\System32\\ntdll.dll"),    INJ_SYSTEM32_NTDLL_LOADED    },
+  { RTL_CONSTANT_STRING(L"\\System32\\wow64.dll"),    INJ_SYSTEM32_WOW64_LOADED    },
+  { RTL_CONSTANT_STRING(L"\\System32\\wow64win.dll"), INJ_SYSTEM32_WOW64WIN_LOADED },
+  { RTL_CONSTANT_STRING(L"\\System32\\wow64cpu.dll"), INJ_SYSTEM32_WOW64CPU_LOADED },
+  { RTL_CONSTANT_STRING(L"\\System32\\wowarmhw.dll"), INJ_SYSTEM32_WOWARMHW_LOADED },
+  { RTL_CONSTANT_STRING(L"\\System32\\xtajit.dll"),   INJ_SYSTEM32_XTAJIT_LOADED   },
+};
+
 
 BOOLEAN
 KeInsertQueueApc(
@@ -95,13 +124,6 @@ typedef struct _INJ_THUNK
 } INJ_THUNK, *PINJ_THUNK;
 
 
-// Pending-inject list: holds referenced PEPROCESS pointers for processes
-// that need DLL injection when ntdll.dll is loaded.
-typedef struct _PENDING_INJECT {
-    LIST_ENTRY ListEntry;
-    PEPROCESS Process; // referenced
-} PENDING_INJECT, *PPENDING_INJECT;
-
 static LIST_ENTRY s_PendingInjectList;
 static KSPIN_LOCK s_PendingInjectLock;
 static INJ_THUNK       InjThunk[2] = {
@@ -156,8 +178,8 @@ static VOID PendingInject_Add_Internal(PEPROCESS Process)
     KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
 }
 
-// this function is actually not used, because Process is removed in PendingInject_PopForInject
-static VOID PendingInject_Remove_Internal(PEPROCESS Process)
+// this function is actually not used, because Process is removed in Inject_GetPendingInj
+VOID Inject_RemovePendingInject(PEPROCESS Process)
 {
     KIRQL oldIrql;
     KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
@@ -170,6 +192,7 @@ static VOID PendingInject_Remove_Internal(PEPROCESS Process)
             // drop the reference we took when adding
             ObDereferenceObject(p->Process);
             ExFreePoolWithTag(p, 'gInP');
+			Log(L"Process %d is removed from pending injection list\n", PsGetProcessId(Process));
             break;
         }
     }
@@ -204,24 +227,23 @@ static BOOLEAN ImageNameIsNtdll_Internal(PUNICODE_STRING ImageName)
 	return FALSE;
 }
 
-
+BOOLEAN Inject_CanInject(PPENDING_INJECT injInfo) {
+	ULONG RequiredDlls = INJ_SYSTEM32_NTDLL_LOADED;
+	return (injInfo->LoadedDlls & RequiredDlls) == RequiredDlls;
+}
 
 // Placeholder injection function to be implemented later
-NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
+NTSTATUS Inject_Perform(PPENDING_INJECT InjectionInfo)
 {
 	NTSTATUS status = STATUS_SUCCESS;
 
 	// Validate parameters
-	if (!ImageInfo || !ImageInfo->ImageBase) {
+	if (!InjectionInfo->LdrLoadDllRoutineAddress) {
+		Log(L"can't perform injection without knowning LdrLoadDll function address");
 		return STATUS_INVALID_PARAMETER;
 	}
 
-	PVOID dllBase = ImageInfo->ImageBase;
-	PVOID ldrFuncAddr = PE_GetExport(dllBase, "LdrLoadDll");
-	if (!ldrFuncAddr) {
-		Log(L"failed to get LdrLoadDll from ntdll base: 0x%p\n", dllBase);
-		return STATUS_UNSUCCESSFUL;
-	}
+	PVOID ldrFuncAddr = InjectionInfo->LdrLoadDllRoutineAddress;
 
 	OBJECT_ATTRIBUTES   ObjectAttributes;
 	InitializeObjectAttributes(&ObjectAttributes,
@@ -255,7 +277,7 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 		ZwCurrentProcess(),
 		&SectionMemoryAddress,
 		0,
-		SectionSize,
+		PAGE_SIZE,
 		NULL,
 		&SectionSize,
 		ViewUnmap,
@@ -266,7 +288,7 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 		goto CLEAN_UP;
 	}
 
-	BOOLEAN x64 = !PE_IsProcessX86(Process);
+	BOOLEAN x64 = !PE_IsProcessX86(InjectionInfo->Process);
 	PVOID ApcRoutineAddress = SectionMemoryAddress;
 	// 0 for x86, 1 for x64
 	RtlCopyMemory(ApcRoutineAddress,
@@ -308,7 +330,7 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 
 	PVOID ApcContext = ldrFuncAddr;
 	PVOID ApcArgument1 = (PVOID)DllPath;
-	PVOID ApcArgument2 = (PVOID)wcslen(dllPath);
+	PVOID ApcArgument2 = (PVOID)(wcslen(dllPath) * 2);
 
 	PKNORMAL_ROUTINE ApcRoutine = (PKNORMAL_ROUTINE)(ULONG_PTR)ApcRoutineAddress;
 	KPROCESSOR_MODE ApcMode = UserMode;
@@ -345,16 +367,155 @@ NTSTATUS Inject_Perform(PEPROCESS Process, PIMAGE_INFO ImageInfo)
 	// This uses Comm_BroadcastProcessNotify which is safe to call from here.
 	{
 		ULONG notified = 0;
-		DWORD pid = (DWORD)(ULONG_PTR)PsGetProcessId(Process);
+		DWORD pid = (DWORD)(ULONG_PTR)PsGetProcessId(InjectionInfo->Process);
 		NTSTATUS st = Comm_BroadcastApcQueued(pid, &notified);
 		Log(L"Inject: broadcast apc queued notify for pid %u result 0x%08x notified=%u\n", pid, st, notified);
 	}
+	// ZwClose(SectionHandle);
+	return status;
+CLEAN_UP:
+	// If we allocated an APC but didn't successfully queue it, free it now.
+	if (Apc && !Inserted) {
+		Log(L"failed to call KeInsertQueueApc\n");
+		status = STATUS_UNSUCCESSFUL;
+		ExFreePoolWithTag(Apc, tag_apc);
+		Apc = NULL;
+	}
 
+
+	// Unmap any mapped view in our process
+	if (SectionMemoryAddress) {
+		(VOID)ZwUnmapViewOfSection(ZwCurrentProcess(), SectionMemoryAddress);
+		SectionMemoryAddress = NULL;
+	}
+
+	// Close section handle if created
+	if (SectionHandle) {
+		ZwClose(SectionHandle);
+		SectionHandle = NULL;
+	}
+
+	return status;
+}
+// thunk less injection do not require the asm code, it will directly call ldrloaddll
+NTSTATUS Inject_PerformThunkLess(PPENDING_INJECT InjectionInfo)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+
+	// Validate parameters
+	if (!InjectionInfo->LdrLoadDllRoutineAddress) {
+		Log(L"can't perform injection without knowning LdrLoadDll function address");
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	PVOID ldrFuncAddr = InjectionInfo->LdrLoadDllRoutineAddress;
+
+	OBJECT_ATTRIBUTES   ObjectAttributes;
+	InitializeObjectAttributes(&ObjectAttributes,
+		NULL,
+		OBJ_KERNEL_HANDLE,
+		NULL,
+		NULL);
+
+	// resource tracking - initialize early so CLEAN_UP can safely release
+	HANDLE SectionHandle = NULL;
+	PVOID SectionMemoryAddress = NULL;
+	PKAPC Apc = NULL;
+	BOOLEAN Inserted = FALSE;
+	SIZE_T SectionSize = PAGE_SIZE;
+	LARGE_INTEGER MaximumSize;
+	MaximumSize.QuadPart = SectionSize;
+
+	status = ZwCreateSection(&SectionHandle,
+		GENERIC_READ | GENERIC_WRITE,
+		&ObjectAttributes,
+		&MaximumSize,
+		PAGE_EXECUTE_READWRITE,
+		SEC_COMMIT,
+		NULL);
+	if (!NT_SUCCESS(status)) {
+		Log(L"failed to call ZwCreateSection from Inject_Perform: 0x%x\n", status);
+		goto CLEAN_UP;
+	}
+
+	status = ZwMapViewOfSection(SectionHandle,
+		ZwCurrentProcess(),
+		&SectionMemoryAddress,
+		0,
+		PAGE_SIZE,
+		NULL,
+		&SectionSize,
+		ViewUnmap,
+		0,
+		PAGE_READWRITE);
+	if (!NT_SUCCESS(status)) {
+		Log(L"failed to call ZwMapViewOfSection from Inject_Perform: 0x%x\n", status);
+		goto CLEAN_UP;
+	}
+
+	BOOLEAN x64 = !PE_IsProcessX86(InjectionInfo->Process);	
+
+	PUNICODE_STRING DllPath = (PUNICODE_STRING)SectionMemoryAddress;
+	PWCHAR DllPathBuffer = (PWCHAR)((PUCHAR)SectionMemoryAddress + sizeof(UNICODE_STRING));
+	WCHAR dllPath[MAX_PATH] = { 0 };
+	SL_ConcatWideString(DriverCtx_GetUserDir(), L"\\", dllPath, MAX_PATH);
+	SL_ConcatWideString(dllPath, x64 ? X64_DLL : X86_DLL, dllPath, MAX_PATH);
+	Log(L"to be injected dll path: %ws\n", dllPath);
+
+	// copy wide string including terminating NUL
+	RtlCopyMemory(DllPathBuffer, dllPath, (wcslen(dllPath) + 1) * sizeof(WCHAR));
+
+	RtlInitUnicodeString(DllPath, DllPathBuffer);
+	// remap to get execution privilege
+	PVOID ApcContext = NULL;
+	PVOID ApcArgument1 = NULL;
+	PVOID ApcArgument2 = DllPath;
+
+	KPROCESSOR_MODE ApcMode = UserMode;
+	PKNORMAL_ROUTINE NormalRoutine = (PKNORMAL_ROUTINE)(ULONG_PTR)ldrFuncAddr;;
+	PVOID NormalContext = ApcContext;
+	PVOID SystemArgument1 = ApcArgument1;
+	PVOID SystemArgument2 = ApcArgument2;
+
+	Apc = ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(KAPC), tag_apc);
+	if (!Apc)
+	{
+		Log(L"failed to call ExAllocatePoolWithTag, aborting\n");
+		status = STATUS_NO_MEMORY;
+		goto CLEAN_UP;
+	}
+
+	KeInitializeApc((PVOID)Apc,
+		(PVOID)PsGetCurrentThread(),
+		(PVOID)OriginalApcEnvironment,
+		(PVOID)&Inject_ApcKernelRoutine,
+		(PVOID)NULL,
+		(PVOID)NormalRoutine,
+		ApcMode,
+		(PVOID)NormalContext);
+	Log(L"injection dll path: %p %wZ\n", DllPath, DllPath);
+	Inserted = KeInsertQueueApc(Apc,
+		SystemArgument1,
+		SystemArgument2,
+		0);
+
+	// Notify user-mode that we queued an APC for this process so the user-mode
+	// controller can start a short-lived checker (e.g. 10s) to detect when the
+	// master DLL is loaded and update the process hook-state accordingly.
+	// This uses Comm_BroadcastProcessNotify which is safe to call from here.
+	{
+		ULONG notified = 0;
+		DWORD pid = (DWORD)(ULONG_PTR)PsGetProcessId(InjectionInfo->Process);
+		NTSTATUS st = Comm_BroadcastApcQueued(pid, &notified);
+		Log(L"Inject: broadcast apc queued notify for pid %u result 0x%08x notified=%u\n", pid, st, notified);
+	}
+	ZwClose(SectionHandle);
+	return status;
 CLEAN_UP:
 
 	// If we allocated an APC but didn't successfully queue it, free it now.
 	if (Apc && !Inserted) {
-		Log(L"failed to call KeInsertQueueApc\n");
+		Log(L"FATAL, failed to call KeInsertQueueApc\n");
 		status = STATUS_UNSUCCESSFUL;
 		ExFreePoolWithTag(Apc, tag_apc);
 		Apc = NULL;
@@ -403,20 +564,17 @@ VOID Inject_Uninit(VOID)
 // Atomically remove and return the PEPROCESS to inject for the supplied process
 // If a pending entry existed, returns the referenced PEPROCESS (caller must
 // ObDereferenceObject it when done). Returns NULL if no pending entry.
-PEPROCESS PendingInject_PopForInject(PEPROCESS Process)
+PPENDING_INJECT Inject_GetPendingInj(PEPROCESS Process)
 {
-    PEPROCESS ret = NULL;
+	PPENDING_INJECT ret = NULL;
     KIRQL oldIrql;
     KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
     PLIST_ENTRY e = s_PendingInjectList.Flink;
     while (e != &s_PendingInjectList) {
         PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
         e = e->Flink; // advance first
-        if (p->Process == Process) {
-            RemoveEntryList(&p->ListEntry);
-            // return the process (the stored entry has a reference); transfer ownership
-            ret = p->Process;
-            ExFreePoolWithTag(p, 'gInP');
+        if (p->Process == Process) {      
+            ret = p;
             break;
         }
     }
@@ -440,17 +598,111 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 VOID Inject_OnImageLoad(PUNICODE_STRING FullImageName, PEPROCESS Process, PIMAGE_INFO ImageInfo)
 {
 	if (!FullImageName || FullImageName->Length == 0) return;
-	if (ImageNameIsNtdll_Internal(FullImageName)) {
-		// Atomically take the pending entry for this process if present so
-		// only one thread performs injection.
-		PEPROCESS procToInject = PendingInject_PopForInject(Process);
-		if (procToInject) {
-			Log(L"ntdll.dll loaded in process: performing injection\n");
-			Inject_Perform(procToInject, ImageInfo);
-			// we received a referenced PEPROCESS from the pop; drop it now
-			ObDereferenceObject(procToInject);
+	// get injection info and check if we can inject now
+	PPENDING_INJECT injectionInfo = Inject_GetPendingInj(Process);
+	if (injectionInfo) {
+		if (injectionInfo->IsInjected)
+			return;
+		if (!Inject_CanInject(injectionInfo)) {
+			// this process is still in early stage, important dlls that are required for injection is not loaded yet
+			// we update InjectInfo here, so the next time we call Inject_CanInject to check, we may be able to inject
+			for (ULONG Index = 0; Index < RTL_NUMBER_OF(InjpSystemDlls); Index += 1)
+			{
+				PUNICODE_STRING SystemDllPath = &InjpSystemDlls[Index].DllPath;
+
+				if (SL_RtlSuffixUnicodeString(SystemDllPath, FullImageName, TRUE))
+				{
+					PVOID LdrLoadDllRoutineAddress = PE_GetExport(ImageInfo->ImageBase,
+						LdrLoadDllRoutineName);
+
+					ULONG DllFlag = InjpSystemDlls[Index].Flag;
+					injectionInfo->LoadedDlls |= DllFlag;
+
+					switch (DllFlag)
+					{
+					case INJ_SYSARM32_NTDLL_LOADED:
+					case INJ_SYCHPE32_NTDLL_LOADED:
+					case INJ_SYSWOW64_NTDLL_LOADED:
+						// TO BE IMPLEMENTED
+						// if (injectionInfo->Method != InjMethodThunkless)
+						// {
+						// 	InjectionInfo->LdrLoadDllRoutineAddress = LdrLoadDllRoutineAddress;
+						// }
+						break;
+
+					case INJ_SYSTEM32_NTDLL_LOADED:
+						injectionInfo->LdrLoadDllRoutineAddress = LdrLoadDllRoutineAddress;
+						break;
+
+					default:
+						break;
+					}
+					break;
+				}
+			}
+		}
+		else {
+			// all necessary dll is loaded, we can only perform the injection by using APC, directly calling ZwMapViewOfSection
+			// and MapViewOfSection may lead to dead lock if these two functions are already on the stack
+			// because MapViewOfSection locks EPROCESS->AddressCreationLock, if we call MapViewOfSection on a call stack that
+			// MapViewOfSection has already been called, there will be a dead lock, this is a risk that we CAN NOT take
+			Log(L"Process %d can be injected now\n", PsGetProcessId(Process), PsGetProcessImageFileName(Process));
+			
+			if (!NT_SUCCESS(Inject_QueueInjectionApc(KernelMode,
+				&Inject_InjectionApcNormalRoutine,
+				injectionInfo,
+				NULL,
+				NULL))) {
+				Log(L"FATAL, failed to queue injection apc normal routine\n");
+				return;
+			}
+
+			injectionInfo->IsInjected = TRUE;
 		}
 	}
+}
+
+NTSTATUS
+NTAPI
+Inject_QueueInjectionApc(
+	_In_ KPROCESSOR_MODE ApcMode,
+	_In_ PKNORMAL_ROUTINE NormalRoutine,
+	_In_ PVOID NormalContext,
+	_In_ PVOID SystemArgument1,
+	_In_ PVOID SystemArgument2
+)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+
+	PKAPC Apc = ExAllocatePoolWithTag(NonPagedPoolNx,
+		sizeof(KAPC),
+		tag_apc);
+	if (!Apc) {
+		Log(L"FATAL, can't allocate memory for apc initialization\n");
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	KeInitializeApc((PVOID)Apc,                                  // Apc
+		(PVOID)PsGetCurrentThread(),                 // Thread
+		(PVOID)OriginalApcEnvironment,               // Environment
+		(PVOID)&Inject_ApcKernelRoutine,          // KernelRoutine
+		(PVOID)NULL,                                 // RundownRoutine
+		(PVOID)NormalRoutine,                        // NormalRoutine
+		ApcMode,                              // ApcMode
+		(PVOID)NormalContext);                      // NormalContext
+
+	BOOLEAN Inserted = KeInsertQueueApc(Apc,              // Apc
+		SystemArgument1,  // SystemArgument1
+		SystemArgument2,  // SystemArgument2
+		0);               // Increment
+
+	if (!Inserted)
+	{
+		ExFreePoolWithTag(Apc, tag_apc);
+		return STATUS_UNSUCCESSFUL;
+	}
+
+	return status;
 }
 
 VOID
@@ -476,4 +728,22 @@ Inject_ApcKernelRoutine(
 	//
 
 	ExFreePoolWithTag(Apc, tag_apc);
+}
+
+
+
+VOID
+NTAPI
+Inject_InjectionApcNormalRoutine(
+	_In_ PVOID NormalContext,
+	_In_ PVOID SystemArgument1,
+	_In_ PVOID SystemArgument2
+)
+{
+	UNREFERENCED_PARAMETER(SystemArgument1);
+	UNREFERENCED_PARAMETER(SystemArgument2);
+
+	PPENDING_INJECT InjectionInfo = NormalContext;
+	Inject_Perform(InjectionInfo);
+	// Inject_PerformThunkLess(InjectionInfo);
 }

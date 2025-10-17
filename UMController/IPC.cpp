@@ -19,8 +19,8 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 
     WCHAR sectionName[128];
     WCHAR eventName[128];
-    FormatObjectName(sectionName, sizeof(sectionName)/sizeof(sectionName[0]), IPC_SECTION_FMT, pid);
-    FormatObjectName(eventName, sizeof(eventName)/sizeof(eventName[0]), IPC_EVENT_FMT, pid);
+    FormatObjectName(sectionName, sizeof(sectionName)/sizeof(sectionName[0]), USER_IPC_SECTION_FMT, pid);
+    FormatObjectName(eventName, sizeof(eventName)/sizeof(eventName[0]), USER_IPC_EVENT_FMT, pid);
 
     // Use Win32 named file-mapping and event APIs — simpler and allowed in UMController
     const SIZE_T viewSize = 4096;

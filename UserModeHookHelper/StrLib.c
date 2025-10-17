@@ -13,6 +13,27 @@ BOOLEAN SL_EqualWideString(WCHAR* a1, WCHAR* a2, BOOLEAN ignoreCase) {
 	return RtlEqualUnicodeString(&uniA1, &uniA2, ignoreCase);
 }
 
+BOOLEAN
+NTAPI
+SL_RtlSuffixUnicodeString(
+	_In_ PUNICODE_STRING String1,
+	_In_ PUNICODE_STRING String2,
+	_In_ BOOLEAN CaseInSensitive
+)
+{
+	//
+	// RtlSuffixUnicodeString is not exported by ntoskrnl until Win10.
+	//
+
+	return String2->Length >= String1->Length &&
+		RtlCompareUnicodeStrings(String2->Buffer + (String2->Length - String1->Length) / sizeof(WCHAR),
+			String1->Length / sizeof(WCHAR),
+			String1->Buffer,
+			String1->Length / sizeof(WCHAR),
+			CaseInSensitive) == 0;
+
+}
+
 BOOLEAN SL_ConcatWideString(_In_opt_ const WCHAR* A, _In_opt_ const WCHAR* B, _Out_writes_(OutChars) PWCHAR Out, SIZE_T OutChars) {
 	if (!Out || OutChars == 0) return FALSE;
 

@@ -671,26 +671,8 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 		// the exit message when the process actually disappears. Guard with
 		// g_PidExitWaiters so we don't spawn duplicate waiters for the same PID.
 		if (processExists && CompareFileTime(&curCreate, &storedStart) == 0) {
-			app.GetETW().Log(L"OnUpdateProcess detected early terminate notification, spawning waiter for pid: %d\n", pid);
-			if (PM_TryReserveExitWaiter(pid)) {
-				std::thread([this, pid]() {
-					const int MAX_WAIT_MS = 2000; // 2s max
-					const int SLEEP_MS = 50;
-					int waited = 0;
-					while (waited < MAX_WAIT_MS) {
-						HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-						if (!h) break; // process gone
-						CloseHandle(h);
-						std::this_thread::sleep_for(std::chrono::milliseconds(SLEEP_MS));
-						waited += SLEEP_MS;
-					}
-					PM_ReleaseExitWaiter(pid);
-					// Post exit to trigger removal path
-					// ::PostMessage(this->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
-				}).detach();
-				goto FULL_EXIT;
-			}
-			return 0;
+			// there is no need to wait, we're already certain that this process is going to terminate, so just goto FULL_EXIT;
+			goto FULL_EXIT;
 		}
 
 		if (processExists && CompareFileTime(&curCreate, &storedStart) != 0) {
@@ -719,7 +701,7 @@ FULL_EXIT:
 		// Process truly exited: remove entry via ProcessManager
 		ProcessEntry removedCopy;
 		PM_RemoveByPid(pid);
-		app.GetETW().Log(L"removing process pid %d from process list\n", pid);
+		// app.GetETW().Log(L"removing process pid %d from process list\n", pid);
 		int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
 		while (item != -1) {
 			if ((DWORD)m_ProcListCtrl.GetItemData(item) == pid) break;
