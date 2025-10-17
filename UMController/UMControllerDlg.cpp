@@ -438,7 +438,7 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 	// them itself if necessary).
 	std::wstring selectedPath(szFile);
 	std::wstring resolvedNtPath;
-	bool resolved = m_Filter.FLTCOMM_ResolveNtPath(selectedPath, resolvedNtPath);
+				bool resolved = Helper::ResolveDosPathToNtPath(selectedPath, resolvedNtPath);
 	std::wstring ntPathToSend;
 	if (resolved && !resolvedNtPath.empty()) {
 		ntPathToSend = resolvedNtPath;

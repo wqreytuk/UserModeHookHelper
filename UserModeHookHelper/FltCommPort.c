@@ -5,16 +5,15 @@
 #include "PortCtx.h"
 #include "DriverCtx.h"
 
-// Prototype for RtlDosPathNameToNtPathName_U_WithStatus may not be present
-// from the available headers in some build environments; declare it here
-// so we can call it. This matches the native signature used by Windows.
-NTSTATUS
-RtlDosPathNameToNtPathName_U_WithStatus(
-	PCWSTR DosName,
-	PUNICODE_STRING NtName,
-	PWSTR *FilePathPart OPTIONAL,
-	PVOID RelativeName OPTIONAL
-	);
+// Forward declarations for modular command handlers (defined below)
+static NTSTATUS Handle_SetUserDir(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_AddHook(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_RemoveHook(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_CheckHookList(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_GetImagePathByPid(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+// NOTE: Do NOT declare or call user-mode-only path conversion helpers from
+// kernel code here. NT-path resolution is performed in user-mode. The driver
+// keeps a simple fallback when a path isn't supplied by user-mode.
 
 // Hook list operations are implemented in HookList.c
 
@@ -180,7 +179,8 @@ Comm_MessageNotify(
 	// Validate input
 	if (!InputBuffer || InputBufferSize < (ULONG)UMHH_MSG_HEADER_SIZE) {
 		status = STATUS_INVALID_PARAMETER;
-		goto cleanup;
+		if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
+		return status;
 	}
 
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)InputBuffer;
@@ -192,217 +192,25 @@ Comm_MessageNotify(
 	pPortCtxCallerRef = PortCtx_FindAndReferenceByCookie(ConnectionCookie);
 
 	switch (msg->m_Cmd) {
-	case CMD_SET_USER_DIR: {
-		// Single global user-dir is expected (only UMController.exe will send this).
-		SIZE_T payloadBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE;
-		if (payloadBytes < sizeof(WCHAR)) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-		PCWSTR w = (PCWSTR)msg->m_Data;
-		SIZE_T wcharCount = payloadBytes / sizeof(WCHAR);
-		BOOLEAN foundNull = FALSE;
-		for (SIZE_T i = 0; i < wcharCount; ++i) {
-			if (w[i] == L'\0') { foundNull = TRUE; break; }
-		}
-		if (!foundNull) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_INVALID_PARAMETER;
-			goto cleanup;
-		}
-		NTSTATUS st = DriverCtx_SetUserDir(w, (SIZE_T)(wcharCount * sizeof(WCHAR)));
-		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
-			*(NTSTATUS*)OutputBuffer = st;
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
-			status = STATUS_SUCCESS;
-			goto cleanup;
-		} else {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-	}
-	case CMD_ADD_HOOK: {
-		// Expect at least an 8-byte hash. Remainder may contain a null-terminated
-		// UTF-16LE NT path string (optional). Layout: [8-byte hash][WCHAR path...\0]
-		if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-		ULONGLONG hash = 0;
-		RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
-		PCWSTR path = NULL;
-		// Compute number of bytes available for the path after the 8-byte hash
-		SIZE_T pathBytes = 0;
-		// m_Data is a flexible payload array; the total payload bytes available after
-		// the header is InputBufferSize - UMHH_MSG_HEADER_SIZE
-		if (InputBufferSize > ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
-			pathBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE - sizeof(ULONGLONG);
-			if (pathBytes >= sizeof(WCHAR)) {
-				path = (PCWSTR)(msg->m_Data + sizeof(ULONGLONG));
-			}
-		}
-		NTSTATUS st = HookList_AddEntry(hash, path, pathBytes);
-		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
-			*(NTSTATUS*)OutputBuffer = st;
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
-			status = STATUS_SUCCESS;
-			goto cleanup;
-		}
-		else {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-	}
-	case CMD_REMOVE_HOOK: {
-		if (InputBufferSize < (sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1)) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-		ULONGLONG hash = 0;
-		RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
-		BOOLEAN removed = HookList_RemoveEntry(hash);
-		if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
-			*(BOOLEAN*)OutputBuffer = removed;
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
-			status = STATUS_SUCCESS;
-			goto cleanup;
-		}
-		else {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-	}
-	case CMD_CHECK_HOOK_LIST: {
-		// Expect an 8-byte hash payload
-		if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
-			// client didn't send full hash
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-		ULONGLONG hash = 0;
-		// m_Data is declared as size 1; copy the following bytes
-		RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
-
-		BOOLEAN found = FALSE;
-
-		// Delegate to HookList module
-		found = HookList_ContainsHash(hash);
-
-		if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
-			*(BOOLEAN*)OutputBuffer = found;
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
-			status = STATUS_SUCCESS;
-			goto cleanup;
-		}
-		else {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-	}
-	case CMD_GET_IMAGE_PATH_BY_PID: {
-		// Expect a 4-byte PID payload
-		if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-		DWORD pid = 0;
-		RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
-
-		// Lookup process object
-		PEPROCESS process = NULL;
-		NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process);
-		if (!NT_SUCCESS(st) || process == NULL) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_NOT_FOUND;
-			goto cleanup;
-		}
-
-		// Ask the kernel for the process image name (NT path). SeLocateProcessImageName
-		// returns a pointer to a UNICODE_STRING allocated by the kernel which we must
-		// free with ExFreePool when done.
-		PUNICODE_STRING imageName = NULL;
-		NTSTATUS res = SeLocateProcessImageName(process, &imageName);
-		if (!NT_SUCCESS(res) || imageName == NULL || imageName->Length == 0) {
-			ObDereferenceObject(process);
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_NOT_FOUND;
-			goto cleanup;
-		}
-
-		// Copy imageName->Buffer (Unicode WCHARs) into OutputBuffer if large enough.
-		ULONG bytesNeeded = imageName->Length + sizeof(WCHAR); // include space for null
-		if (OutputBuffer && OutputBufferSize >= bytesNeeded) {
-			RtlCopyMemory(OutputBuffer, imageName->Buffer, imageName->Length);
-			// Null-terminate
-			((WCHAR*)OutputBuffer)[imageName->Length / sizeof(WCHAR)] = L'\0';
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
-			status = STATUS_SUCCESS;
-		}
-		else {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
-			status = STATUS_BUFFER_TOO_SMALL;
-		}
-
-		// Cleanup
-		ExFreePool(imageName);
-		ObDereferenceObject(process);
-		goto cleanup;
+	case CMD_SET_USER_DIR:
+		status = Handle_SetUserDir(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
-	}
-	case CMD_RESOLVE_NT_PATH: {
-		// Payload: null-terminated DOS/Win32 path (UTF-16LE). Reply: null-terminated NT path (UTF-16LE).
-		SIZE_T payloadBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE;
-		if (payloadBytes < sizeof(WCHAR)) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_BUFFER_TOO_SMALL;
-			goto cleanup;
-		}
-		PCWSTR dosPath = (PCWSTR)msg->m_Data;
-		// Ensure there's a NUL within payload
-		SIZE_T wcharCount = payloadBytes / sizeof(WCHAR);
-		BOOLEAN foundNull = FALSE;
-		for (SIZE_T i = 0; i < wcharCount; ++i) { if (dosPath[i] == L'\0') { foundNull = TRUE; break; } }
-		if (!foundNull) { if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0; status = STATUS_INVALID_PARAMETER; goto cleanup; }
-
-		// Try to convert the DOS path to an NT path via RtlDosPathNameToNtPathName_U
-		UNICODE_STRING ntName = {0};
-		NTSTATUS r = RtlDosPathNameToNtPathName_U_WithStatus(dosPath, &ntName, NULL, NULL);
-		if (!NT_SUCCESS(r) || ntName.Length == 0) {
-			// As a best-effort, try SeLocateProcessImageName if the input looks like an image (not guaranteed)
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			status = STATUS_NOT_FOUND;
-			if (NT_SUCCESS(r)) RtlFreeUnicodeString(&ntName);
-			goto cleanup;
-		}
-
-		// Compute bytes needed (include space for null)
-		ULONG bytesNeeded = ntName.Length + sizeof(WCHAR);
-		if (OutputBuffer && OutputBufferSize >= bytesNeeded) {
-			RtlCopyMemory(OutputBuffer, ntName.Buffer, ntName.Length);
-			((WCHAR*)OutputBuffer)[ntName.Length / sizeof(WCHAR)] = L'\0';
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
-			status = STATUS_SUCCESS;
-		} else {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
-			status = STATUS_BUFFER_TOO_SMALL;
-		}
-		RtlFreeUnicodeString(&ntName);
-		goto cleanup;
-	}
+	case CMD_ADD_HOOK:
+		status = Handle_AddHook(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_REMOVE_HOOK:
+		status = Handle_RemoveHook(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_CHECK_HOOK_LIST:
+		status = Handle_CheckHookList(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_GET_IMAGE_PATH_BY_PID:
+		status = Handle_GetImagePathByPid(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
 	default:
 		break;
 	}
-
-cleanup:
+	 
 	if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
 	return status;
 }
@@ -520,6 +328,7 @@ NTSTATUS Comm_BroadcastApcQueued(DWORD ProcessId, PULONG outNotifiedCount) {
 	PUMHH_COMMAND_MESSAGE msg = ExAllocatePoolWithTag(NonPagedPool, msgSize, tag_port);
 	if (!msg) {
 		PortCtx_FreeSnapshot(arr, count);
+
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
 	RtlZeroMemory(msg, msgSize);
@@ -575,4 +384,162 @@ NTSTATUS Comm_BroadcastApcQueued(DWORD ProcessId, PULONG outNotifiedCount) {
 	PortCtx_FreeSnapshot(arr, count);
 	if (outNotifiedCount) *outNotifiedCount = notified;
 	return STATUS_SUCCESS;
+}
+
+// ---------- Command handlers (modularized) ----------
+
+static NTSTATUS
+Handle_SetUserDir(
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	SIZE_T payloadBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE;
+	if (payloadBytes < sizeof(WCHAR)) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	PCWSTR w = (PCWSTR)msg->m_Data;
+	SIZE_T wcharCount = payloadBytes / sizeof(WCHAR);
+	BOOLEAN foundNull = FALSE;
+	for (SIZE_T i = 0; i < wcharCount; ++i) { if (w[i] == L'\0') { foundNull = TRUE; break; } }
+	if (!foundNull) { if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0; return STATUS_INVALID_PARAMETER; }
+	NTSTATUS st = DriverCtx_SetUserDir(w, (SIZE_T)(wcharCount * sizeof(WCHAR)));
+	if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
+		*(NTSTATUS*)OutputBuffer = st;
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
+		return STATUS_SUCCESS;
+	} else {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+}
+
+static NTSTATUS
+Handle_AddHook(
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	ULONGLONG hash = 0;
+	RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
+	PCWSTR path = NULL;
+	SIZE_T pathBytes = 0;
+	if (InputBufferSize > ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
+		pathBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE - sizeof(ULONGLONG);
+		if (pathBytes >= sizeof(WCHAR)) path = (PCWSTR)(msg->m_Data + sizeof(ULONGLONG));
+	}
+	NTSTATUS st = HookList_AddEntry(hash, path, pathBytes);
+	if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
+		*(NTSTATUS*)OutputBuffer = st;
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
+		return STATUS_SUCCESS;
+	} else {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+}
+
+static NTSTATUS
+Handle_RemoveHook(
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	if (InputBufferSize < (sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1)) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	ULONGLONG hash = 0;
+	RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
+	BOOLEAN removed = HookList_RemoveEntry(hash);
+	if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
+		*(BOOLEAN*)OutputBuffer = removed;
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
+		return STATUS_SUCCESS;
+	} else {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+}
+
+static NTSTATUS
+Handle_CheckHookList(
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	ULONGLONG hash = 0;
+	RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
+	BOOLEAN found = HookList_ContainsHash(hash);
+	if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
+		*(BOOLEAN*)OutputBuffer = found;
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
+		return STATUS_SUCCESS;
+	} else {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+}
+
+static NTSTATUS
+Handle_GetImagePathByPid(
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	DWORD pid = 0;
+	NTSTATUS status = STATUS_SUCCESS;
+	RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+	PEPROCESS process = NULL;
+	status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process);
+	if (!NT_SUCCESS(status) || process == NULL) {
+		if (ReturnOutputBufferLength)
+			*ReturnOutputBufferLength = 0;
+		return status;
+	}
+	PUNICODE_STRING imageName = NULL;
+	status = SeLocateProcessImageName(process, &imageName);
+	if (!NT_SUCCESS(status) || imageName == NULL || imageName->Length == 0) {
+		ObDereferenceObject(process);
+		if (ReturnOutputBufferLength)
+			*ReturnOutputBufferLength = 0;
+		return status;
+	}
+	ULONG bytesNeeded = imageName->Length + sizeof(WCHAR);
+	if (OutputBuffer && OutputBufferSize >= bytesNeeded) {
+		RtlCopyMemory(OutputBuffer, imageName->Buffer, imageName->Length);
+		((WCHAR*)OutputBuffer)[imageName->Length / sizeof(WCHAR)] = L'\0';
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
+		status = STATUS_SUCCESS;
+	}
+	else {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
+		status = STATUS_BUFFER_TOO_SMALL;
+	}
+	ExFreePool(imageName);
+	ObDereferenceObject(process);
+	return status;
 }

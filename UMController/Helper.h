@@ -19,6 +19,11 @@ public:
 
 	// Resolve NT path: try user-mode then kernel fallback via Filter.
 	static bool ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& outNtPath);
+
+	// Resolve a DOS/Win32 path (e.g., C:\...) to an NT-style path. Returns
+	// true on success and stores a string like "\\Device\\HarddiskVolumeX\\..."
+	// If resolution fails, returns false.
+	static bool ResolveDosPathToNtPath(const std::wstring& dosPath, std::wstring& outNtPath);
 	// Try to get process command line (start parameters) from user-mode via WMI.
 	static bool GetProcessCommandLineByPID(DWORD pid, std::wstring& outCmdLine);
 

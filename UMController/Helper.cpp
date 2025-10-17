@@ -140,6 +140,51 @@ bool Helper::ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& 
 	return false;
 }
 
+bool Helper::ResolveDosPathToNtPath(const std::wstring& dosPath, std::wstring& outNtPath) {
+	if (dosPath.empty()) return false;
+
+	// Prefer least-privilege handle for path resolution: request only
+	// FILE_READ_ATTRIBUTES and include BACKUP_SEMANTICS to allow directories.
+	DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+	DWORD flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS;
+	HANDLE h = CreateFileW(dosPath.c_str(), FILE_READ_ATTRIBUTES, share, NULL, OPEN_EXISTING, flags, NULL);
+	if (h == INVALID_HANDLE_VALUE) {
+		// Fallback to GENERIC_READ only if necessary
+		h = CreateFileW(dosPath.c_str(), GENERIC_READ, share, NULL, OPEN_EXISTING, flags, NULL);
+		if (h == INVALID_HANDLE_VALUE) return false;
+	}
+
+	WCHAR finalPath[MAX_PATH * 2];
+	DWORD len = GetFinalPathNameByHandleW(h, finalPath, _countof(finalPath), FILE_NAME_NORMALIZED);
+	CloseHandle(h);
+	if (len == 0 || len >= _countof(finalPath)) return false;
+
+	std::wstring fp(finalPath);
+	// Strip the Windows extended path prefix if present
+	const std::wstring prefix = L"\\\\?\\";
+	if (fp.rfind(prefix, 0) == 0) fp = fp.substr(prefix.size());
+
+	// If path starts with drive letter (e.g., C:\), map it to device name
+	if (fp.size() >= 2 && fp[1] == L':') {
+		WCHAR drive[] = L"X:";
+		drive[0] = fp[0];
+		WCHAR deviceName[32768];
+		DWORD rc = QueryDosDeviceW(drive, deviceName, _countof(deviceName));
+		if (rc == 0) {
+			outNtPath = std::wstring(L"\\??\\") + fp;
+			return true;
+		}
+		std::wstring device(deviceName);
+		std::wstring rest = fp.substr(2); // includes leading backslash
+		outNtPath = device + rest;
+		return true;
+	}
+
+	// Otherwise assume already an NT path
+	outNtPath = fp;
+	return true;
+}
+
 bool Helper::GetProcessCommandLineByPID(DWORD pid, std::wstring& outCmdLine) {
 	// Use WMI to query Win32_Process for the CommandLine property for the PID.
 	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);

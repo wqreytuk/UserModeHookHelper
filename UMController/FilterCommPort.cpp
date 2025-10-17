@@ -475,34 +475,3 @@ Filter::~Filter() {
 		m_Port = INVALID_HANDLE_VALUE;
 	}
 }
-bool Filter::FLTCOMM_ResolveNtPath(const std::wstring& dosPath, std::wstring& outNtPath) {
-	if (dosPath.empty()) return false;
-	const ULONG REPLY_MAX = 32768;
-	// Build outgoing message containing the DOS/Win32 path as UTF-16LE
-	size_t bytes = (dosPath.size() + 1) * sizeof(WCHAR);
-	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) - 1 + bytes;
-	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
-	if (!msg) return false;
-	memset(msg, 0, msgSize);
-	msg->m_Cmd = CMD_RESOLVE_NT_PATH;
-	memcpy(msg->m_Data, dosPath.c_str(), bytes);
-
-	std::unique_ptr<BYTE[]> reply(new BYTE[REPLY_MAX]);
-	DWORD bytesOut = 0;
-	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, reply.get(), REPLY_MAX, &bytesOut);
-	free(msg);
-	if (hr != S_OK || bytesOut == 0) {
-		// If not found, return false (caller may fallback)
-		return false;
-	}
-
-	// Ensure even byte count for WCHAR
-	if (bytesOut % sizeof(WCHAR) != 0) bytesOut -= (bytesOut % sizeof(WCHAR));
-	WCHAR* w = (WCHAR*)reply.get();
-	size_t wcCount = bytesOut / sizeof(WCHAR);
-	if (wcCount == 0) return false;
-	// Guarantee null-termination
-	w[wcCount - 1] = L'\0';
-	outNtPath.assign(w);
-	return true;
-}
