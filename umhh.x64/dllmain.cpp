@@ -333,7 +333,7 @@ VOID EtwLog(_In_ PCWSTR Format, ...)
 
 
 NTSTATUS mycode(_In_ PVOID ThreadParameter) {
-	DbgBreakPoint();
+	// DbgBreakPoint();
 
 
 

@@ -17,6 +17,12 @@ NTAPI
 PsGetProcessImageFileName(
 	_In_ PEPROCESS Process
 );
+NTKERNELAPI
+BOOLEAN
+NTAPI
+KeTestAlertThread(
+	_In_ KPROCESSOR_MODE AlertMode
+);
 
 typedef struct _INJ_SYSTEM_DLL_DESCRIPTOR
 {
@@ -371,7 +377,14 @@ NTSTATUS Inject_Perform(PPENDING_INJECT InjectionInfo)
 		NTSTATUS st = Comm_BroadcastApcQueued(pid, &notified);
 		Log(L"Inject: broadcast apc queued notify for pid %u result 0x%08x notified=%u\n", pid, st, notified);
 	}
-	// ZwClose(SectionHandle);
+	ZwClose(SectionHandle);
+	/*
+	https://github.com/wbenny/injdrv
+	The injected user-mode APC is then force-delivered by calling KeTestAlertThread(UserMode). 
+	This call internally checks if any user-mode APCs are queued and if so, sets the Thread->ApcState.UserApcPending variable to TRUE. 
+	Because of this, the kernel immediately delivers this user-mode APC (by KiDeliverApc) on next transition from kernel-mode to user-mode.
+	*/
+	KeTestAlertThread(UserMode);
 	return status;
 CLEAN_UP:
 	// If we allocated an APC but didn't successfully queue it, free it now.

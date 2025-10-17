@@ -14,6 +14,8 @@
 #define ID_MENU_ADD_HOOK       40001
 #define ID_MENU_REMOVE_HOOK    40002
 #define ID_MENU_INJECT_DLL     40003
+// Menu resource for dialog Tools menu
+#define IDR_TOOLS_MENU         129
 
 // Next default values for new objects
 // 

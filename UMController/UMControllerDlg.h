@@ -58,6 +58,7 @@ public:
 private:
 	Filter m_Filter;
 	CListCtrl m_ProcListCtrl;
+	CMenu m_Menu;
 	bool CheckHookList(const std::wstring& imagePath);
     afx_msg LRESULT OnFatalMessage(WPARAM wParam, LPARAM lParam);
 	// Periodic rescan state

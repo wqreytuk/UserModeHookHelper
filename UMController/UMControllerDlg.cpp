@@ -353,6 +353,11 @@ BOOL CUMControllerDlg::OnInitDialog()
 		}
 	});
 
+	// Load and set the Tools menu for the dialog
+	if (m_Menu.LoadMenu(IDR_TOOLS_MENU)) {
+		SetMenu(&m_Menu);
+	}
+
 	app.GetETW().Log(L"dialog init succeed\n");
 
 
