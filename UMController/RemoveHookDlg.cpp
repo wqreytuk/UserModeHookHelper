@@ -3,6 +3,7 @@
 #include "Resource.h"
 #include "Helper.h"
 #include "ProcessManager.h"
+#include "FilterCommPort.h"
 
 IMPLEMENT_DYNAMIC(CRemoveHookDlg, CDialogEx)
 
@@ -18,15 +19,15 @@ END_MESSAGE_MAP()
 
 BOOL CRemoveHookDlg::OnInitDialog() {
     CDialogEx::OnInitDialog();
-    m_entries = PM_GetAll();
     CListBox* lb = (CListBox*)GetDlgItem(IDC_LIST_PROC);
     if (!lb) return TRUE;
-    // Populate with entries that are marked in hook list
-    for (const auto &e : m_entries) {
-        if (e.bInHookList) {
-            std::wstring display = e.path.empty() ? L"(unknown)" : e.path;
-            lb->AddString(display.c_str());
-        }
+    // Ask kernel for hook NT path list
+    if (!m_pFilter) return TRUE;
+    std::vector<std::wstring> paths;
+    if (!m_pFilter->FLTCOMM_EnumHookPaths(paths)) return TRUE;
+    for (const auto &p : paths) {
+        std::wstring display = p.empty() ? L"(unknown)" : p;
+        lb->AddString(display.c_str());
     }
     return TRUE;
 }
@@ -40,24 +41,28 @@ void CRemoveHookDlg::OnOk() {
         if (lb->GetSel(i) > 0) selectedIndices.push_back(i);
     }
     if (selectedIndices.empty()) { EndDialog(IDCANCEL); return; }
-
-    // Map selected indices back to m_entries filtered list
-    int j = 0;
-    for (size_t idx = 0; idx < m_entries.size(); ++idx) {
-        if (!m_entries[idx].bInHookList) continue;
-        // check if j is in selectedIndices
-        if (std::find(selectedIndices.begin(), selectedIndices.end(), j) != selectedIndices.end()) {
-            // remove this entry
-            const ProcessEntry &e = m_entries[idx];
-            const UCHAR* bytes = reinterpret_cast<const UCHAR*>(e.path.c_str());
-            size_t bytesLen = e.path.size() * sizeof(wchar_t);
-            ULONGLONG hash = (ULONGLONG)Helper::GetNtPathHash(bytes, bytesLen);
-            if (m_pFilter) {
-                m_pFilter->FLTCOMM_RemoveHookByHash(hash);
-            }
-            PM_UpdateEntryFields(e.pid, e.path, false, L"");
+    // For each selected index, retrieve the string and remove by hash
+    for (int sel : selectedIndices) {
+        int len = lb->GetTextLen(sel);
+        std::wstring buf;
+        buf.resize(len + 1);
+        lb->GetText(sel, &buf[0]);
+        // trim trailing null if present
+        if (!buf.empty() && buf.back() == L'\0') buf.pop_back();
+        std::wstring path = buf;
+        const UCHAR* bytes = reinterpret_cast<const UCHAR*>(path.c_str());
+        size_t bytesLen = path.size() * sizeof(wchar_t);
+        ULONGLONG hash = (ULONGLONG)Helper::GetNtPathHash(bytes, bytesLen);
+        if (m_pFilter) {
+            m_pFilter->FLTCOMM_RemoveHookByHash(hash);
         }
-        ++j;
+        // Also update ProcessManager entries that match this path
+        std::vector<ProcessEntry> all = PM_GetAll();
+        for (const auto &e : all) {
+            if (e.path == path) {
+                PM_UpdateEntryFields(e.pid, e.path, false, L"");
+            }
+        }
     }
 
     EndDialog(IDOK);

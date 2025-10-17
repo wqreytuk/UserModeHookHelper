@@ -456,6 +456,36 @@ bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	return false;
 }
 
+// Request kernel to enumerate hook NT paths. Returns true on success and
+// fills out vector with NT paths (empty list if none). Caller should handle
+// large lists by providing a sufficiently large buffer; here we use a
+// reasonably large static buffer for simplicity.
+bool Filter::FLTCOMM_EnumHookPaths(std::vector<std::wstring>& outPaths) {
+	const DWORD REPLY_MAX = 32768;
+	std::unique_ptr<BYTE[]> reply(new BYTE[REPLY_MAX]);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(sizeof(UMHH_COMMAND_MESSAGE));
+	if (!msg) return false;
+	memset(msg, 0, sizeof(UMHH_COMMAND_MESSAGE));
+	msg->m_Cmd = CMD_ENUM_HOOKS;
+
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)sizeof(UMHH_COMMAND_MESSAGE), reply.get(), REPLY_MAX, &bytesOut);
+	free(msg);
+	if (hr != S_OK || bytesOut == 0) return false;
+
+	// Parse concatenated null-terminated WCHAR strings
+	size_t wcCount = bytesOut / sizeof(WCHAR);
+	WCHAR* w = (WCHAR*)reply.get();
+	size_t i = 0;
+	while (i < wcCount) {
+		if (w[i] == L'\0') { ++i; continue; }
+		std::wstring s(&w[i]);
+		outPaths.push_back(s);
+		i += s.size() + 1;
+	}
+	return true;
+}
+
 Filter::~Filter() {
 	// Signal the listener to stop and wait for worker to exit.
 	m_StopListener = true;

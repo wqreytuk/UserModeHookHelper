@@ -438,27 +438,11 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 	// them itself if necessary).
 	std::wstring selectedPath(szFile);
 	std::wstring resolvedNtPath;
-				bool resolved = Helper::ResolveDosPathToNtPath(selectedPath, resolvedNtPath);
-	std::wstring ntPathToSend;
-	if (resolved && !resolvedNtPath.empty()) {
-		ntPathToSend = resolvedNtPath;
-	} else {
-		// fallback: try to canonicalize locally
-		HANDLE h = CreateFileW(szFile, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-			NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		if (h && h != INVALID_HANDLE_VALUE) {
-			wchar_t finalPath[MAX_PATH];
-			DWORD len = GetFinalPathNameByHandleW(h, finalPath, _countof(finalPath), FILE_NAME_NORMALIZED);
-			CloseHandle(h);
-			if (len > 0 && len < _countof(finalPath)) {
-				std::wstring fp(finalPath);
-				const std::wstring prefix = L"\\\\?\\";
-				if (fp.rfind(prefix, 0) == 0) fp = fp.substr(prefix.size());
-				ntPathToSend = fp;
-			}
-		}
-		if (ntPathToSend.empty()) ntPathToSend = selectedPath;
-	}
+	// Rely solely on Helper for DOS -> NT resolution. Helper performs
+	// minimal-access opens and device mapping; if it fails we'll send the
+	// original selected path to the kernel.
+	bool resolved = Helper::ResolveDosPathToNtPath(selectedPath, resolvedNtPath);
+	std::wstring ntPathToSend = resolved && !resolvedNtPath.empty() ? resolvedNtPath : selectedPath;
 
 	if (!m_Filter.FLTCOMM_AddHook(ntPathToSend)) {
 		::MessageBoxW(NULL, L"Failed to add hook entry in kernel.", L"Add Executable", MB_OK | MB_ICONERROR);

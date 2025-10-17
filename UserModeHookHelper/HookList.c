@@ -30,6 +30,20 @@ VOID HookList_Uninit(VOID) {
 }
 
 NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath, SIZE_T PathBytes) {
+    // First, do a shared scan to quickly detect duplicates without allocating.
+    ExAcquireResourceSharedLite(&s_HookListLock, TRUE);
+    PLIST_ENTRY entry = s_HookList.Flink;
+    while (entry != &s_HookList) {
+        PHOOK_ENTRY e = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+        if (e && e->Hash == hash) {
+            ExReleaseResourceLite(&s_HookListLock);
+            return STATUS_SUCCESS; // already present, idempotent
+        }
+        entry = entry->Flink;
+    }
+    ExReleaseResourceLite(&s_HookListLock);
+
+    // Not found - allocate the new entry and optional path buffer.
     PHOOK_ENTRY p = ExAllocatePoolWithTag(NonPagedPool, sizeof(HOOK_ENTRY), tag_hlst);
     if (!p) return STATUS_INSUFFICIENT_RESOURCES;
     RtlZeroMemory(p, sizeof(HOOK_ENTRY));
@@ -39,36 +53,42 @@ NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath, SIZE_T PathBytes) {
     p->NtPath.Length = 0;
     p->NtPath.MaximumLength = 0;
 
+    PWCHAR buf = NULL;
     if (NtPath && PathBytes > 0) {
-        // Ensure PathBytes is even and at least includes a trailing null WCHAR
         SIZE_T bytes = PathBytes;
         if (bytes % sizeof(WCHAR) != 0) {
-            // truncate to even number of bytes
             bytes = bytes - (bytes % sizeof(WCHAR));
         }
-        if (bytes < sizeof(WCHAR)) {
-            // nothing useful
-            bytes = 0;
-        }
-
-        if (bytes > 0) {
-            PWCHAR buf = ExAllocatePoolWithTag(NonPagedPool, bytes, tag_hlst);
+        if (bytes >= sizeof(WCHAR)) {
+            buf = ExAllocatePoolWithTag(NonPagedPool, bytes, tag_hlst);
             if (!buf) {
                 ExFreePoolWithTag(p, tag_hlst);
                 return STATUS_INSUFFICIENT_RESOURCES;
             }
             RtlCopyMemory(buf, NtPath, bytes);
-            // Guarantee null-termination if caller didn't include it
-            if (buf[(bytes / sizeof(WCHAR)) - 1] != L'\0') {
-                // If there's room, append a null; otherwise ensure last WCHAR is null
-                buf[(bytes / sizeof(WCHAR)) - 1] = L'\0';
-            }
+            if (buf[(bytes / sizeof(WCHAR)) - 1] != L'\0') buf[(bytes / sizeof(WCHAR)) - 1] = L'\0';
             p->NtPath.Buffer = buf;
             p->NtPath.Length = (USHORT)(bytes - sizeof(WCHAR));
             p->NtPath.MaximumLength = (USHORT)bytes;
         }
     }
+
+    // Acquire exclusive lock and re-check to handle races.
     ExAcquireResourceExclusiveLite(&s_HookListLock, TRUE);
+    entry = s_HookList.Flink;
+    while (entry != &s_HookList) {
+        PHOOK_ENTRY e = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+        if (e && e->Hash == hash) {
+            // Another thread inserted it between our shared-scan and now.
+            ExReleaseResourceLite(&s_HookListLock);
+            if (p->NtPath.Buffer) ExFreePoolWithTag(p->NtPath.Buffer, tag_hlst);
+            ExFreePoolWithTag(p, tag_hlst);
+            return STATUS_SUCCESS;
+        }
+        entry = entry->Flink;
+    }
+
+    // Insert and release lock
     InsertTailList(&s_HookList, &p->ListEntry);
     ExReleaseResourceLite(&s_HookListLock);
     return STATUS_SUCCESS;
@@ -110,4 +130,62 @@ BOOLEAN HookList_ContainsHash(ULONGLONG hash) {
     }
     ExReleaseResourceLite(&s_HookListLock);
     return found;
+}
+
+NTSTATUS HookList_EnumeratePaths(PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBytes) {
+    SIZE_T totalNeeded = 0;
+    ExAcquireResourceSharedLite(&s_HookListLock, TRUE);
+    PLIST_ENTRY entry = s_HookList.Flink;
+    while (entry != &s_HookList) {
+        PHOOK_ENTRY p = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+        if (p && p->NtPath.Buffer && p->NtPath.Length > 0) {
+            totalNeeded += p->NtPath.Length + sizeof(WCHAR); // include terminator
+        } else {
+            // still account for an empty placeholder
+            totalNeeded += sizeof(WCHAR);
+        }
+        entry = entry->Flink;
+    }
+    ExReleaseResourceLite(&s_HookListLock);
+
+    if (ReturnOutputBytes) *ReturnOutputBytes = (ULONG)totalNeeded;
+    if (!OutputBuffer || OutputBufferSize < (ULONG)totalNeeded) {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+
+    // Fill buffer
+    UCHAR* dest = (UCHAR*)OutputBuffer;
+    SIZE_T remain = OutputBufferSize;
+    ExAcquireResourceSharedLite(&s_HookListLock, TRUE);
+    entry = s_HookList.Flink;
+    while (entry != &s_HookList) {
+        PHOOK_ENTRY p = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+        if (p && p->NtPath.Buffer && p->NtPath.Length > 0) {
+            SIZE_T bytes = p->NtPath.Length;
+            if (bytes + sizeof(WCHAR) <= remain) {
+                RtlCopyMemory(dest, p->NtPath.Buffer, bytes);
+                // append terminator
+                ((WCHAR*)dest)[bytes / sizeof(WCHAR)] = L'\0';
+                dest += bytes + sizeof(WCHAR);
+                remain -= (bytes + sizeof(WCHAR));
+            } else {
+                ExReleaseResourceLite(&s_HookListLock);
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+        } else {
+            // write empty string
+            if (sizeof(WCHAR) <= remain) {
+                ((WCHAR*)dest)[0] = L'\0';
+                dest += sizeof(WCHAR);
+                remain -= sizeof(WCHAR);
+            } else {
+                ExReleaseResourceLite(&s_HookListLock);
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+        }
+        entry = entry->Flink;
+    }
+    ExReleaseResourceLite(&s_HookListLock);
+
+    return STATUS_SUCCESS;
 }

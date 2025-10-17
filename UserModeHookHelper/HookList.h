@@ -48,4 +48,12 @@ NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath, SIZE_T PathBytes);
 BOOLEAN HookList_RemoveEntry(ULONGLONG hash);
 BOOLEAN HookList_ContainsHash(ULONGLONG hash);
 
+// Enumerate stored NT paths into the provided output buffer as a sequence
+// of null-terminated WCHAR strings concatenated one after another.
+// If OutputBuffer is NULL or OutputBufferSize is insufficient, the
+// function returns STATUS_BUFFER_TOO_SMALL and sets *ReturnOutputBytes to
+// the required number of bytes. On success returns STATUS_SUCCESS and
+// sets *ReturnOutputBytes to the number of bytes written.
+NTSTATUS HookList_EnumeratePaths(PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBytes);
+
 #endif

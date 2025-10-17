@@ -162,6 +162,27 @@ Comm_PortDisconnect(
 
 
 
+
+// Enumerate hook list NT paths into OutputBuffer as a sequence of
+// null-terminated WCHAR strings concatenated one after another. The caller
+// supplies OutputBuffer/OutputBufferSize and the handler returns the total
+// bytes written (or required) in ReturnOutputBufferLength.
+static NTSTATUS
+Handle_EnumHooks(
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	UNREFERENCED_PARAMETER(InputBufferSize);
+	UNREFERENCED_PARAMETER(msg);
+	ULONG required = 0;
+	NTSTATUS st = HookList_EnumeratePaths(OutputBuffer, OutputBufferSize, &required);
+	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = required;
+	return st;
+}
+
 NTSTATUS
 Comm_MessageNotify(
 	__in PVOID ConnectionCookie,
@@ -206,6 +227,9 @@ Comm_MessageNotify(
 		break;
 	case CMD_GET_IMAGE_PATH_BY_PID:
 		status = Handle_GetImagePathByPid(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_ENUM_HOOKS:
+		status = Handle_EnumHooks(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
 	default:
 		break;

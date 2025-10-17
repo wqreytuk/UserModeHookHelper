@@ -2,6 +2,10 @@
 #define FILTERCOMMPORT_H
 // Flag used in WM_APP_UPDATE_PROCESS wParam to indicate a process CREATE event
 #define PROCESS_NOTIFY_CREATE_FLAG 0x80000000u
+
+#include <vector>
+#include <string>
+
 class Filter
 {
 public:
@@ -15,6 +19,9 @@ public:
 	// Ask kernel for image path (NT or DOS) of the given PID. Returns true
 	// and fills outPath on success.
 	bool FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath);
+	// Request kernel to enumerate hook NT paths. Returns true on success and
+	// fills out vector with NT paths (empty list if none).
+	bool FLTCOMM_EnumHookPaths(std::vector<std::wstring>& outPaths);
 	// (Path resolution moved to Helper::ResolveDosPathToNtPath)
 	// Add or remove hook entries in kernel (NT path is passed as UTF-16LE)
 	bool FLTCOMM_AddHook(const std::wstring& ntPath);

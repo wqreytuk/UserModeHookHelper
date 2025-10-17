@@ -16,6 +16,10 @@
 #define CMD_SET_USER_DIR 5
 // Kernel notifies user-mode an APC was queued for a PID (used to start a short-lived checker)
 #define CMD_APC_QUEUED 6
+// Request kernel to enumerate hook list NT paths. Kernel returns a sequence
+// of null-terminated wide strings concatenated; user-mode should provide a
+// large reply buffer (or reissue with a larger buffer) and parse the list.
+#define CMD_ENUM_HOOKS 7
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {
