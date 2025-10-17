@@ -16,6 +16,10 @@
 #define CMD_SET_USER_DIR 5
 // Kernel notifies user-mode an APC was queued for a PID (used to start a short-lived checker)
 #define CMD_APC_QUEUED 6
+// Resolve a DOS or Win32 path (e.g. C:\...) to a kernel/NT-style path
+// Payload: null-terminated UTF-16LE DOS path in m_Data. Reply: null-terminated
+// UTF-16LE NT path string in output buffer.
+#define CMD_RESOLVE_NT_PATH 7
 
 typedef struct _UMHH_COMMAND_MESSAGE {
 	DWORD m_Cmd;

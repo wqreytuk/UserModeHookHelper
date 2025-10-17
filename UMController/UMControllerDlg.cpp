@@ -19,6 +19,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "IPC.h"
+#include "RemoveHookDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -190,7 +191,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_MESSAGE(WM_APP_UPDATE_PROCESS, &CUMControllerDlg::OnUpdateProcess)
 	ON_WM_DESTROY()
 	ON_COMMAND(ID_MENU_ADD_HOOK, &CUMControllerDlg::OnAddHook)
-	ON_COMMAND(ID_MENU_REMOVE_HOOK, &CUMControllerDlg::OnRemoveHook)
+	ON_COMMAND(ID_MENU_REMOVE_HOOK, &CUMControllerDlg::OnRemoveExecutablesFromHookList)
 	ON_COMMAND(ID_MENU_INJECT_DLL, &CUMControllerDlg::OnInjectDll)
 	ON_COMMAND(ID_MENU_ADD_EXE, &CUMControllerDlg::OnAddExecutableToHookList)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
@@ -429,30 +430,37 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 		return;
 	}
 
-	// Convert DOS path to NT path using GetFinalPathNameByHandleW if possible
-	std::wstring ntPath;
-	HANDLE h = CreateFileW(szFile, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h && h != INVALID_HANDLE_VALUE) {
-		wchar_t finalPath[MAX_PATH];
-		DWORD len = GetFinalPathNameByHandleW(h, finalPath, _countof(finalPath), FILE_NAME_NORMALIZED);
-		CloseHandle(h);
-		if (len > 0 && len < _countof(finalPath)) {
-			// The returned path may be of the form "\\?\C:\..."; convert to DOS path without prefix
-			std::wstring fp(finalPath);
-			const std::wstring prefix = L"\\\\?\\";
-			if (fp.rfind(prefix, 0) == 0) fp = fp.substr(prefix.size());
-			// Convert DOS path to NT path using RtlDosPathNameToNtPathName_U via helper if available
-			// The kernel expects NT-style paths (eg. \Device\HarddiskVolumeX\...); try Filter to resolve
-			// If filter knows the NT path for this file, use it. Otherwise send DOS path; driver may convert.
-			ntPath = fp;
+	// Ask the kernel to resolve the selected file's NT path. The driver is
+	// able to call SeLocateProcessImageName or otherwise map DOS paths into
+	// kernel-style device paths. If driver resolution fails, fall back to
+	// local GetFinalPathNameByHandle-based normalization and pass that to
+	// FLTCOMM_AddHook (the kernel will still accept DOS paths and convert
+	// them itself if necessary).
+	std::wstring selectedPath(szFile);
+	std::wstring resolvedNtPath;
+	bool resolved = m_Filter.FLTCOMM_ResolveNtPath(selectedPath, resolvedNtPath);
+	std::wstring ntPathToSend;
+	if (resolved && !resolvedNtPath.empty()) {
+		ntPathToSend = resolvedNtPath;
+	} else {
+		// fallback: try to canonicalize locally
+		HANDLE h = CreateFileW(szFile, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (h && h != INVALID_HANDLE_VALUE) {
+			wchar_t finalPath[MAX_PATH];
+			DWORD len = GetFinalPathNameByHandleW(h, finalPath, _countof(finalPath), FILE_NAME_NORMALIZED);
+			CloseHandle(h);
+			if (len > 0 && len < _countof(finalPath)) {
+				std::wstring fp(finalPath);
+				const std::wstring prefix = L"\\\\?\\";
+				if (fp.rfind(prefix, 0) == 0) fp = fp.substr(prefix.size());
+				ntPathToSend = fp;
+			}
 		}
+		if (ntPathToSend.empty()) ntPathToSend = selectedPath;
 	}
 
-	if (ntPath.empty()) ntPath.assign(szFile);
-
-	// Convert to wide string NT-style path expected by FLTCOMM_AddHook (the Filter will accept DOS path and convert if needed)
-	if (!m_Filter.FLTCOMM_AddHook(ntPath)) {
+	if (!m_Filter.FLTCOMM_AddHook(ntPathToSend)) {
 		::MessageBoxW(NULL, L"Failed to add hook entry in kernel.", L"Add Executable", MB_OK | MB_ICONERROR);
 		return;
 	}
@@ -870,4 +878,12 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	menu.TrackPopupMenu(TPM_RIGHTBUTTON, point.x, point.y, this);
 
 	*pResult = 0;
+}
+
+void CUMControllerDlg::OnRemoveExecutablesFromHookList() {
+	CRemoveHookDlg dlg(&m_Filter, this);
+	if (dlg.DoModal() == IDOK) {
+		// Dialog already performed removals and updated PM
+		// Optionally refresh UI here
+	}
 }

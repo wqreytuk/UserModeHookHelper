@@ -15,6 +15,9 @@ public:
 	// Ask kernel for image path (NT or DOS) of the given PID. Returns true
 	// and fills outPath on success.
 	bool FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath);
+	// Ask kernel to resolve a supplied DOS/Win32 path to an NT device path.
+	// Returns true and fills outNtPath on success.
+	bool FLTCOMM_ResolveNtPath(const std::wstring& dosPath, std::wstring& outNtPath);
 	// Add or remove hook entries in kernel (NT path is passed as UTF-16LE)
 	bool FLTCOMM_AddHook(const std::wstring& ntPath);
 	bool FLTCOMM_RemoveHookByHash(ULONGLONG hash);

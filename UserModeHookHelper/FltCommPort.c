@@ -5,6 +5,17 @@
 #include "PortCtx.h"
 #include "DriverCtx.h"
 
+// Prototype for RtlDosPathNameToNtPathName_U_WithStatus may not be present
+// from the available headers in some build environments; declare it here
+// so we can call it. This matches the native signature used by Windows.
+NTSTATUS
+RtlDosPathNameToNtPathName_U_WithStatus(
+	PCWSTR DosName,
+	PUNICODE_STRING NtName,
+	PWSTR *FilePathPart OPTIONAL,
+	PVOID RelativeName OPTIONAL
+	);
+
 // Hook list operations are implemented in HookList.c
 
 // Work item used to defer broadcasts to a system thread when the caller's
@@ -346,6 +357,46 @@ Comm_MessageNotify(
 		ObDereferenceObject(process);
 		goto cleanup;
 		break;
+	}
+	case CMD_RESOLVE_NT_PATH: {
+		// Payload: null-terminated DOS/Win32 path (UTF-16LE). Reply: null-terminated NT path (UTF-16LE).
+		SIZE_T payloadBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE;
+		if (payloadBytes < sizeof(WCHAR)) {
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			status = STATUS_BUFFER_TOO_SMALL;
+			goto cleanup;
+		}
+		PCWSTR dosPath = (PCWSTR)msg->m_Data;
+		// Ensure there's a NUL within payload
+		SIZE_T wcharCount = payloadBytes / sizeof(WCHAR);
+		BOOLEAN foundNull = FALSE;
+		for (SIZE_T i = 0; i < wcharCount; ++i) { if (dosPath[i] == L'\0') { foundNull = TRUE; break; } }
+		if (!foundNull) { if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0; status = STATUS_INVALID_PARAMETER; goto cleanup; }
+
+		// Try to convert the DOS path to an NT path via RtlDosPathNameToNtPathName_U
+		UNICODE_STRING ntName = {0};
+		NTSTATUS r = RtlDosPathNameToNtPathName_U_WithStatus(dosPath, &ntName, NULL, NULL);
+		if (!NT_SUCCESS(r) || ntName.Length == 0) {
+			// As a best-effort, try SeLocateProcessImageName if the input looks like an image (not guaranteed)
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+			status = STATUS_NOT_FOUND;
+			if (NT_SUCCESS(r)) RtlFreeUnicodeString(&ntName);
+			goto cleanup;
+		}
+
+		// Compute bytes needed (include space for null)
+		ULONG bytesNeeded = ntName.Length + sizeof(WCHAR);
+		if (OutputBuffer && OutputBufferSize >= bytesNeeded) {
+			RtlCopyMemory(OutputBuffer, ntName.Buffer, ntName.Length);
+			((WCHAR*)OutputBuffer)[ntName.Length / sizeof(WCHAR)] = L'\0';
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
+			status = STATUS_SUCCESS;
+		} else {
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
+			status = STATUS_BUFFER_TOO_SMALL;
+		}
+		RtlFreeUnicodeString(&ntName);
+		goto cleanup;
 	}
 	default:
 		break;

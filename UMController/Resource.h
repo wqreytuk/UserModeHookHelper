@@ -18,6 +18,7 @@
 #define ID_MENU_ADD_EXE        40004
 // Menu resource for dialog Tools menu
 #define IDR_TOOLS_MENU         129
+#define IDD_REMOVE_HOOK_DLG    140
 
 // Next default values for new objects
 // 
