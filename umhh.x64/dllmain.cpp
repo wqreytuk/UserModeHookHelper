@@ -484,7 +484,7 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 	if (pNtCreateSection) {
 		NTSTATUS st = pNtCreateSection(&hSection, SECTION_ALL_ACCESS, &secAttr, (PLARGE_INTEGER)&viewSize, PAGE_READWRITE, SEC_COMMIT, NULL);
 		if (!NT_SUCCESS(st)) {
-			EtwLog(L"NtCreateSection failed: 0x%08x\n", st);
+			//EtwLog(L"NtCreateSection failed: 0x%08x\n", st);
 			hSection = NULL;
 		}
 	}
@@ -494,7 +494,7 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 #define VIEW_SHARE 1
 		NTSTATUS st = pNtMapViewOfSection(hSection, NtCurrentProcess(), &baseAddress, 0, PAGE_SIZE, NULL, &viewSize, VIEW_SHARE, 0, PAGE_READWRITE);
 		if (!NT_SUCCESS(st)) {
-			EtwLog(L"NtMapViewOfSection failed: 0x%08x\n", st);
+			//EtwLog(L"NtMapViewOfSection failed: 0x%08x\n", st);
 			baseAddress = NULL;
 		}
 	}
@@ -512,10 +512,14 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 		}
 	}
 
+	WCHAR pathBuf[64];
+
+	ConcatPidToPath(pathBuf, sizeof(pathBuf) / sizeof(WCHAR), NtCurrentProcessId());
+
 	// Server loop: wait on event, read WCHAR path from section, load, zero buffer
 	for (;;) {
-		if (!hEvent || !baseAddress) {
-			EtwLog(L"%s(%d) - unexpected (!hEvent || !baseAddress)\n", WFILE, __LINE__);
+		if (!hEvent) {
+			EtwLog(L"%s(%d) - unexpected (!hEvent)\n", WFILE, __LINE__);
 			LARGE_INTEGER li;
 			li.QuadPart = -(LONGLONG)1000 * 10000LL;
 			pNtDelay((BOOLEAN)0, &li);
@@ -524,16 +528,42 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 		pNtWaitForSingleObject(hEvent, FALSE, NULL);
 
-		if (baseAddress) {
-			WCHAR *wbuf = (WCHAR*)baseAddress;
-			if (wbuf[0] != L'\0') {
-				UNICODE_STRING ustr;
-				RtlInitUnicodeString(&ustr, wbuf);
-				EtwLog(L"section signaled, loading dll: %wZ\n", &ustr);
-				pLdrLoadDll(0, 0, &ustr, NULL);
-				RtlZeroMemory(baseAddress, viewSize);
-			}
+		EtwLog(L"current process is signaled to inject a dll\n");
+		char dllPath[256] = { 0 };
+		int pid = ReadFileParsePidAndDllPath(pathBuf, dllPath);
+		EtwLog(L"get to be injected dll path: %S\n", dllPath);
+		{
+
+			UNICODE_STRING uPath;
+			OBJECT_ATTRIBUTES oa;
+			RtlInitUnicodeString(&uPath, pathBuf);
+			InitializeObjectAttributes(&oa, &uPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+			NTSTATUS status = pNtDeleteFile(&oa);
 		}
+		// 当前进程就是将要被注入dll的目标进程
+		UNICODE_STRING str;
+		WCHAR buffer[260];
+		{
+			PUNICODE_STRING ustr = &str;
+			USHORT i = 0;
+			char* src = dllPath;
+			while (src[i] && (i * sizeof(WCHAR) + sizeof(WCHAR)) <= 256) {
+				buffer[i] = (WCHAR)(unsigned char)src[i]; // simple widening
+				i++;
+			}
+			buffer[i] = L'\0';
+
+			ustr->Buffer = buffer;
+			ustr->Length = i * sizeof(WCHAR);
+			ustr->MaximumLength = (i + 1) * sizeof(WCHAR);
+
+			EtwLog(L"wide char dll path character count: %d\n", i);// unicode string for t obe injected dll path : %wZ\n", ustr);// dllPath);
+			EtwLog(L"constructed unicode string for to be injected dll path: %wZ\n", ustr);// dllPath);
+
+			pLdrLoadDll(0, 0, ustr, (PHANDLE)dllPath);
+		}
+
 	}
 
 
