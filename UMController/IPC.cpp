@@ -6,6 +6,8 @@
 #include <string.h>
 #include "UMController.h" // for app.GetETW()
 #include "Helper.h" // for app.GetETW()
+#include <sddl.h>
+
 
 // Helper to format named object name into buffer
 static void FormatObjectName(PWCHAR out, size_t outCount, PCWSTR fmt, DWORD pid)
@@ -37,12 +39,38 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	DeleteFile(signalPath);
 	// Prepare payload: 4 bytes pid (little endian), '$', dll bytes (no null), '$'
 	// We'll write as binary file.
-	HANDLE hFile = CreateFile(signalPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (hFile == INVALID_HANDLE_VALUE) {
-		app.GetETW().Log(L"IPC_SendInject: CreateFileW failed (%u)\n", GetLastError());
+
+
+
+
+	PSECURITY_DESCRIPTOR pSD = nullptr;
+
+	// SDDL: D: (DACL) (A;;GA;;;WD) => Allow Generic All to Everyone
+	LPCWSTR sddl = L"D:(A;;GA;;;WD)";
+
+	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+		sddl, SDDL_REVISION_1, &pSD, NULL)) {
+		app.GetETW().Log(L"ConvertStringSecurityDescriptorToSecurityDescriptorW failed: 0x%x\n", GetLastError());
+		Helper::Fatal(L"ConvertStringSecurityDescriptorToSecurityDescriptorW function call failed\n");
 		return FALSE;
 	}
 
+	SECURITY_ATTRIBUTES sa = {};
+	sa.nLength = sizeof(sa);
+	sa.lpSecurityDescriptor = pSD;
+	sa.bInheritHandle = FALSE;
+
+
+
+	HANDLE hFile = CreateFile(signalPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		app.GetETW().Log(L"IPC_SendInject: CreateFile %ws failed (%u)\n", signalPath, GetLastError());
+		LocalFree(pSD);
+
+		Helper::Fatal(L"create signal file failed\n");
+		return FALSE;
+	}
+	LocalFree(pSD);
 	DWORD written = 0;
 	// write pid as 4 bytes little-endian
 	DWORD pidValue = pid;
@@ -83,13 +111,23 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 		DeleteFile(eventFilePath);
 		Sleep(500);
 	}
-	hFile = CreateFile(eventFilePath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+		sddl, SDDL_REVISION_1, &pSD, NULL)) {
+		app.GetETW().Log(L"ConvertStringSecurityDescriptorToSecurityDescriptorW failed: 0x%x\n", GetLastError());
+		Helper::Fatal(L"ConvertStringSecurityDescriptorToSecurityDescriptorW function call failed\n");
+		return FALSE;
+	}
+
+	hFile = CreateFile(eventFilePath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
+		LocalFree(pSD);
 		app.GetETW().Log(L"failed to create event file: %ws\n", eventFilePath);
 		Helper::Fatal(L"failed to create event file\n");
 	}
 	else {
 		CloseHandle(hFile);
+		LocalFree(pSD);
 		app.GetETW().Log(L"event file is created ot notify injected dll to process injection request\n");
 	}
 	delete[] asciiBuf;
