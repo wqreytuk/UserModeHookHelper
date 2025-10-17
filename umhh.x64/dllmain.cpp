@@ -315,42 +315,7 @@ PNtWaitForSingleObject         pNtWaitForSingleObject = 0;
 
 
 #include <ntdef.h>
-
-VOID ConcatPidToPath(PWCHAR outBuffer, USHORT bufferLenInWchars, HANDLE pid)
-{
-	// Base path
-	WCHAR basePath[128] = { 0 };
-	_snwprintf(basePath, RTL_NUMBER_OF(basePath), DLL_IPC_SIGNAL_FILE_FMT, (ULONG)(ULONG_PTR)pid);
-	USHORT i = 0;
-	// Copy base path
-	while (basePath[i] && i < bufferLenInWchars - 1) {
-		outBuffer[i] = basePath[i];
-		i++;
-	}
-
-	// Append pid as decimal digits
-	DWORD64 tmp =(DWORD64)(PVOID)pid;
-	WCHAR digits[10];  // max 32-bit decimal digits
-	int d = 0;
-
-	if (tmp == 0) {
-		digits[d++] = L'0';
-	}
-	else {
-		while (tmp != 0 && d < 10) {
-			digits[d++] = (WCHAR)(L'0' + (tmp % 10));
-			tmp /= 10;
-		}
-	}
-
-	// digits are reversed, copy in reverse order
-	for (int j = d - 1; j >= 0 && i < bufferLenInWchars - 1; j--) {
-		outBuffer[i++] = digits[j];
-	}
-
-	outBuffer[i] = L'\0';  // null terminate
-}
-
+ 
 VOID EtwLog(_In_ PCWSTR Format, ...)
 {
 	WCHAR Buffer[1024];
@@ -410,54 +375,62 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 
 	// Event-based IPC only: construct event name for this process and create/open it.
-	WCHAR eventName[128];
+
 	HANDLE curPid = NtCurrentProcessId();
-	_snwprintf(eventName, RTL_NUMBER_OF(eventName), IPC_EVENT_FMT, (ULONG)(ULONG_PTR)curPid);
+	
 
-	UNICODE_STRING usEvent;
-	RtlInitUnicodeString(&usEvent, eventName);
 
-	// Create or open event
-	HANDLE hEvent = NULL;
-	EtwLog(L"NtCreateEvent with name: %s\n", eventName);
-	if (pNtCreateEvent) {
-		OBJECT_ATTRIBUTES evAttr;
-		InitializeObjectAttributes(&evAttr, &usEvent, OBJ_CASE_INSENSITIVE | OBJ_OPENIF, NULL, NULL);
-		NTSTATUS st = pNtCreateEvent(&hEvent, EVENT_ALL_ACCESS, &evAttr, NotificationEvent, FALSE);
-		if (!NT_SUCCESS(st)) {
-			EtwLog(L"NtCreateEvent failed: 0x%08x\n", st);
-			hEvent = NULL;
-		}
-	}
 
-	WCHAR pathBuf[64];
+	WCHAR pathBuf[MAX_PATH];
 
-	ConcatPidToPath(pathBuf, sizeof(pathBuf) / sizeof(WCHAR), NtCurrentProcessId());
-
+	_snwprintf(pathBuf, RTL_NUMBER_OF(pathBuf), DLL_IPC_SIGNAL_FILE_FMT, NtCurrentProcessId());
+	WCHAR eventFile[MAX_PATH] = { 0 };
+	_snwprintf(eventFile, RTL_NUMBER_OF(eventFile), DLL_IPC_EVENT_FILE_FMT, NtCurrentProcessId());
 	// Server loop: wait on event, read WCHAR path from section, load, zero buffer
 	for (;;) {
-		if (!hEvent) {
-			EtwLog(L"%s(%d) - unexpected (!hEvent)\n", WFILE, __LINE__);
-			LARGE_INTEGER li;
-			li.QuadPart = -(LONGLONG)1000 * 10000LL;
-			pNtDelay((BOOLEAN)0, &li);
-			continue;
-		}
+		
 
-		pNtWaitForSingleObject(hEvent, FALSE, NULL);
+		//pNtWaitForSingleObject(hEvent, FALSE, NULL);
+		while (!FileExistsViaNtOpenFile(eventFile)) {
+
+
+			LARGE_INTEGER li;
+			li.QuadPart = -(LONGLONG)500 * 10000LL;
+
+			pNtDelay((BOOLEAN)0, &li);
+		}
+		while (FileExistsViaNtOpenFile(eventFile)) {
+
+			UNICODE_STRING uPath;
+			RtlInitUnicodeString(&uPath, eventFile);
+
+			OBJECT_ATTRIBUTES objAttr;
+			InitializeObjectAttributes(&objAttr, &uPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+			pNtDeleteFile(&objAttr);
+			LARGE_INTEGER li;
+			li.QuadPart = -(LONGLONG)500 * 10000LL;
+
+			pNtDelay((BOOLEAN)0, &li);
+		}
 
 		EtwLog(L"current process is signaled to inject a dll\n");
 		char dllPath[256] = { 0 };
 		int pid = ReadFileParsePidAndDllPath(pathBuf, dllPath);
 		EtwLog(L"get to be injected dll path: %S\n", dllPath);
 		{
+			while (FileExistsViaNtOpenFile(pathBuf)) {
+				UNICODE_STRING uPath;
+				OBJECT_ATTRIBUTES oa;
+				RtlInitUnicodeString(&uPath, pathBuf);
+				InitializeObjectAttributes(&oa, &uPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
 
-			UNICODE_STRING uPath;
-			OBJECT_ATTRIBUTES oa;
-			RtlInitUnicodeString(&uPath, pathBuf);
-			InitializeObjectAttributes(&oa, &uPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+				NTSTATUS status = pNtDeleteFile(&oa);
+				LARGE_INTEGER li;
+				li.QuadPart = -(LONGLONG)500 * 10000LL;
 
-			NTSTATUS status = pNtDeleteFile(&oa);
+				pNtDelay((BOOLEAN)0, &li);
+			}
 		}
 		UNICODE_STRING str;
 		WCHAR buffer[260];

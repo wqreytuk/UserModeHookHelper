@@ -122,7 +122,11 @@ bool Helper::GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath) {
 	outNtPath.assign(m_sharedBuf.get());
 	return true;
 }
-
+bool Helper::IsFileExists(TCHAR* szPath) {
+	DWORD dwAttrib = GetFileAttributes(szPath);
+	return (dwAttrib != INVALID_FILE_ATTRIBUTES &&
+		!(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+}
 bool Helper::ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& outNtPath) {
 	// 1) Try to get NT path from user-mode (QueryFullProcessImageName with flag=1)
 	if (GetFullImageNtPathByPID(pid, outNtPath)) return true;
