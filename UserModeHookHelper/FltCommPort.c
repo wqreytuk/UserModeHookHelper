@@ -542,6 +542,10 @@ Handle_GetImagePathByPid(
 	if (!NT_SUCCESS(status) || process == NULL) {
 		if (ReturnOutputBufferLength)
 			*ReturnOutputBufferLength = 0;
+		// use OutputBuffer to get ntstatus, user mode code can get ntstatus if detect hResult != S_OK
+		// I don't know how to convert ntstatus to hresult, microsoft provided HRESULT_FROM_NT is not
+		// acurate for some unknown reason
+		RtlCopyMemory(OutputBuffer, &status, sizeof(status));
 		return status;
 	}
 	PUNICODE_STRING imageName = NULL;
@@ -550,6 +554,7 @@ Handle_GetImagePathByPid(
 		ObDereferenceObject(process);
 		if (ReturnOutputBufferLength)
 			*ReturnOutputBufferLength = 0;
+		RtlCopyMemory(OutputBuffer, &status, sizeof(status));
 		return status;
 	}
 	ULONG bytesNeeded = imageName->Length + sizeof(WCHAR);
@@ -562,6 +567,7 @@ Handle_GetImagePathByPid(
 	else {
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = bytesNeeded;
 		status = STATUS_BUFFER_TOO_SMALL;
+		RtlCopyMemory(OutputBuffer, &status, sizeof(status));
 	}
 	ExFreePool(imageName);
 	ObDereferenceObject(process);

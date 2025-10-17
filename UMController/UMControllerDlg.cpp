@@ -203,7 +203,7 @@ END_MESSAGE_MAP()
 BOOL CUMControllerDlg::OnInitDialog()
 {
 	CDialogEx::OnInitDialog();
-
+	app.SetHwnd(this->GetSafeHwnd());
 
 
 
@@ -251,10 +251,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 	Helper::SetFatalHandler([](const wchar_t* msg) {
 		// Log first, then post message to the main UI thread.
 		app.GetETW().Log(L"Fatal reported: %s\n", msg);
-		CWnd* pMain = AfxGetMainWnd();
-		if (pMain && pMain->GetSafeHwnd()) {
-			::PostMessage(pMain->GetSafeHwnd(), WM_APP_FATAL, 0, 0);
-		}
+		::PostMessage(app.GetHwnd(), WM_APP_FATAL, 0, 0);
 	});
 
 	// TODO: Add extra initialization here
@@ -369,6 +366,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 LRESULT CUMControllerDlg::OnFatalMessage(WPARAM, LPARAM) {
 	// Graceful shutdown triggered from fatal handler.
 	app.GetETW().Log(L"OnFatalMessage received, closing dialog.\n");
+	MessageBox(L"check etw log", L"Attention!", MB_ICONERROR);
 	EndDialog(IDCANCEL);
 	return 0;
 }
@@ -468,8 +466,9 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 		for (wchar_t c : all[idx].name) nameLower.push_back(towlower(c));
 
 		if (filter.empty() || nameLower.find(filterLower) != std::wstring::npos) {
-				bool is64=false; Helper::IsProcess64(all[idx].pid, is64);
-				bool dllLoaded=false; Helper::IsModuleLoaded(all[idx].pid, is64? MASTER_X64_DLL_BASENAME: MASTER_X86_DLL_BASENAME, dllLoaded);
+				// Use cached module/arch state populated by background resolver
+				bool is64 = all[idx].is64;
+				bool dllLoaded = all[idx].masterDllLoaded;
 				DWORD flags = 0;
 				if (all[idx].bInHookList) flags |= PF_IN_HOOK_LIST;
 				if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
@@ -522,15 +521,19 @@ void CUMControllerDlg::LoadProcessList() {
 
 	CloseHandle(snapshot);
 
-	// Populate the UI quickly with PID and name only
+	// Populate the UI quickly with PID and name only. The expensive checks
+	// (IsProcess64 and IsModuleLoaded) are performed on background threads and
+	// will update the cached fields in ProcessManager; read those cached
+	// values here to avoid blocking the UI.
 	int i = 0;
 	auto all = PM_GetAll();
+
 	for (size_t idx = 0; idx < all.size(); idx++) {
 		int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(all[idx].pid).c_str());
 		m_ProcListCtrl.SetItemText(nIndex, 1, all[idx].name.c_str());
 		// compute flags and packed itemdata before formatting the hook column
-		bool is64 = false; Helper::IsProcess64(all[idx].pid, is64);
-		bool dllLoaded = false; Helper::IsModuleLoaded(all[idx].pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+		bool is64 = all[idx].is64;
+		bool dllLoaded = all[idx].masterDllLoaded;
 		DWORD flags = 0;
 		if (all[idx].bInHookList) flags |= PF_IN_HOOK_LIST;
 		if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
@@ -598,7 +601,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			for (wchar_t c : entry.name) nameLower.push_back(towlower(c));
 			if (nameLower.find(filterLower) != std::wstring::npos) showNow = true;
 		}
-		if (showNow) {
+			if (showNow) {
 			int newIdx = PM_GetIndex(pid);
 			int nIndex = m_ProcListCtrl.InsertItem(newIdx, std::to_wstring(pid).c_str());
 			// If the kernel provided a process name in lParam, show it immediately;
@@ -611,13 +614,14 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(MAKE_ITEMDATA(pid, 0), false).c_str());
 			m_ProcListCtrl.SetItemText(nIndex, 3, L"");
 			m_ProcListCtrl.SetItemText(nIndex, 4, L"");
-			bool is64=false; Helper::IsProcess64(pid, is64);
-			bool dllLoaded=false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
-			DWORD flags = 0;
-			if (entry.bInHookList) flags |= PF_IN_HOOK_LIST;
-			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-			if (is64) flags |= PF_IS_64BIT;
-			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
+				// Use cached state (may be default until resolver runs)
+				bool is64 = entry.is64;
+				bool dllLoaded = entry.masterDllLoaded;
+				DWORD flags = 0;
+				if (entry.bInHookList) flags |= PF_IN_HOOK_LIST;
+				if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+				if (is64) flags |= PF_IS_64BIT;
+				m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
 		}
 
 			// Start resolver for this PID using ProcessResolver helper
@@ -673,14 +677,17 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			item = newItem;
 		}
 
-	// compute flags (is64/master dll) before formatting the column text
-	bool is64 = false; Helper::IsProcess64(pid, is64);
-	bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
-	DWORD flags = 0;
-	if (inHook) flags |= PF_IN_HOOK_LIST;
-	if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-	if (is64) flags |= PF_IS_64BIT;
-	m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(MAKE_ITEMDATA(pid, flags), inHook).c_str());
+	// compute flags from cached ProcessEntry (is64/master dll) before formatting the column text
+		ProcessEntry snapshot;
+		int dummyIdx = -1;
+		if (!PM_GetEntryCopyByPid(pid, snapshot, &dummyIdx)) return 0;
+		bool is64 = snapshot.is64;
+		bool dllLoaded = snapshot.masterDllLoaded;
+		DWORD flags = 0;
+		if (inHook) flags |= PF_IN_HOOK_LIST;
+		if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+		if (is64) flags |= PF_IS_64BIT;
+		m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(MAKE_ITEMDATA(pid, flags), inHook).c_str());
 	m_ProcListCtrl.SetItemText(item, 3, path.c_str());
 	m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
 	m_ProcListCtrl.SetItemData(item, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));

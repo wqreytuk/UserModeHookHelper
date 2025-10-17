@@ -21,11 +21,12 @@ public:
 	CUMControllerApp();
 
 	ETW& GetETW() { return m_etw; }
-
+	HWND GetHwnd() { return m_Hwnd; }
+	VOID SetHwnd(HWND hwnd){m_Hwnd = hwnd;}
 private:
 	// App-owned ETW instance (owns lifetime)
 	ETW m_etw;
-
+	HWND m_Hwnd;
 // Overrides
 public:
 	virtual BOOL InitInstance();

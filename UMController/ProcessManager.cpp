@@ -26,7 +26,11 @@ void PM_Clear() {
 void PM_AddEntry(const ProcessEntry& entry) {
     EnterCriticalSection(&g_lock);
     int idx = (int)g_list.size();
-    g_list.push_back(entry);
+    // Ensure new entries have default module flags set
+    ProcessEntry e = entry;
+    e.is64 = false;
+    e.masterDllLoaded = false;
+    g_list.push_back(e);
     g_index[entry.pid] = idx;
     LeaveCriticalSection(&g_lock);
 }
@@ -84,6 +88,19 @@ void PM_UpdateEntryFields(DWORD pid, const std::wstring& path, bool inHook, cons
             g_list[idx].path = path;
             g_list[idx].bInHookList = inHook;
             g_list[idx].cmdline = cmdline;
+        }
+    }
+    LeaveCriticalSection(&g_lock);
+}
+
+void PM_UpdateEntryModuleState(DWORD pid, bool is64, bool masterDllLoaded) {
+    EnterCriticalSection(&g_lock);
+    auto it = g_index.find(pid);
+    if (it != g_index.end()) {
+        int idx = it->second;
+        if (idx >= 0 && idx < (int)g_list.size() && g_list[idx].pid == pid) {
+            g_list[idx].is64 = is64;
+            g_list[idx].masterDllLoaded = masterDllLoaded;
         }
     }
     LeaveCriticalSection(&g_lock);

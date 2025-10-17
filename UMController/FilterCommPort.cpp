@@ -356,8 +356,10 @@ bool Filter::FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath) {
 		&bytesOut);
 
 	if (hResult != S_OK || bytesOut == 0) {
-		if (hResult == HRESULT_FROM_WIN32(ERROR_NOT_FOUND)) {
-			// app.GetETW().Log(L"process terminated on the fly, can not get ntpath\n");
+		// we use outbuf to store ntstatus returned by miniport messagenotify
+		// because I don't know why HRESULT_FROM_NT is not work well
+		// STATUS_INVALID_CID means process terminated on the way resolving ntpath
+		if (*(ULONG*)t_replyBuf.get() == STATUS_INVALID_CID) {
 			return false;
 		}
 		Helper::Fatal(L"FLTCOMM_GetImagePathByPid: FilterSendMessage failed or returned no data");

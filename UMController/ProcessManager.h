@@ -11,6 +11,8 @@ struct ProcessEntry {
     std::wstring path;
     std::wstring cmdline;
     bool bInHookList;
+    bool is64;
+    bool masterDllLoaded;
     FILETIME startTime = {0,0};
 };
 
@@ -40,6 +42,9 @@ std::vector<DWORD> PM_GetPidsSnapshot();
 
 // Update fields for an existing PID (path, inHook, cmdline) if PID maps to an index.
 void PM_UpdateEntryFields(DWORD pid, const std::wstring& path, bool inHook, const std::wstring& cmdline);
+
+// Update module/architecture state (is64 and master DLL loaded) for an existing PID.
+void PM_UpdateEntryModuleState(DWORD pid, bool is64, bool masterDllLoaded);
 
 // Remove entry by PID (if exists). Thread-safe.
 void PM_RemoveByPid(DWORD pid);
