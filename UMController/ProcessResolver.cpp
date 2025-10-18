@@ -10,52 +10,57 @@
 
 using namespace ProcessResolver;
 
+
 void ProcessResolver::StartLoaderResolver(CUMControllerDlg* dlg, const std::vector<DWORD>& pids, Filter* filter) {
-    std::vector<DWORD> loaderPids = pids;
-    std::thread([dlg, loaderPids, filter]() {
-        for (DWORD pid : loaderPids) {
-            std::wstring ntPath;
-            bool havePath = Helper::ResolveProcessNtImagePath(pid, *filter, ntPath);
-            if (!havePath) {
-                ::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
-                continue;
-            }
-            bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
-            std::wstring cmdline;
-            Helper::GetProcessCommandLineByPID(pid, cmdline);
-            // Compute module/arch state once in background
-            bool is64 = false;
-            Helper::IsProcess64(pid, is64);
-            bool dllLoaded = false;
-            const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
-            Helper::IsModuleLoaded(pid, dllName, dllLoaded);
-            PM_UpdateEntryModuleState(pid, is64, dllLoaded);
-            PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
-            ::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_LOAD);
-        }
-    }).detach();
+	std::vector<DWORD> loaderPids = pids;
+	std::thread([dlg, loaderPids, filter]() {
+		for (DWORD pid : loaderPids) {
+			std::wstring ntPath;
+			bool havePath = Helper::ResolveProcessNtImagePath(pid, *filter, ntPath);
+			if (!havePath) {
+				::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
+				continue;
+			}
+			bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
+			std::wstring cmdline;
+			Helper::GetProcessCommandLineByPID(pid, cmdline);
+			// Compute module/arch state once in background
+			bool is64 = false;
+			bool dllLoaded = false;
+			if (inHook) {
+				Helper::IsProcess64(pid, is64);
+				const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+				Helper::IsModuleLoaded(pid, dllName, dllLoaded);
+			}
+			PM_UpdateEntryModuleState(pid, is64, dllLoaded);
+			PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
+			::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_LOAD);
+		}
+	}).detach();
 }
 
 void ProcessResolver::StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filter* filter) {
-    std::thread([dlg, pid, filter]() {
-        std::wstring ntPath;
-        if (!Helper::ResolveProcessNtImagePath(pid, *filter, ntPath)) {
-            ::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
-            return;
-        }
-        bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
-        std::wstring cmdline;
-        Helper::GetProcessCommandLineByPID(pid, cmdline);
-        // Compute module/arch state once in background
-        bool is64 = false;
-        Helper::IsProcess64(pid, is64);
-        bool dllLoaded = false;
-        const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
-        Helper::IsModuleLoaded(pid, dllName, dllLoaded);
-        PM_UpdateEntryModuleState(pid, is64, dllLoaded);
-        PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
-        ::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
-    }).detach();
+	std::thread([dlg, pid, filter]() {
+		std::wstring ntPath;
+		if (!Helper::ResolveProcessNtImagePath(pid, *filter, ntPath)) {
+			::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
+			return;
+		}
+		bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
+		std::wstring cmdline;
+		Helper::GetProcessCommandLineByPID(pid, cmdline);
+		// Compute module/arch state once in background
+		bool is64 = false;
+		bool dllLoaded = false;
+		if (inHook) {
+			Helper::IsProcess64(pid, is64);
+			const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+			Helper::IsModuleLoaded(pid, dllName, dllLoaded);
+		}
+		PM_UpdateEntryModuleState(pid, is64, dllLoaded);
+		PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
+		::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
+	}).detach();
 }
 
 void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
