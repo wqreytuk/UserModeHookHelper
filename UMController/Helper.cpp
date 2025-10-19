@@ -92,32 +92,26 @@ bool Helper::GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath) {
 		return false;
 	}
 
-	DWORD size = 0;
-	// Query required size (msdn: pass buffer length; here we call once to get length)
-	QueryFullProcessImageName(hProcess, 1, NULL, &size);
-	if (size == 0) {
-		CloseHandle(hProcess);
-		return false;
-	}
-
-	// Allocate or grow the shared buffer as needed. Protect with mutex.
+	// Ensure we have a reasonably large shared buffer and call QueryFullProcessImageName
+	// only once. We choose a large default to avoid a second call to grow the buffer.
+	const size_t DEFAULT_CAP = 32768; // characters
 	{
 		std::lock_guard<std::mutex> lg(m_bufMutex);
-		if (m_sharedBufCap < (size_t)(size + 1)) {
-			// allocate new buffer; do not zero-initialize (new[]) as that's fine for POD
-			m_sharedBuf.reset(new TCHAR[size + 1]);
-			m_sharedBufCap = size + 1;
+		if (m_sharedBufCap < DEFAULT_CAP) {
+			m_sharedBuf.reset(new TCHAR[DEFAULT_CAP]);
+			m_sharedBufCap = DEFAULT_CAP;
 		}
 	}
 
-	// Now call again to fill buffer. Use the shared buffer pointer (no extra copy).
+	// Prepare size as input: number of TCHARs in buffer (excluding room for explicit null)
+	DWORD size = (DWORD)(m_sharedBufCap - 1);
 	if (!QueryFullProcessImageName(hProcess, 1, m_sharedBuf.get(), &size)) {
 		CloseHandle(hProcess);
 		return false;
 	}
 	CloseHandle(hProcess);
 
-	// Construct result from buffer (ensure null termination)
+	// Ensure null termination and assign
 	m_sharedBuf.get()[size] = (TCHAR)0;
 	outNtPath.assign(m_sharedBuf.get());
 	return true;
