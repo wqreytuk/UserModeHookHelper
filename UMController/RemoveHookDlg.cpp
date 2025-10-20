@@ -5,6 +5,9 @@
 #include "ProcessManager.h"
 #include "FilterCommPort.h"
 #include "UMControllerMsgs.h"
+#include "RegistryStore.h"
+#include "RegistryStore.h"
+#include "UMController.h"
 
 IMPLEMENT_DYNAMIC(CRemoveHookDlg, CDialogEx)
 

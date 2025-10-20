@@ -321,6 +321,7 @@
     <ClCompile Include="UMController.cpp" />
     <ClCompile Include="UMControllerDlg.cpp" />
     <ClCompile Include="RemoveHookDlg.cpp" />
+    <ClCompile Include="RegistryStore.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="UMController.rc" />
