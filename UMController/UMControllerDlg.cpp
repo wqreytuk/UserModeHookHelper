@@ -477,6 +477,20 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 	// Log success instead of popping a message box
 	app.GetETW().Log(L"Executable added to hook list: %s\n", ntPathToSend.c_str());
 
+	// Persist to registry. Rollback kernel entry if persistence fails.
+	if (!RegistryStore::AddPath(ntPathToSend)) {
+		app.GetETW().Log(L"OnAddExecutableToHookList: RegistryStore::AddPath failed for %s - attempting rollback\n", ntPathToSend.c_str());
+		// rollback kernel
+		const UCHAR* b2 = reinterpret_cast<const UCHAR*>(ntPathToSend.c_str());
+		size_t bLen2 = ntPathToSend.size() * sizeof(wchar_t);
+		unsigned long long h2 = Helper::GetNtPathHash(b2, bLen2);
+		if (!m_Filter.FLTCOMM_RemoveHookByHash(h2)) {
+			app.GetETW().Log(L"OnAddExecutableToHookList: rollback RemoveHookByHash failed for %s\n", ntPathToSend.c_str());
+		}
+		::MessageBoxW(NULL, L"Failed to persist hook entry to registry. The kernel entry has been rolled back.", L"Add Executable", MB_OK | MB_ICONERROR);
+		return;
+	}
+
 	// Compute NT-path hash and update any ProcessManager entries that match
 	const UCHAR* b = reinterpret_cast<const UCHAR*>(ntPathToSend.c_str());
 	size_t bLen = ntPathToSend.size() * sizeof(wchar_t);

@@ -57,6 +57,14 @@ void CRemoveHookDlg::OnOk() {
         if (m_pFilter) {
             m_pFilter->FLTCOMM_RemoveHookByHash(hash);
         }
+        // Persist removal to registry. If persistence fails, attempt rollback
+        if (!RegistryStore::RemovePath(path)) {
+            app.GetETW().Log(L"CRemoveHookDlg::OnOk: RegistryStore::RemovePath failed for %s - attempting rollback\n", path.c_str());
+            // try to re-add in kernel
+            m_pFilter->FLTCOMM_AddHook(path);
+            continue; // skip PM updates for this path since rollback occurred
+        }
+
         // Update ProcessManager entries that match this path by hash
         std::vector<DWORD> pids = PM_FindPidsByHash(hash);
         for (DWORD pid : pids) {

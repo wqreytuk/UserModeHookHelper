@@ -10,6 +10,7 @@
 #include <commdlg.h>
 #include "Resource.h"
 #include "UMController.h"
+#include "RegistryStore.h"
 
 using namespace HookActions;
 
@@ -61,6 +62,20 @@ void HookActions::HandleAddHook(CUMControllerDlg* dlg, Filter* filter, CListCtrl
     if (!ok) {
         app.GetETW().Log(L"OnAddHook: FLTCOMM_AddHook failed for %s\n", ntPath.c_str());
         MessageBox(NULL, L"Failed to add hook entry in kernel.", L"Add Hook", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    // Persist to registry. If persistence fails, attempt kernel rollback.
+    if (!RegistryStore::AddPath(ntPath)) {
+        app.GetETW().Log(L"OnAddHook: RegistryStore::AddPath failed for %s - attempting rollback\n", ntPath.c_str());
+        // try rollback in kernel
+        const UCHAR* b2 = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+        size_t bLen2 = ntPath.size() * sizeof(wchar_t);
+        unsigned long long h2 = Helper::GetNtPathHash(b2, bLen2);
+        if (!filter->FLTCOMM_RemoveHookByHash(h2)) {
+            app.GetETW().Log(L"OnAddHook: rollback RemoveHookByHash also failed for %s\n", ntPath.c_str());
+        }
+        MessageBox(NULL, L"Failed to persist hook entry to registry. The kernel entry has been rolled back.", L"Add Hook", MB_OK | MB_ICONERROR);
         return;
     }
 
