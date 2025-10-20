@@ -15,6 +15,13 @@ NTSTATUS HookList_Init(VOID) {
     InitializeListHead(&s_HookList);
     ExInitializeResourceLite(&s_HookListLock);
     ExInitializeResourceLite(&s_SectionLock);
+    // Attempt to load persisted hook entries from registry. If this fails
+    // we still continue with an empty hook-list but log the failure.
+    NTSTATUS st = HookList_LoadFromRegistry();
+    if (!NT_SUCCESS(st)) {
+        Trace("HookList_LoadFromRegistry failed: 0x%08x\n", st);
+    }
+
     // Ensure an initial (possibly empty) section exists so clients can map
     // it immediately after connecting even if the hook list is empty.
     HookList_CreateOrUpdateSection();
@@ -329,5 +336,116 @@ NTSTATUS HookList_EnumeratePaths(PVOID OutputBuffer, ULONG OutputBufferSize, PUL
     }
     ExReleaseResourceLite(&s_HookListLock);
 
+    return STATUS_SUCCESS;
+}
+
+// Helper context for RtlQueryRegistryValues call
+typedef struct _RL_CONTEXT {
+    PUNICODE_STRING Buffer; // receives REG_MULTI_SZ block
+} RL_CONTEXT, *PRL_CONTEXT;
+
+// Callback used by RtlQueryRegistryValues to capture the REG_MULTI_SZ value
+NTSTATUS NTAPI RegistryCallback(PRTL_QUERY_REGISTRY_TABLE QueryTable, PVOID Context) {
+    UNREFERENCED_PARAMETER(QueryTable);
+    PRL_CONTEXT ctx = (PRL_CONTEXT)Context;
+    // Rtl layer will have placed the multi-sz in ctx->Buffer->Buffer when
+    // using RTL_QUERY_REGISTRY_DIRECT and a buffer was provided.
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS HookList_LoadFromRegistry(VOID) {
+    NTSTATUS status = STATUS_SUCCESS;
+    // Read HKLM\SOFTWARE\GIAO\UserModeHookHelper HookPaths REG_MULTI_SZ
+    UNICODE_STRING keyPath;
+    RtlInitUnicodeString(&keyPath, REG_PERSIST_REGPATH);
+
+    // Query value directly using RtlQueryRegistryValues with RTL_QUERY_REGISTRY_DIRECT
+    PRTL_QUERY_REGISTRY_TABLE queryTable = NULL;
+    // Build a one-entry table for HookPaths
+    RTL_QUERY_REGISTRY_TABLE localTable[2];
+    RtlZeroMemory(localTable, sizeof(localTable));
+
+    // Prepare a buffer for receiving the REG_MULTI_SZ; allocate modestly and let
+    // callers reallocate if needed. We'll query with RTL_QUERY_REGISTRY_DIRECT
+    // into a temp buffer via ZwQueryValueKey style is more verbose; instead use
+    // RtlQueryRegistryValues with RTL_QUERY_REGISTRY_SUBKEY.
+
+    // Use RtlQueryRegistryValues to query the subkey and directly extract the value
+    localTable[0].Flags = RTL_QUERY_REGISTRY_SUBKEY | RTL_QUERY_REGISTRY_REQUIRED;
+    localTable[0].Name = L"UserModeHookHelper"; // not used with SUBKEY? keep safe
+
+    // Simpler approach: open the key and ZwQueryValueKey directly.
+    HANDLE hKey = NULL;
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING uKeyName;
+    RtlInitUnicodeString(&uKeyName, REG_PERSIST_REGPATH);
+    InitializeObjectAttributes(&oa, &uKeyName, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, NULL, NULL);
+    status = ZwOpenKey(&hKey, KEY_READ, &oa);
+    if (!NT_SUCCESS(status)) {
+        // Key may not exist, treat as empty list
+        return STATUS_SUCCESS;
+    }
+
+    // Query value size first
+    UNICODE_STRING valueName;
+    RtlInitUnicodeString(&valueName, L"HookPaths");
+    ULONG resultLength = 0;
+    status = ZwQueryValueKey(hKey, &valueName, KeyValuePartialInformation, NULL, 0, &resultLength);
+    if (status != STATUS_BUFFER_TOO_SMALL && status != STATUS_BUFFER_OVERFLOW) {
+        // either no value or other error
+        ZwClose(hKey);
+        if (status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND) return STATUS_SUCCESS;
+        return STATUS_SUCCESS;
+    }
+
+    PKEY_VALUE_PARTIAL_INFORMATION kv = ExAllocatePoolWithTag(NonPagedPool, resultLength, tag_hlst);
+    if (!kv) {
+        ZwClose(hKey);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    RtlZeroMemory(kv, resultLength);
+    status = ZwQueryValueKey(hKey, &valueName, KeyValuePartialInformation, kv, resultLength, &resultLength);
+    if (!NT_SUCCESS(status)) {
+        ExFreePoolWithTag(kv, tag_hlst);
+        ZwClose(hKey);
+        return STATUS_SUCCESS; // treat as empty
+    }
+
+    if (kv->Type != REG_MULTI_SZ || kv->DataLength == 0) {
+        ExFreePoolWithTag(kv, tag_hlst);
+        ZwClose(hKey);
+        return STATUS_SUCCESS;
+    }
+
+    PWCHAR buf = (PWCHAR)ExAllocatePoolWithTag(NonPagedPool, kv->DataLength + sizeof(WCHAR), tag_hlst);
+    if (!buf) {
+        ExFreePoolWithTag(kv, tag_hlst);
+        ZwClose(hKey);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    RtlZeroMemory(buf, kv->DataLength + sizeof(WCHAR));
+    RtlCopyMemory(buf, kv->Data, kv->DataLength);
+
+    // Walk multi-sz and call HookList_AddEntry for each non-empty string
+    PWCHAR p = buf;
+    while (*p) {
+        SIZE_T len = (wcslen(p) + 1) * sizeof(WCHAR);
+        // Compute hash using kernel helper (call into Trace.h? we have Helper only user-mode)
+        // We'll implement an in-kernel FNV-1a on UTF-16 bytes here.
+        ULONGLONG h = 1469598103934665603ULL; // FNV offset basis
+        PUCHAR bytes = (PUCHAR)p;
+        SIZE_T blen = wcslen(p) * sizeof(WCHAR);
+        for (SIZE_T i = 0; i < blen; ++i) {
+            h ^= (ULONGLONG)bytes[i];
+            h *= 1099511628211ULL;
+        }
+        // Add entry (idempotent)
+        HookList_AddEntry(h, p, len);
+        p = (PWCHAR)((PUCHAR)p + len);
+    }
+
+    ExFreePoolWithTag(buf, tag_hlst);
+    ExFreePoolWithTag(kv, tag_hlst);
+    ZwClose(hKey);
     return STATUS_SUCCESS;
 }

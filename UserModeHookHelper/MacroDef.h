@@ -6,6 +6,12 @@
 #define UMHHLP_PORT_NAME L"\\" DRIVER_NAME L".FLT_COMM_PORT"
 #define COMM_MAX_CONNECTION	1024
 
+// Registry persistence vendor/key definitions. Vendor name is configurable
+// here so kernel and user-mode code use the same value.
+#define REG_VENDOR_NAME L"GIAO"
+#define REG_PERSIST_SUBKEY L"SOFTWARE\\" REG_VENDOR_NAME L"\\UserModeHookHelper"
+#define REG_PERSIST_REGPATH L"\\Registry\\Machine\\" REG_PERSIST_SUBKEY
+
 #ifndef MAX_PATH
 #define MAX_PATH 256
 #endif

@@ -68,4 +68,11 @@ BOOLEAN HookList_ContainsHash(ULONGLONG hash);
 // sets *ReturnOutputBytes to the number of bytes written.
 NTSTATUS HookList_EnumeratePaths(PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBytes);
 
+// Load persisted hook NT paths from the registry. Reads
+// HKLM\SOFTWARE\<vendor>\UserModeHookHelper\HookPaths (REG_MULTI_SZ) and adds
+// each NT path into the in-kernel hook list via HookList_AddEntry. Returns
+// STATUS_SUCCESS on success or an appropriate NTSTATUS on failure. This
+// function is safe to call during driver initialization.
+NTSTATUS HookList_LoadFromRegistry(VOID);
+
 #endif
