@@ -5,6 +5,7 @@
 #include "FilterCommPort.h"
 #include "ProcessManager.h"
 #include "UIHelpers.h"
+#include "UMControllerMsgs.h"
 #include "IPC.h"
 #include <commdlg.h>
 #include "Resource.h"
