@@ -6,6 +6,7 @@
 // Need full dialog type for GetSafeHwnd() and message constants
 #include "UMControllerDlg.h"
 #include "UMControllerMsgs.h"
+#include "UMController.h"
 #include "ProcFlags.h"
 
 using namespace ProcessResolver;
@@ -21,7 +22,20 @@ void ProcessResolver::StartLoaderResolver(CUMControllerDlg* dlg, const std::vect
 				::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
 				continue;
 			}
-			bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
+			bool inHook = false;
+			// Prefer the in-process hook-hash cache if available to avoid
+			// expensive per-path IPC. Compute the NT-path hash and consult
+			// ProcessManager's cache; otherwise fall back to Filter IPC.
+			if (PM_HasHookHashCache()) {
+				const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+				size_t bytesLen = ntPath.size() * sizeof(wchar_t);
+				unsigned long long h = Helper::GetNtPathHash(bytes, bytesLen);
+				inHook = PM_IsHashInHookSet(h);
+				// app.GetETW().Log(L"StartLoaderResolver: pid=%u checked via CACHE => %s\n", pid, inHook ? L"IN_HOOKLIST" : L"NOT_IN_HOOKLIST");
+			} else {
+				inHook = filter->FLTCOMM_CheckHookList(ntPath);
+				// app.GetETW().Log(L"StartLoaderResolver: pid=%u checked via IPC => %s\n", pid, inHook ? L"IN_HOOKLIST" : L"NOT_IN_HOOKLIST");
+			}
 			std::wstring cmdline;
 			Helper::GetProcessCommandLineByPID(pid, cmdline);
 			// Compute module/arch state once in background
@@ -46,7 +60,11 @@ void ProcessResolver::StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filt
 			::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, 0);
 			return;
 		}
-		bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
+		// Single-resolution path: per-path IPC here is acceptable because
+		// these are single lookups (notifications) and won't cause noticeable
+		// latency. Use the existing per-path filter check.
+	bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
+	app.GetETW().Log(L"StartSingleResolver: pid=%u checked via IPC => %s\n", pid, inHook ? L"IN_HOOKLIST" : L"NOT_IN_HOOKLIST");
 		std::wstring cmdline;
 		Helper::GetProcessCommandLineByPID(pid, cmdline);
 		// Compute module/arch state once in background

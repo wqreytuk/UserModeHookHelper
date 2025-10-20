@@ -43,6 +43,18 @@ typedef struct _HOOK_ENTRY {
 
 NTSTATUS HookList_Init(VOID);
 VOID HookList_Uninit(VOID);
+// Create or refresh an anonymous section containing a compact snapshot of
+// the hook-list hashes. The snapshot layout is:
+//   DWORD Version;
+//   DWORD Count;
+//   DWORD Reserved; (padding)
+//   ULONGLONG Hashes[Count];
+// The function returns STATUS_SUCCESS on success.
+NTSTATUS HookList_CreateOrUpdateSection(VOID);
+// Duplicate the current anonymous section handle into the target process.
+// On success returns STATUS_SUCCESS and sets *OutHandle to a kernel-handle
+// that is already duplicated into the caller's process (caller-visible).
+NTSTATUS HookList_DuplicateSectionHandle(PEPROCESS TargetProcess, PHANDLE OutHandle);
 // Add entry with optional UTF-16LE path buffer. If PathBytes == 0, no path is stored.
 NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath, SIZE_T PathBytes);
 BOOLEAN HookList_RemoveEntry(ULONGLONG hash);

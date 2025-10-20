@@ -428,6 +428,62 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 	return false;
 }
 
+bool Filter::FLTCOMM_GetHookSection(HANDLE& outHandle) {
+	outHandle = NULL;
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(sizeof(UMHH_COMMAND_MESSAGE));
+	if (!msg) return false;
+	memset(msg, 0, sizeof(UMHH_COMMAND_MESSAGE));
+	msg->m_Cmd = CMD_GET_HOOK_SECTION;
+
+	// Reply buffer to receive duplicated HANDLE (size depends on architecture)
+	SIZE_T replySize = sizeof(HANDLE);
+	std::unique_ptr<BYTE[]> reply(new BYTE[replySize]);
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)sizeof(UMHH_COMMAND_MESSAGE), reply.get(), (DWORD)replySize, &bytesOut);
+	free(msg);
+	if (hr != S_OK || bytesOut < (DWORD)replySize) return false;
+
+	// Copy handle value out
+	HANDLE h = NULL;
+	RtlCopyMemory(&h, reply.get(), sizeof(HANDLE));
+	if (!h) return false;
+	outHandle = h;
+	return true;
+}
+
+bool Filter::FLTCOMM_MapHookSectionToSet(std::unordered_set<unsigned long long>& outSet) {
+	HANDLE hSec = NULL;
+	if (!FLTCOMM_GetHookSection(hSec)) return false;
+
+	// Map view readonly
+	LPVOID view = MapViewOfFile(hSec, FILE_MAP_READ, 0, 0, 0);
+	if (!view) {
+		CloseHandle(hSec);
+		return false;
+	}
+
+	unsigned char* ptr = (unsigned char*)view;
+	// Validate header: at least 12 bytes
+	if (!ptr) { UnmapViewOfFile(view); CloseHandle(hSec); return false; }
+	ULONG version = *(ULONG*)(ptr);
+	ULONG count = *(ULONG*)(ptr + 4);
+	// reserved at ptr+8
+	if (version != 1) { UnmapViewOfFile(view); CloseHandle(hSec); return false; }
+
+	SIZE_T expected = 12 + (SIZE_T)count * sizeof(unsigned long long);
+	// We don't have explicit size of mapping; rely on reasonable bounds (avoid crash)
+	// but assume driver created mapping sized exactly to expected.
+
+	for (ULONG i = 0; i < count; ++i) {
+		unsigned long long h = *(unsigned long long*)(ptr + 12 + i * sizeof(unsigned long long));
+		outSet.insert(h);
+	}
+
+	UnmapViewOfFile(view);
+	CloseHandle(hSec);
+	return true;
+}
+
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1;
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);

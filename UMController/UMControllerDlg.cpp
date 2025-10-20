@@ -256,6 +256,30 @@ BOOL CUMControllerDlg::OnInitDialog()
 
 	// TODO: Add extra initialization here
 	PM_Init();
+	// Try to populate the in-process hook-hash cache by requesting and
+	// mapping the kernel's hook-section. Perform a short synchronous retry
+	// loop (total ~1s) so the loader resolver benefits from the cache when
+	// possible without delaying UI startup excessively.
+	{
+		const int MAX_MS = 1000;
+		const int INTERVAL_MS = 100;
+		int waited = 0;
+		bool mapped = false;
+		while (waited < MAX_MS) {
+			std::unordered_set<unsigned long long> s;
+			if (m_Filter.FLTCOMM_MapHookSectionToSet(s)) {
+				PM_SetHookHashSet(s);
+				mapped = true;
+				app.GetETW().Log(L"Hook section mapped and cache populated after %dms\n", waited);
+				break;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS));
+			waited += INTERVAL_MS;
+		}
+		if (!mapped) {
+			app.GetETW().Log(L"Hook section mapping failed after %dms; resolver will fall back to per-path IPC\n", MAX_MS);
+		}
+	}
 	LoadProcessList();
 	FilterProcessList(L"");
 
