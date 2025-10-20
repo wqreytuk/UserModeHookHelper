@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ProcessManager.h"
+#include "Helper.h"
 #include <mutex>
 
 namespace {
@@ -61,6 +62,7 @@ void PM_AddEntry(const ProcessEntry& entry) {
     ProcessEntry e = entry;
     e.is64 = false;
     e.masterDllLoaded = false;
+    e.pathHash = 0;
     g_list.push_back(e);
     g_index[entry.pid] = idx;
     LeaveCriticalSection(&g_lock);
@@ -117,11 +119,30 @@ void PM_UpdateEntryFields(DWORD pid, const std::wstring& path, bool inHook, cons
         int idx = it->second;
         if (idx >= 0 && idx < (int)g_list.size() && g_list[idx].pid == pid) {
             g_list[idx].path = path;
+            // compute and store path hash when path is known
+            if (!path.empty()) {
+                const UCHAR* bytes = reinterpret_cast<const UCHAR*>(path.c_str());
+                size_t bytesLen = path.size() * sizeof(wchar_t);
+                g_list[idx].pathHash = Helper::GetNtPathHash(bytes, bytesLen);
+            } else {
+                g_list[idx].pathHash = 0;
+            }
             g_list[idx].bInHookList = inHook;
             g_list[idx].cmdline = cmdline;
         }
     }
     LeaveCriticalSection(&g_lock);
+}
+
+std::vector<DWORD> PM_FindPidsByHash(unsigned long long hash) {
+    EnterCriticalSection(&g_lock);
+    std::vector<DWORD> res;
+    if (hash == 0) { LeaveCriticalSection(&g_lock); return res; }
+    for (const auto &e : g_list) {
+        if (e.pathHash == hash) res.push_back(e.pid);
+    }
+    LeaveCriticalSection(&g_lock);
+    return res;
 }
 
 void PM_UpdateEntryModuleState(DWORD pid, bool is64, bool masterDllLoaded) {

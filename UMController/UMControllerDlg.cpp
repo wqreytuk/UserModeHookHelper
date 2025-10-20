@@ -191,7 +191,10 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_MESSAGE(WM_APP_UPDATE_PROCESS, &CUMControllerDlg::OnUpdateProcess)
 	ON_WM_DESTROY()
 	ON_COMMAND(ID_MENU_ADD_HOOK, &CUMControllerDlg::OnAddHook)
+	// Tools->Remove (batch) remains mapped to OnRemoveExecutablesFromHookList
 	ON_COMMAND(ID_MENU_REMOVE_HOOK, &CUMControllerDlg::OnRemoveExecutablesFromHookList)
+	// Context-menu single-item remove maps to OnRemoveHook
+	ON_COMMAND(ID_MENU_REMOVE_HOOK_SINGLE, &CUMControllerDlg::OnRemoveHook)
 	ON_COMMAND(ID_MENU_INJECT_DLL, &CUMControllerDlg::OnInjectDll)
 	ON_COMMAND(ID_MENU_ADD_EXE, &CUMControllerDlg::OnAddExecutableToHookList)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
@@ -471,7 +474,60 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 		return;
 	}
 
-	::MessageBoxW(NULL, L"Executable added to hook list.", L"Add Executable", MB_OK | MB_ICONINFORMATION);
+	// Log success instead of popping a message box
+	app.GetETW().Log(L"Executable added to hook list: %s\n", ntPathToSend.c_str());
+
+	// Compute NT-path hash and update any ProcessManager entries that match
+	const UCHAR* b = reinterpret_cast<const UCHAR*>(ntPathToSend.c_str());
+	size_t bLen = ntPathToSend.size() * sizeof(wchar_t);
+	unsigned long long addedHash = Helper::GetNtPathHash(b, bLen);
+
+	// Update any processes that already have that path known (by hash match)
+	std::vector<DWORD> matches = PM_FindPidsByHash(addedHash);
+	if (!matches.empty()) {
+		for (DWORD mpid : matches) {
+			PM_UpdateEntryFields(mpid, ntPathToSend, true, L"");
+			int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
+			while (item != -1) {
+				if ((DWORD)m_ProcListCtrl.GetItemData(item) == mpid) break;
+				item = m_ProcListCtrl.GetNextItem(item, LVNI_ALL);
+			}
+			if (item != -1) {
+				bool is64 = false; Helper::IsProcess64(mpid, is64);
+				bool dllLoaded = false; Helper::IsModuleLoaded(mpid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+				DWORD flags = PF_IN_HOOK_LIST;
+				if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+				if (is64) flags |= PF_IS_64BIT;
+				PROC_ITEMDATA newPacked = MAKE_ITEMDATA(mpid, flags);
+				m_ProcListCtrl.SetItemData(item, (DWORD_PTR)newPacked);
+				m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(newPacked, true).c_str());
+			}
+		}
+	} else {
+		// Best-effort fallback: update entries whose path exactly matches the added path
+		auto all = PM_GetAll();
+		for (const auto &e : all) {
+			if (e.path.empty()) continue;
+			if (_wcsicmp(e.path.c_str(), ntPathToSend.c_str()) == 0) {
+				PM_UpdateEntryFields(e.pid, e.path, true, e.cmdline);
+				int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
+				while (item != -1) {
+					if ((DWORD)m_ProcListCtrl.GetItemData(item) == e.pid) break;
+					item = m_ProcListCtrl.GetNextItem(item, LVNI_ALL);
+				}
+				if (item != -1) {
+					bool is64 = false; Helper::IsProcess64(e.pid, is64);
+					bool dllLoaded = false; Helper::IsModuleLoaded(e.pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+					DWORD flags = PF_IN_HOOK_LIST;
+					if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+					if (is64) flags |= PF_IS_64BIT;
+					PROC_ITEMDATA newPacked = MAKE_ITEMDATA(e.pid, flags);
+					m_ProcListCtrl.SetItemData(item, (DWORD_PTR)newPacked);
+					m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(newPacked, true).c_str());
+				}
+			}
+		}
+	}
 }
 
 void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
@@ -874,7 +930,8 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	CMenu menu;
 	menu.CreatePopupMenu();
 	menu.AppendMenu(MF_STRING, ID_MENU_ADD_HOOK, L"Add to Hook List");
-	menu.AppendMenu(MF_STRING, ID_MENU_REMOVE_HOOK, L"Remove from Hook List");
+	// Use single-item remove ID for context menu so Tools->Remove remains the batch dialog
+	menu.AppendMenu(MF_STRING, ID_MENU_REMOVE_HOOK_SINGLE, L"Remove from Hook List");
 	menu.AppendMenu(MF_STRING, ID_MENU_INJECT_DLL, L"Inject DLL");
 
 	// grey out certai menu based on bInHookList
@@ -882,7 +939,7 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	bool inHook = (flags & PF_IN_HOOK_LIST) != 0;
 	bool dllLoaded = (flags & PF_MASTER_DLL_LOADED) != 0;
 	menu.EnableMenuItem(ID_MENU_ADD_HOOK, inHook ? MF_GRAYED : MF_ENABLED);
-	menu.EnableMenuItem(ID_MENU_REMOVE_HOOK, inHook ? MF_ENABLED : MF_GRAYED);
+	menu.EnableMenuItem(ID_MENU_REMOVE_HOOK_SINGLE, inHook ? MF_ENABLED : MF_GRAYED);
 	// Only allow injecting the master DLL when the master DLL is already
 	// present inside the target process (PF_MASTER_DLL_LOADED).
 	menu.EnableMenuItem(ID_MENU_INJECT_DLL, dllLoaded ? MF_ENABLED : MF_GRAYED);

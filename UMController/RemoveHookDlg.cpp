@@ -4,6 +4,7 @@
 #include "Helper.h"
 #include "ProcessManager.h"
 #include "FilterCommPort.h"
+#include "UMControllerMsgs.h"
 
 IMPLEMENT_DYNAMIC(CRemoveHookDlg, CDialogEx)
 
@@ -56,11 +57,18 @@ void CRemoveHookDlg::OnOk() {
         if (m_pFilter) {
             m_pFilter->FLTCOMM_RemoveHookByHash(hash);
         }
-        // Also update ProcessManager entries that match this path
-        std::vector<ProcessEntry> all = PM_GetAll();
-        for (const auto &e : all) {
-            if (e.path == path) {
-                PM_UpdateEntryFields(e.pid, e.path, false, L"");
+        // Update ProcessManager entries that match this path by hash
+        std::vector<DWORD> pids = PM_FindPidsByHash(hash);
+        for (DWORD pid : pids) {
+            // Clear inHook flag for matching PIDs. Path is unchanged.
+            ProcessEntry e;
+            if (PM_GetEntryCopyByPid(pid, e)) {
+                PM_UpdateEntryFields(pid, e.path, false, e.cmdline);
+                // Notify main UI to update this PID's row so the list control
+                // reflects the new hook state immediately.
+                if (GetParent()) {
+                    ::PostMessage(GetParent()->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
+                }
             }
         }
     }

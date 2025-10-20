@@ -63,18 +63,40 @@ void HookActions::HandleAddHook(CUMControllerDlg* dlg, Filter* filter, CListCtrl
         return;
     }
 
+
+    // Update ProcessManager entries matching this NT path using hash-based lookup
+    const UCHAR* b = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+    size_t bLen = ntPath.size() * sizeof(wchar_t);
+    unsigned long long h = Helper::GetNtPathHash(b, bLen);
+    // Update the originating PID first
     PM_UpdateEntryFields(pid, ntPath, true, L"");
+    // Find other PIDs with the same path and update them too
+    std::vector<DWORD> matches = PM_FindPidsByHash(h);
+    for (DWORD mpid : matches) {
+        PM_UpdateEntryFields(mpid, ntPath, true, L"");
+        // Also update UI row if present
+        int item = list->GetNextItem(-1, LVNI_ALL);
+        while (item != -1) {
+            if ((DWORD)list->GetItemData(item) == mpid) break;
+            item = list->GetNextItem(item, LVNI_ALL);
+        }
+        if (item != -1) {
+            bool is64 = false; Helper::IsProcess64(mpid, is64);
+            bool dllLoaded = false; Helper::IsModuleLoaded(mpid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+            DWORD flags = PF_IN_HOOK_LIST;
+            if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+            if (is64) flags |= PF_IS_64BIT;
+            PROC_ITEMDATA newPacked = MAKE_ITEMDATA(mpid, flags);
+            list->SetItemData(item, (DWORD_PTR)newPacked);
+            list->SetItemText(item, 2, FormatHookColumn(newPacked, true).c_str());
+        }
+    }
 
-    bool is64 = false; Helper::IsProcess64(pid, is64);
-    bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
-    DWORD flags = PF_IN_HOOK_LIST;
-    if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-    if (is64) flags |= PF_IS_64BIT;
-    PROC_ITEMDATA newPacked = MAKE_ITEMDATA(pid, flags);
-    list->SetItemData(nItem, (DWORD_PTR)newPacked);
-    list->SetItemText(nItem, 2, FormatHookColumn(newPacked, true).c_str());
-
-    MessageBox(NULL, L"Process added to hook list.", L"Add Hook", MB_OK | MB_ICONINFORMATION);
+    // Log success and post UI updates for matching PIDs instead of a popup
+    app.GetETW().Log(L"Process added to hook list: pid=%u path=%s\n", pid, ntPath.c_str());
+    for (DWORD mpid : matches) {
+        ::PostMessage(app.GetHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)mpid, (LPARAM)UPDATE_SOURCE_NOTIFY);
+    }
 }
 
 void HookActions::HandleRemoveHook(CUMControllerDlg* dlg, Filter* filter, CListCtrl* list, int nItem, DWORD pid) {
@@ -99,18 +121,34 @@ void HookActions::HandleRemoveHook(CUMControllerDlg* dlg, Filter* filter, CListC
         return;
     }
 
+
+    // Update ProcessManager entries matching this NT path using hash-based lookup
     PM_UpdateEntryFields(pid, ntPath, false, L"");
+    std::vector<DWORD> matches = PM_FindPidsByHash(hash);
+    for (DWORD mpid : matches) {
+        PM_UpdateEntryFields(mpid, ntPath, false, L"");
+        int item = list->GetNextItem(-1, LVNI_ALL);
+        while (item != -1) {
+            if ((DWORD)list->GetItemData(item) == mpid) break;
+            item = list->GetNextItem(item, LVNI_ALL);
+        }
+        if (item != -1) {
+            bool is64 = false; Helper::IsProcess64(mpid, is64);
+            bool dllLoaded = false; Helper::IsModuleLoaded(mpid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+            DWORD flags = 0;
+            if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+            if (is64) flags |= PF_IS_64BIT;
+            PROC_ITEMDATA newPacked = MAKE_ITEMDATA(mpid, flags);
+            list->SetItemData(item, (DWORD_PTR)newPacked);
+            list->SetItemText(item, 2, FormatHookColumn(newPacked, false).c_str());
+        }
+    }
 
-    bool is64 = false; Helper::IsProcess64(pid, is64);
-    bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
-    DWORD flags = 0;
-    if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-    if (is64) flags |= PF_IS_64BIT;
-    PROC_ITEMDATA newPacked = MAKE_ITEMDATA(pid, flags);
-    list->SetItemData(nItem, (DWORD_PTR)newPacked);
-    list->SetItemText(nItem, 2, FormatHookColumn(newPacked, false).c_str());
-
-    MessageBox(NULL, L"Process removed from hook list.", L"Remove Hook", MB_OK | MB_ICONINFORMATION);
+    // Log success and post UI updates for matching PIDs instead of a popup
+    app.GetETW().Log(L"Process removed from hook list: pid=%u path=%s\n", pid, ntPath.c_str());
+    for (DWORD mpid : matches) {
+        ::PostMessage(app.GetHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)mpid, (LPARAM)UPDATE_SOURCE_NOTIFY);
+    }
 }
 
 void HookActions::HandleInjectDll(CUMControllerDlg* dlg, Filter* filter, CListCtrl* list, int nItem, DWORD pid) {
@@ -130,7 +168,8 @@ void HookActions::HandleInjectDll(CUMControllerDlg* dlg, Filter* filter, CListCt
     BOOL ok = IPC_SendInject(pid, szFile);
     if (ok) {
         app.GetETW().Log(L"IPC_SendInject succeeded for pid %u dll %s\n", pid, szFile);
-        MessageBox(NULL, L"Injection request sent.", L"Inject DLL", MB_OK | MB_ICONINFORMATION);
+        // Avoid UI popups on success; post an update that injection was requested
+        ::PostMessage(app.GetHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
     } else {
         app.GetETW().Log(L"IPC_SendInject failed for pid %u dll %s\n", pid, szFile);
         MessageBox(NULL, L"Failed to send injection request.", L"Inject DLL", MB_OK | MB_ICONERROR);
