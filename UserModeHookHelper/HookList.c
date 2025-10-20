@@ -19,7 +19,7 @@ NTSTATUS HookList_Init(VOID) {
     // we still continue with an empty hook-list but log the failure.
     NTSTATUS st = HookList_LoadFromRegistry();
     if (!NT_SUCCESS(st)) {
-        Trace("HookList_LoadFromRegistry failed: 0x%08x\n", st);
+        Log(L"HookList_LoadFromRegistry failed: 0x%08x\n", st);
     }
 
     // Ensure an initial (possibly empty) section exists so clients can map
@@ -347,8 +347,8 @@ typedef struct _RL_CONTEXT {
 // Callback used by RtlQueryRegistryValues to capture the REG_MULTI_SZ value
 NTSTATUS NTAPI RegistryCallback(PRTL_QUERY_REGISTRY_TABLE QueryTable, PVOID Context) {
     UNREFERENCED_PARAMETER(QueryTable);
-    PRL_CONTEXT ctx = (PRL_CONTEXT)Context;
-    // Rtl layer will have placed the multi-sz in ctx->Buffer->Buffer when
+    UNREFERENCED_PARAMETER(Context);
+    // Rtl layer will have placed the multi-sz in the provided buffer when
     // using RTL_QUERY_REGISTRY_DIRECT and a buffer was provided.
     return STATUS_SUCCESS;
 }
@@ -360,7 +360,6 @@ NTSTATUS HookList_LoadFromRegistry(VOID) {
     RtlInitUnicodeString(&keyPath, REG_PERSIST_REGPATH);
 
     // Query value directly using RtlQueryRegistryValues with RTL_QUERY_REGISTRY_DIRECT
-    PRTL_QUERY_REGISTRY_TABLE queryTable = NULL;
     // Build a one-entry table for HookPaths
     RTL_QUERY_REGISTRY_TABLE localTable[2];
     RtlZeroMemory(localTable, sizeof(localTable));
