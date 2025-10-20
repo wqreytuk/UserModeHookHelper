@@ -8,6 +8,37 @@ namespace {
     std::unordered_set<DWORD> g_waiters;
     CRITICAL_SECTION g_lock;
     bool g_inited = false;
+    // Hook hash cache
+    std::unordered_set<unsigned long long> g_hookHashes;
+    bool g_hookCacheInitialized = false;
+}
+
+void PM_SetHookHashSet(const std::unordered_set<unsigned long long>& s) {
+    EnterCriticalSection(&g_lock);
+    g_hookHashes = s;
+    g_hookCacheInitialized = true;
+    LeaveCriticalSection(&g_lock);
+}
+
+bool PM_IsHashInHookSet(unsigned long long h) {
+    EnterCriticalSection(&g_lock);
+    bool ok = g_hookCacheInitialized && (g_hookHashes.find(h) != g_hookHashes.end());
+    LeaveCriticalSection(&g_lock);
+    return ok;
+}
+
+bool PM_HasHookHashCache() {
+    EnterCriticalSection(&g_lock);
+    bool ok = g_hookCacheInitialized;
+    LeaveCriticalSection(&g_lock);
+    return ok;
+}
+
+void PM_ClearHookHashCache() {
+    EnterCriticalSection(&g_lock);
+    g_hookHashes.clear();
+    g_hookCacheInitialized = false;
+    LeaveCriticalSection(&g_lock);
 }
 
 void PM_Init() {

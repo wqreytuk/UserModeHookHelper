@@ -5,6 +5,8 @@
 
 #include <vector>
 #include <string>
+#include <unordered_set>
+#include <Windows.h>
 
 class Filter
 {
@@ -40,6 +42,13 @@ public:
 	typedef void(__cdecl *ProcessApcQueuedCb)(DWORD pid, void* ctx);
 	void RegisterApcQueuedCallback(ProcessApcQueuedCb cb, void* ctx);
 	void UnregisterApcQueuedCallback();
+
+	// New: request the kernel duplicate the hook-list section into this
+	// process and return the handle. Returns true on success and sets outHandle.
+	bool FLTCOMM_GetHookSection(HANDLE& outHandle);
+	// Map the provided section handle into this process and populate the
+	// provided unordered_set with the 64-bit hashes. Returns true on success.
+	bool FLTCOMM_MapHookSectionToSet(std::unordered_set<unsigned long long>& outSet);
 
 private:
 	HANDLE m_Port = INVALID_HANDLE_VALUE;

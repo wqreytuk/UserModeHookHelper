@@ -20,6 +20,12 @@
 // of null-terminated wide strings concatenated; user-mode should provide a
 // large reply buffer (or reissue with a larger buffer) and parse the list.
 #define CMD_ENUM_HOOKS 7
+// Request the kernel create/duplicate an anonymous section containing a
+// snapshot of the hook-list hashes (compact representation). The driver
+// will duplicate a handle into the caller process and return it in the
+// message reply buffer (as a HANDLE-sized value). The client should MapViewOfFile
+// on the returned handle to read the snapshot.
+#define CMD_GET_HOOK_SECTION 8
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {

@@ -11,6 +11,7 @@ static NTSTATUS Handle_AddHook(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize,
 static NTSTATUS Handle_RemoveHook(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_CheckHookList(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_GetImagePathByPid(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_GetHookSection(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 // NOTE: Do NOT declare or call user-mode-only path conversion helpers from
 // kernel code here. NT-path resolution is performed in user-mode. The driver
 // keeps a simple fallback when a path isn't supplied by user-mode.
@@ -230,6 +231,9 @@ Comm_MessageNotify(
 		break;
 	case CMD_ENUM_HOOKS:
 		status = Handle_EnumHooks(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_GET_HOOK_SECTION:
+		status = Handle_GetHookSection(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
 	default:
 		break;
@@ -571,5 +575,45 @@ Handle_GetImagePathByPid(
 	}
 	ExFreePool(imageName);
 	ObDereferenceObject(process);
+	return status;
+}
+
+// Duplicate the kernel's hook-list section handle into the caller process
+// and return the duplicated handle in the reply buffer (as a HANDLE).
+static NTSTATUS
+Handle_GetHookSection(
+	PCOMM_CONTEXT CallerCtx,
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	UNREFERENCED_PARAMETER(msg);
+	UNREFERENCED_PARAMETER(InputBufferSize);
+	if (!OutputBuffer || OutputBufferSize < sizeof(HANDLE)) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	if (!CallerCtx) return STATUS_INVALID_PARAMETER;
+
+	// Lookup the target process and ask HookList to duplicate the section
+	// handle into that process. HookList_DuplicateSectionHandle will return
+	// a handle that is already valid in the target process.
+	DWORD pid = (DWORD)(ULONG_PTR)CallerCtx->m_UserProcessId;
+	PEPROCESS proc = NULL;
+	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &proc);
+	if (!NT_SUCCESS(status) || proc == NULL) return status;
+
+	HANDLE dup = NULL;
+	status = HookList_DuplicateSectionHandle(proc, &dup);
+	if (NT_SUCCESS(status)) {
+		if (OutputBuffer && OutputBufferSize >= sizeof(HANDLE)) {
+			RtlCopyMemory(OutputBuffer, &dup, sizeof(HANDLE));
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(HANDLE);
+		}
+	}
+	ObDereferenceObject(proc);
 	return status;
 }
