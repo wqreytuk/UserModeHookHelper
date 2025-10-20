@@ -64,7 +64,7 @@ void ProcessResolver::StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filt
 		// these are single lookups (notifications) and won't cause noticeable
 		// latency. Use the existing per-path filter check.
 	bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
-	app.GetETW().Log(L"StartSingleResolver: pid=%u checked via IPC => %s\n", pid, inHook ? L"IN_HOOKLIST" : L"NOT_IN_HOOKLIST");
+	// app.GetETW().Log(L"StartSingleResolver: pid=%u checked via IPC => %s\n", pid, inHook ? L"IN_HOOKLIST" : L"NOT_IN_HOOKLIST");
 		std::wstring cmdline;
 		Helper::GetProcessCommandLineByPID(pid, cmdline);
 		// Compute module/arch state once in background
