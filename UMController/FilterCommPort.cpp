@@ -391,6 +391,9 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 		return false;
 	}
 
+	// Log the add-hook request for diagnostics
+	app.GetETW().Log(L"FLTCOMM_AddHook: request path=%s\n", ntPath.c_str());
+
 	// Compute hash
 	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
 	size_t bytesLen = ntPath.size() * sizeof(wchar_t);
@@ -419,10 +422,12 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 		&bytesOut);
 	free(msg);
 	if (hResult == S_OK && st >= 0) {
+		app.GetETW().Log(L"FLTCOMM_AddHook: succeeded path=%s hash=0x%I64x\n", ntPath.c_str(), hash);
 		SetLastError(ERROR_SUCCESS);
 		return true;
 	}
 	// Any failure here is considered fatal for the app
+	app.GetETW().Log(L"FLTCOMM_AddHook: failed path=%s\n", ntPath.c_str());
 	SetLastError(21); // ERROR_NOT_READY as sentinel for fatal
 	Helper::Fatal(L"FLTCOMM_AddHook: kernel or IPC failure while adding hook");
 	return false;
@@ -485,6 +490,7 @@ bool Filter::FLTCOMM_MapHookSectionToSet(std::unordered_set<unsigned long long>&
 }
 
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
+	app.GetETW().Log(L"FLTCOMM_RemoveHookByHash: request hash=0x%I64x\n", hash);
 	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1;
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
 	if (!msg) {
@@ -505,10 +511,12 @@ bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 		&bytesOut);
 	free(msg);
 	if (hResult == S_OK && removed == TRUE) {
+		app.GetETW().Log(L"FLTCOMM_RemoveHookByHash: succeeded hash=0x%I64x\n", hash);
 		SetLastError(ERROR_SUCCESS);
 		return true;
 	}
 	// Any failure is fatal in user-mode policy
+	app.GetETW().Log(L"FLTCOMM_RemoveHookByHash: failed hash=0x%I64x\n", hash);
 	SetLastError(21); // ERROR_NOT_READY as sentinel for fatal
 	Helper::Fatal(L"FLTCOMM_RemoveHookByHash: kernel or IPC failure while removing hook");
 	return false;
