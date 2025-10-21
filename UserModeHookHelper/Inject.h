@@ -2,7 +2,10 @@
 #define INJECT_H
 
 #include "Common.h"
-
+// only x64 machine have wow64
+#ifdef _M_AMD64
+#define INJ_CONFIG_SUPPORTS_WOW64
+#endif
 typedef enum _INJ_SYSTEM_DLL
 {
 	INJ_NOTHING_LOADED = 0x0000,
@@ -17,7 +20,7 @@ typedef enum _INJ_SYSTEM_DLL
 	INJ_SYSTEM32_XTAJIT_LOADED = 0x0100,
 } INJ_SYSTEM_DLL; 
 
-
+VOID Inject_CheckWin7();
 // Pending-inject list: holds referenced PEPROCESS pointers for processes
 // that need DLL injection when ntdll.dll is loaded.
 typedef struct _PENDING_INJECT {

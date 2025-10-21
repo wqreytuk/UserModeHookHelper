@@ -129,7 +129,7 @@ typedef struct _INJ_THUNK
 	USHORT          Length;
 } INJ_THUNK, *PINJ_THUNK;
 
-
+static BOOLEAN s_IsWin7;
 static LIST_ENTRY s_PendingInjectList;
 static KSPIN_LOCK s_PendingInjectLock;
 static INJ_THUNK       InjThunk[2] = {
@@ -137,6 +137,19 @@ static INJ_THUNK       InjThunk[2] = {
   { InjpThunkX64,   sizeof(InjpThunkX64)   }
 };
 
+VOID Inject_CheckWin7() {
+
+	RTL_OSVERSIONINFOW VersionInformation = { 0 };
+	VersionInformation.dwOSVersionInfoSize = sizeof(VersionInformation);
+	RtlGetVersion(&VersionInformation);
+
+	if (VersionInformation.dwMajorVersion == 6 &&
+		VersionInformation.dwMinorVersion == 1)
+	{
+		Log(L"Current system is Windows 7\n");
+		s_IsWin7 = TRUE;
+	}
+}
 // Simple FNV-1a 64-bit over UTF-16LE bytes - use shared helper
 static ULONGLONG ComputeNtPathHash(PUNICODE_STRING Path)
 {	
@@ -224,6 +237,13 @@ static BOOLEAN ImageNameIsNtdll_Internal(PUNICODE_STRING ImageName)
 
 BOOLEAN Inject_CanInject(PPENDING_INJECT injInfo) {
 	ULONG RequiredDlls = INJ_SYSTEM32_NTDLL_LOADED;
+#ifdef INJ_CONFIG_SUPPORTS_WOW64
+	RequiredDlls |= INJ_SYSTEM32_NTDLL_LOADED;    // \System32\ntdll.dll
+	RequiredDlls |= INJ_SYSTEM32_WOW64_LOADED;    // \System32\wow64.dll
+	RequiredDlls |= INJ_SYSTEM32_WOW64WIN_LOADED; // \System32\wow64win.dll
+	RequiredDlls |= INJ_SYSTEM32_WOW64CPU_LOADED; // \System32\wow64cpu.dll
+	RequiredDlls |= INJ_SYSWOW64_NTDLL_LOADED;    // \System32\wow64cpu.dll
+#endif
 	return (injInfo->LoadedDlls & RequiredDlls) == RequiredDlls;
 }
 
@@ -289,7 +309,7 @@ NTSTATUS Inject_Perform(PPENDING_INJECT InjectionInfo)
 	RtlCopyMemory(ApcRoutineAddress,
 		InjThunk[x64].Buffer,
 		InjThunk[x64].Length);
-
+	Log(L"using thunk code: 0x%p\n", ApcRoutineAddress);
 	PWCHAR DllPath = (PWCHAR)((PUCHAR)SectionMemoryAddress + InjThunk[x64].Length);
 	WCHAR dllPath[MAX_PATH] = { 0 };
 	SL_ConcatWideString(DriverCtx_GetUserDir(), L"\\", dllPath, MAX_PATH);
@@ -327,6 +347,12 @@ NTSTATUS Inject_Perform(PPENDING_INJECT InjectionInfo)
 	PVOID ApcArgument1 = (PVOID)DllPath;
 	PVOID ApcArgument2 = (PVOID)(wcslen(dllPath) * 2);
 
+#ifdef INJ_CONFIG_SUPPORTS_WOW64
+if (!x64) {
+
+	PsWrapApcWow64Thread(&ApcContext,&ApcRoutineAddress);
+}
+#endif
 	PKNORMAL_ROUTINE ApcRoutine = (PKNORMAL_ROUTINE)(ULONG_PTR)ApcRoutineAddress;
 	KPROCESSOR_MODE ApcMode = UserMode;
 	PKNORMAL_ROUTINE NormalRoutine = ApcRoutine;
@@ -625,11 +651,7 @@ VOID Inject_OnImageLoad(PUNICODE_STRING FullImageName, PEPROCESS Process, PIMAGE
 					case INJ_SYSARM32_NTDLL_LOADED:
 					case INJ_SYCHPE32_NTDLL_LOADED:
 					case INJ_SYSWOW64_NTDLL_LOADED:
-						// TO BE IMPLEMENTED
-						// if (injectionInfo->Method != InjMethodThunkless)
-						// {
-						// 	InjectionInfo->LdrLoadDllRoutineAddress = LdrLoadDllRoutineAddress;
-						// }
+						injectionInfo->LdrLoadDllRoutineAddress = LdrLoadDllRoutineAddress;
 						break;
 
 					case INJ_SYSTEM32_NTDLL_LOADED:
@@ -644,11 +666,46 @@ VOID Inject_OnImageLoad(PUNICODE_STRING FullImageName, PEPROCESS Process, PIMAGE
 			}
 		}
 		else {
+			// there is some special processing for win7 x86
+
+#if defined(INJ_CONFIG_SUPPORTS_WOW64)
+
+			if (s_IsWin7 && PE_IsProcessX86(Process)) {
+				//
+				// On Windows 7, if we're injecting DLL into Wow64 process using
+				// the "thunk method", we have additionaly postpone the load after
+				// these system DLLs.
+				//
+				// This is because on Windows 7, these DLLs are loaded as part of
+				// the wow64!ProcessInit routine, therefore the Wow64 subsystem
+				// is not fully initialized to execute our injected Wow64ApcRoutine.
+				//
+
+				UNICODE_STRING System32Kernel32Path = RTL_CONSTANT_STRING(L"\\System32\\kernel32.dll");
+				UNICODE_STRING SysWOW64Kernel32Path = RTL_CONSTANT_STRING(L"\\SysWOW64\\kernel32.dll");
+				UNICODE_STRING System32User32Path = RTL_CONSTANT_STRING(L"\\System32\\user32.dll");
+				UNICODE_STRING SysWOW64User32Path = RTL_CONSTANT_STRING(L"\\SysWOW64\\user32.dll");
+
+				if (SL_RtlSuffixUnicodeString(&System32Kernel32Path, FullImageName, TRUE) ||
+					SL_RtlSuffixUnicodeString(&SysWOW64Kernel32Path, FullImageName, TRUE) ||
+					SL_RtlSuffixUnicodeString(&System32User32Path, FullImageName, TRUE) ||
+					SL_RtlSuffixUnicodeString(&SysWOW64User32Path, FullImageName, TRUE))
+				{
+					// we can only perform injection untill all of these dlls is not loading (done loading)
+					Log(L"Postponing injection for Win7 WOW64 process (%wZ)\n", FullImageName);
+					return;
+				}
+			}
+
+#endif
+
 			// all necessary dll is loaded, we can only perform the injection by using APC, directly calling ZwMapViewOfSection
 			// and MapViewOfSection may lead to dead lock if these two functions are already on the stack
 			// because MapViewOfSection locks EPROCESS->AddressCreationLock, if we call MapViewOfSection on a call stack that
 			// MapViewOfSection has already been called, there will be a dead lock, this is a risk that we CAN NOT take
-			Log(L"Process %d can be injected now\n", PsGetProcessId(Process), PsGetProcessImageFileName(Process));
+			Log(L"Process %d WOW64: %s can be injected now\n", PsGetProcessId(Process),
+				PE_IsProcessX86(Process) ? L"TRUE" : L"FALSE",
+				PsGetProcessImageFileName(Process));
 			
 			if (!NT_SUCCESS(Inject_QueueInjectionApc(KernelMode,
 				&Inject_InjectionApcNormalRoutine,

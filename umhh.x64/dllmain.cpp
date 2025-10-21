@@ -10,22 +10,8 @@
 #include "../UMController/IPC.h"
 #include "../UMController/ETW.h"
 
-#define PAGE_SIZE 0x1000
-#if defined(_M_IX86)
-#  define ARCH_A          "x86"
-#  define ARCH_W         L"x86"
-#elif defined(_M_AMD64)
-#  define ARCH_A          "x64"
-#  define ARCH_W         L"x64"
-#elif defined(_M_ARM)
-#  define ARCH_A          "ARM32"
-#  define ARCH_W         L"ARM32"
-#elif defined(_M_ARM64)
-#  define ARCH_A          "ARM64"
-#  define ARCH_W         L"ARM64"
-#else
-#  error Unknown architecture
-#endif
+#define PAGE_SIZE 0x1000 
+
 #define WIDEN2(x) L##x
 #define WIDEN(x) WIDEN2(x)
 #define WFILE WIDEN(__FILE__)

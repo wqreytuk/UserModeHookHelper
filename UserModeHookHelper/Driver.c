@@ -45,6 +45,8 @@ NTSTATUS
 	(RegistryPath); 
 	Log(L"DriverEntry\n");
 
+	Inject_CheckWin7();
+
 	// initialize modules
 	HookList_Init();
 	PortCtx_Init();

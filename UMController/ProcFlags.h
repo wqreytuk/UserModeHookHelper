@@ -22,9 +22,7 @@
     #define MAKE_ITEMDATA(pid, flags) ( (PROC_ITEMDATA)( ( (unsigned long long)(pid) & 0xFFFFFFFFull) | ( ((unsigned long long)(flags) & 0xFFFFFFFFull) << 32 ) ) )
 
 
-
-#define X64_DLL L"umhh.x64.dll"
-#define X86_DLL L"umhh.x86.dll"
+	 
 // Master DLL base name (adjust if actual deployed helper DLL differs)
 #define MASTER_X64_DLL_BASENAME X64_DLL
 #define MASTER_X86_DLL_BASENAME X86_DLL
