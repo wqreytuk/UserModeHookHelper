@@ -466,6 +466,14 @@ Handle_AddHook(
 		if (pathBytes >= sizeof(WCHAR)) path = (PCWSTR)(msg->m_Data + sizeof(ULONGLONG));
 	}
 	NTSTATUS st = HookList_AddEntry(hash, path, pathBytes);
+	// If we successfully added an entry, update the anonymous section so
+	// connected clients can MapViewOfFile and see the new snapshot.
+	if (NT_SUCCESS(st)) {
+		NTSTATUS st2 = HookList_CreateOrUpdateSection();
+		if (!NT_SUCCESS(st2)) {
+			Log(L"Handle_AddHook: HookList_CreateOrUpdateSection failed 0x%x\n", st2);
+		}
+	}
 	if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
 		*(NTSTATUS*)OutputBuffer = st;
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
@@ -491,6 +499,14 @@ Handle_RemoveHook(
 	ULONGLONG hash = 0;
 	RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
 	BOOLEAN removed = HookList_RemoveEntry(hash);
+	// If we removed an entry, refresh the anonymous section so clients see
+	// the updated snapshot.
+	if (removed) {
+		NTSTATUS st2 = HookList_CreateOrUpdateSection();
+		if (!NT_SUCCESS(st2)) {
+			Log(L"Handle_RemoveHook: HookList_CreateOrUpdateSection failed 0x%x\n", st2);
+		}
+	}
 	if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
 		*(BOOLEAN*)OutputBuffer = removed;
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);

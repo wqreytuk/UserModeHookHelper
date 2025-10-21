@@ -20,6 +20,7 @@
 #include <unordered_set>
 #include "IPC.h"
 #include "RemoveHookDlg.h"
+#include "RegistryStore.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
