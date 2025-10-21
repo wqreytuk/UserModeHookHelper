@@ -137,21 +137,10 @@ static INJ_THUNK       InjThunk[2] = {
   { InjpThunkX64,   sizeof(InjpThunkX64)   }
 };
 
-// Simple FNV-1a 64-bit over UTF-16LE bytes
+// Simple FNV-1a 64-bit over UTF-16LE bytes - use shared helper
 static ULONGLONG ComputeNtPathHash(PUNICODE_STRING Path)
 {	
-    if (!Path || !Path->Buffer || Path->Length == 0) return 0;
-    const ULONGLONG FNV_offset = 14695981039346656037ULL;
-    const ULONGLONG FNV_prime = 1099511628211ULL;
-    ULONGLONG hash = FNV_offset;
-    // iterate over bytes of the UNICODE string (UTF-16LE)
-    USHORT byteLen = Path->Length; // length in bytes
-    PUCHAR bytes = (PUCHAR)Path->Buffer;
-    for (USHORT i = 0; i < byteLen; ++i) {
-        hash ^= (ULONGLONG)bytes[i];
-        hash *= FNV_prime;
-    }
-    return hash;
+    return SL_ComputeNtPathHashUnicode(Path);
 }
 
 static BOOLEAN PendingInject_Exists_Internal(PEPROCESS Process)

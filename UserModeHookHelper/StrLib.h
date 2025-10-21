@@ -17,4 +17,12 @@ SL_RtlSuffixUnicodeString(
 	_In_ BOOLEAN CaseInSensitive
 );
 
+// Compute 64-bit FNV-1a hash over UTF-16LE byte buffer (NT-style paths).
+// Returns 0 on invalid input, otherwise returns computed hash.
+ULONGLONG SL_ComputeNtPathHash(_In_reads_bytes_opt_(ByteLen) const PUCHAR Bytes, _In_ SIZE_T ByteLen);
+
+// Compute 64-bit FNV-1a hash over UNICODE_STRING buffer.
+// Returns 0 on invalid input, otherwise returns computed hash.
+ULONGLONG SL_ComputeNtPathHashUnicode(_In_ PUNICODE_STRING Path);
+
 #endif

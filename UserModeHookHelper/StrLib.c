@@ -52,3 +52,23 @@ BOOLEAN SL_ConcatWideString(_In_opt_ const WCHAR* A, _In_opt_ const WCHAR* B, _O
 	Out[lenA + lenB] = L'\0';
 	return TRUE;
 }
+
+ULONGLONG SL_ComputeNtPathHash(_In_reads_bytes_opt_(ByteLen) const PUCHAR Bytes, _In_ SIZE_T ByteLen) {
+	if (!Bytes || ByteLen == 0) return 0;
+
+	// FNV-1a 64-bit constants
+	const ULONGLONG FNV_offset = 14695981039346656037ULL;
+	const ULONGLONG FNV_prime = 1099511628211ULL;
+	ULONGLONG hash = FNV_offset;
+
+	for (SIZE_T i = 0; i < ByteLen; ++i) {
+		hash ^= (ULONGLONG)Bytes[i];
+		hash *= FNV_prime;
+	}
+	return hash;
+}
+
+ULONGLONG SL_ComputeNtPathHashUnicode(_In_ PUNICODE_STRING Path) {
+	if (!Path || !Path->Buffer || Path->Length == 0) return 0;
+	return SL_ComputeNtPathHash((const PUCHAR)Path->Buffer, Path->Length);
+}

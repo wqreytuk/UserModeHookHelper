@@ -1,6 +1,7 @@
 #include "HookList.h"
 #include "Tag.h"
 #include "Trace.h"
+#include "StrLib.h"
 
 // Internal hook list state (module-private)
 static LIST_ENTRY s_HookList;
@@ -429,15 +430,8 @@ NTSTATUS HookList_LoadFromRegistry(VOID) {
     PWCHAR p = buf;
     while (*p) {
         SIZE_T len = (wcslen(p) + 1) * sizeof(WCHAR);
-        // Compute hash using kernel helper (call into Trace.h? we have Helper only user-mode)
-        // We'll implement an in-kernel FNV-1a on UTF-16 bytes here.
-        ULONGLONG h = 1469598103934665603ULL; // FNV offset basis
-        PUCHAR bytes = (PUCHAR)p;
-        SIZE_T blen = wcslen(p) * sizeof(WCHAR);
-        for (SIZE_T i = 0; i < blen; ++i) {
-            h ^= (ULONGLONG)bytes[i];
-            h *= 1099511628211ULL;
-        }
+        // Compute hash using shared kernel helper
+        ULONGLONG h = SL_ComputeNtPathHash((const PUCHAR)p, wcslen(p) * sizeof(WCHAR));
         // Add entry (idempotent)
         HookList_AddEntry(h, p, len);
         p = (PWCHAR)((PUCHAR)p + len);
