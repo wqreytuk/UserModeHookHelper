@@ -558,7 +558,8 @@ OnProcessAttach(
 	_In_ PVOID ModuleHandle
 )
 {
-
+	// add dll reference, so we can be unloaded by calling freelibrary
+	LdrAddRefDll(LDR_ADDREF_DLL_PIN, ModuleHandle);
 
 	ANSI_STRING RoutineName;
 	RtlInitAnsiString(&RoutineName, (PSTR)"_snwprintf");

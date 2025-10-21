@@ -66,6 +66,9 @@
     <ClInclude Include="UMControllerMsgs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="RemoveHookDlg.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="UMController.cpp">
@@ -102,6 +105,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="UIHelpers.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RemoveHookDlg.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RegistryStore.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
