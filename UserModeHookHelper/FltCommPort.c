@@ -299,7 +299,7 @@ NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG out
 				// system worker thread so the message is delivered from a safe
 				// context. We transfer ownership of 'msg' and 'arr' to the worker
 				// and return success here.
-				Log(L"Comm_BroadcastProcessNotify: current thread is terminating, resend with delay work item\n");
+				// Log(L"Comm_BroadcastProcessNotify: current thread is terminating, resend with delay work item\n");
 
 				PBROADCAST_WORK work = ExAllocatePoolWithTag(NonPagedPool, sizeof(*work), tag_port);
 				if (work) {
