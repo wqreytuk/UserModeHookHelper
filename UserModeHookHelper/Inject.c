@@ -180,6 +180,7 @@ static VOID PendingInject_Add_Internal(PEPROCESS Process)
     // take a reference to the process object
     ObReferenceObject(Process);
     p->Process = Process;
+	p->x64 = !PE_IsProcessX86(Process);
     KIRQL oldIrql;
     KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
     InsertTailList(&s_PendingInjectList, &p->ListEntry);
@@ -238,11 +239,13 @@ static BOOLEAN ImageNameIsNtdll_Internal(PUNICODE_STRING ImageName)
 BOOLEAN Inject_CanInject(PPENDING_INJECT injInfo) {
 	ULONG RequiredDlls = INJ_SYSTEM32_NTDLL_LOADED;
 #ifdef INJ_CONFIG_SUPPORTS_WOW64
-	RequiredDlls |= INJ_SYSTEM32_NTDLL_LOADED;    // \System32\ntdll.dll
-	RequiredDlls |= INJ_SYSTEM32_WOW64_LOADED;    // \System32\wow64.dll
-	RequiredDlls |= INJ_SYSTEM32_WOW64WIN_LOADED; // \System32\wow64win.dll
-	RequiredDlls |= INJ_SYSTEM32_WOW64CPU_LOADED; // \System32\wow64cpu.dll
-	RequiredDlls |= INJ_SYSWOW64_NTDLL_LOADED;    // \System32\wow64cpu.dll
+	if (!injInfo->x64) {
+		RequiredDlls |= INJ_SYSTEM32_NTDLL_LOADED;    // \System32\ntdll.dll
+		RequiredDlls |= INJ_SYSTEM32_WOW64_LOADED;    // \System32\wow64.dll
+		RequiredDlls |= INJ_SYSTEM32_WOW64WIN_LOADED; // \System32\wow64win.dll
+		RequiredDlls |= INJ_SYSTEM32_WOW64CPU_LOADED; // \System32\wow64cpu.dll
+		RequiredDlls |= INJ_SYSWOW64_NTDLL_LOADED;    // \System32\wow64cpu.dll
+	}
 #endif
 	return (injInfo->LoadedDlls & RequiredDlls) == RequiredDlls;
 }
@@ -670,7 +673,7 @@ VOID Inject_OnImageLoad(PUNICODE_STRING FullImageName, PEPROCESS Process, PIMAGE
 
 #if defined(INJ_CONFIG_SUPPORTS_WOW64)
 
-			if (s_IsWin7 && PE_IsProcessX86(Process)) {
+			if (s_IsWin7 && !injectionInfo->x64) {
 				//
 				// On Windows 7, if we're injecting DLL into Wow64 process using
 				// the "thunk method", we have additionaly postpone the load after
@@ -704,7 +707,7 @@ VOID Inject_OnImageLoad(PUNICODE_STRING FullImageName, PEPROCESS Process, PIMAGE
 			// because MapViewOfSection locks EPROCESS->AddressCreationLock, if we call MapViewOfSection on a call stack that
 			// MapViewOfSection has already been called, there will be a dead lock, this is a risk that we CAN NOT take
 			Log(L"Process %d WOW64: %s can be injected now\n", PsGetProcessId(Process),
-				PE_IsProcessX86(Process) ? L"TRUE" : L"FALSE",
+				injectionInfo->x64 ? L"TRUE" : L"FALSE",
 				PsGetProcessImageFileName(Process));
 			
 			if (!NT_SUCCESS(Inject_QueueInjectionApc(KernelMode,

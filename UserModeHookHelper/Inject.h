@@ -29,6 +29,7 @@ typedef struct _PENDING_INJECT {
 	PVOID       LdrLoadDllRoutineAddress;
 	BOOLEAN IsInjected;
 	PEPROCESS Process; // referenced
+	BOOLEAN x64;
 } PENDING_INJECT, *PPENDING_INJECT;
 
 typedef
