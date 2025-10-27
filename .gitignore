@@ -1,0 +1,70 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.aps
+
+# Visual C++ build results
+[Bb]in/
+[Oo]bj/
+x64/
+x86/
+*/x64/
+*/x86/
+*/Debug/
+*/Release/
+
+# Intermediate files
+*.obj
+*.o
+*.lib
+*.exp
+*.idb
+*.ipdb
+*.pch
+*.pch.*
+*.pdb
+*.ilk
+*.iobj
+*.res
+*.tlog/
+*.log
+
+# Binaries
+*.exe
+*.dll
+*.sys
+*.sys.*
+*.sys.id*
+*.sys.nam
+*.sys.til
+
+# Installer / packaging outputs
+*.msi
+*.msm
+*.cab
+*.zip
+*.7z
+
+# VS Code
+.vscode/
+
+# Misc
+*.cache
+*.tmp
+*.bak
+*.orig
+
+# Certificates / signing artifacts (optional)
+*.cer
+*.pvk
+*.pfx
+
+# Git Large File Storage hints (do not track build artifacts via LFS)
+*.zip filter=lfs diff=lfs merge=lfs -text
+scripts/
+code_for_copilot_to_learn/
+ 
+typora/
