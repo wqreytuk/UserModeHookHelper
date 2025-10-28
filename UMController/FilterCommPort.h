@@ -49,7 +49,10 @@ public:
 	// Map the provided section handle into this process and populate the
 	// provided unordered_set with the 64-bit hashes. Returns true on success.
 	bool FLTCOMM_MapHookSectionToSet(std::unordered_set<unsigned long long>& outSet);
-
+\r\n	// Request kernel to determine if a PID is a WoW64 (32-bit) process. Returns
+	// true on success and sets outIsWow64 accordingly.
+	bool FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64);
+\r\n
 private:
 	HANDLE m_Port = INVALID_HANDLE_VALUE;
 	// listener state for async messages

@@ -25,7 +25,9 @@
 // will duplicate a handle into the caller process and return it in the
 // message reply buffer (as a HANDLE-sized value). The client should MapViewOfFile
 // on the returned handle to read the snapshot.
-#define CMD_GET_HOOK_SECTION 8
+#define CMD_GET_HOOK_SECTION 8\r\n// Query whether a target PID is a WoW64 (32-bit) process. Payload: DWORD pid.
+// Reply: BOOLEAN (1 = Wow64 / 0 = not Wow64)
+#define CMD_IS_PROCESS_WOW64 9\r\n
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {

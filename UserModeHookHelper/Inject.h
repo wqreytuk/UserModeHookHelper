@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 #ifndef INJECT_H
+=======
+???#ifndef INJECT_H\r\n
 #define INJECT_H
 
 #include "Common.h"
@@ -88,7 +91,7 @@ Inject_ApcKernelRoutine(
 // or PsGetCurrentProcess(); the pending list will take its own reference when storing.
 VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process);
 
-// (Pending list accessors removed — use Inject_CheckAndQueue and the
+// (Pending list accessors removed ??? use Inject_CheckAndQueue and the
 // atomic pop behavior in Inject_OnImageLoad.)
 
 // Called from load-image notify to test for ntdll and perform injection
@@ -107,3 +110,4 @@ NTSTATUS Inject_Perform(PPENDING_INJECT InjectionInfo);
 NTSTATUS Inject_PerformThunkLess(PPENDING_INJECT InjectionInfo);
 BOOLEAN Inject_CanInject(PPENDING_INJECT injInfo); 
 #endif
+
