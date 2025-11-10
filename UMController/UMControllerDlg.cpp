@@ -21,6 +21,7 @@
 #include "IPC.h"
 #include "RemoveHookDlg.h"
 #include "RegistryStore.h"
+#include "HookProcDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -188,6 +189,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_WM_QUERYDRAGICON()
 	ON_EN_CHANGE(IDC_EDIT_SEARCH, &CUMControllerDlg::OnEnChangeEditSearch)
 	ON_NOTIFY(NM_RCLICK, IDC_LIST_PROC, &CUMControllerDlg::OnNMRClickListProc)
+	ON_NOTIFY(NM_DBLCLK, IDC_LIST_PROC, &CUMControllerDlg::OnNMDblclkListProc)
 	ON_NOTIFY(LVN_COLUMNCLICK, IDC_LIST_PROC, &CUMControllerDlg::OnLvnColumnclickListProc)
 	ON_MESSAGE(WM_APP_UPDATE_PROCESS, &CUMControllerDlg::OnUpdateProcess)
 	ON_WM_DESTROY()
@@ -731,12 +733,12 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 	// Loader or resolver update: wParam contains PID
 	if (lParam == UPDATE_SOURCE_LOAD || lParam == UPDATE_SOURCE_NOTIFY) {
 		DWORD pid = (DWORD)wParam;
-	ProcessEntry e;
-	int idx = -1;
-	if (!PM_GetEntryCopyByPid((DWORD)wParam, e, &idx)) return 0;
-	bool inHook = e.bInHookList;
-	std::wstring path = e.path;
-	std::wstring cmdline = e.cmdline;
+    // Get snapshot
+    ProcessEntry e; int idx = -1;
+    if (!PM_GetEntryCopyByPid(pid, e, &idx)) return 0;
+    bool inHook = e.bInHookList;
+    std::wstring path = e.path;
+    std::wstring cmdline = e.cmdline;
 
 		int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
 		while (item != -1) {
@@ -775,20 +777,23 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			item = newItem;
 		}
 
-	// compute flags from cached ProcessEntry (is64/master dll) before formatting the column text
-		ProcessEntry snapshot;
-		int dummyIdx = -1;
-		if (!PM_GetEntryCopyByPid(pid, snapshot, &dummyIdx)) return 0;
-		bool is64 = snapshot.is64;
-		bool dllLoaded = snapshot.masterDllLoaded;
-		DWORD flags = 0;
-		if (inHook) flags |= PF_IN_HOOK_LIST;
-		if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-		if (is64) flags |= PF_IS_64BIT;
-		m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(MAKE_ITEMDATA(pid, flags), inHook).c_str());
+	// Merge existing UI flags (to avoid flicker removing PF_IS_64BIT) with snapshot flags.
+	DWORD existingPacked = (DWORD)m_ProcListCtrl.GetItemData(item);
+	DWORD existingFlags = FLAGS_FROM_ITEMDATA(existingPacked);
+	bool existedIs64 = (existingFlags & PF_IS_64BIT) != 0;
+	bool existedMaster = (existingFlags & PF_MASTER_DLL_LOADED) != 0;
+	// Use snapshot authoritative values but preserve existing if snapshot not yet resolved.
+	bool is64Final = e.is64 || existedIs64;
+	bool masterFinal = e.masterDllLoaded || existedMaster;
+	DWORD flags = 0;
+	if (inHook) flags |= PF_IN_HOOK_LIST;
+	if (masterFinal) flags |= PF_MASTER_DLL_LOADED;
+	if (is64Final) flags |= PF_IS_64BIT;
+	PROC_ITEMDATA mergedPacked = MAKE_ITEMDATA(pid, flags);
+	m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(mergedPacked, inHook).c_str());
 	m_ProcListCtrl.SetItemText(item, 3, path.c_str());
 	m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
-	m_ProcListCtrl.SetItemData(item, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
+	m_ProcListCtrl.SetItemData(item, (DWORD_PTR)mergedPacked);
 		return 0;
 	}
 
@@ -968,6 +973,30 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	menu.TrackPopupMenu(TPM_RIGHTBUTTON, point.x, point.y, this);
 
 	*pResult = 0;
+}
+
+void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
+{
+	// Identify selected item
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) { if (pResult) *pResult = 0; return; }
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
+	bool dllLoaded = (flags & PF_MASTER_DLL_LOADED) != 0;
+	if (!dllLoaded) {
+		// For now silently ignore double-click when master DLL not present.
+		if (pResult) *pResult = 0; return;
+	}
+
+	// Launch simple modal dialog (Hook Process) - placeholder; will be replaced later by full implementation
+	// Fetch process entry snapshot for name display
+	ProcessEntry e; int idx=-1;
+	std::wstring nameDisplay = L"(unknown)";
+	if (PM_GetEntryCopyByPid(pid, e, &idx)) nameDisplay = e.name.empty()?nameDisplay:e.name;
+	HookProcDlg dlg(pid, nameDisplay, this);
+	dlg.DoModal();
+	if (pResult) *pResult = 0;
 }
 
 void CUMControllerDlg::OnRemoveExecutablesFromHookList() {

@@ -17,9 +17,29 @@
 
 
     typedef unsigned long long PROC_ITEMDATA;
-    #define PID_FROM_ITEMDATA(v)   ((DWORD)((v) & 0xFFFFFFFFull))
-    #define FLAGS_FROM_ITEMDATA(v) ((DWORD)(((v) >> 32) & 0xFFFFFFFFull))
-    #define MAKE_ITEMDATA(pid, flags) ( (PROC_ITEMDATA)( ( (unsigned long long)(pid) & 0xFFFFFFFFull) | ( ((unsigned long long)(flags) & 0xFFFFFFFFull) << 32 ) ) )
+
+#if defined(_WIN64)
+    inline PROC_ITEMDATA MakeItemData(DWORD pid, DWORD flags) {
+        return ( (static_cast<unsigned long long>(pid) & 0xFFFFFFFFULL) |
+                 ((static_cast<unsigned long long>(flags) & 0xFFFFFFFFULL) << 32) );
+    }
+    inline DWORD PidFromItemData(PROC_ITEMDATA v) {
+        return static_cast<DWORD>(v & 0xFFFFFFFFULL);
+    }
+    inline DWORD FlagsFromItemData(PROC_ITEMDATA v) {
+        return static_cast<DWORD>((v >> 32) & 0xFFFFFFFFULL);
+    }
+#else
+    // 32-bit build: cannot safely shift by 32; store only PID, flags unavailable.
+    inline PROC_ITEMDATA MakeItemData(DWORD pid, DWORD /*flags*/) { return static_cast<PROC_ITEMDATA>(pid); }
+    inline DWORD PidFromItemData(PROC_ITEMDATA v) { return static_cast<DWORD>(v); }
+    inline DWORD FlagsFromItemData(PROC_ITEMDATA /*v*/) { return 0; }
+#endif
+
+    // Backward compatibility macros (replace usage gradually)
+    #define MAKE_ITEMDATA(pid, flags) MakeItemData((pid),(flags))
+    #define PID_FROM_ITEMDATA(v)      PidFromItemData((v))
+    #define FLAGS_FROM_ITEMDATA(v)    FlagsFromItemData((v))
 
 
 	 

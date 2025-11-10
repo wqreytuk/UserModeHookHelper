@@ -55,6 +55,7 @@ public:
 	afx_msg void OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult);
 	afx_msg void OnLvnColumnclickListProc(NMHDR *pNMHDR, LRESULT *pResult);
     afx_msg LRESULT OnUpdateProcess(WPARAM wParam, LPARAM lParam);
+	afx_msg void OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnDestroy();
     
 private:

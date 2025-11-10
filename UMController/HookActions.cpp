@@ -86,10 +86,17 @@ void HookActions::HandleAddHook(CUMControllerDlg* dlg, Filter* filter, CListCtrl
     unsigned long long h = Helper::GetNtPathHash(b, bLen);
     // Update the originating PID first
     PM_UpdateEntryFields(pid, ntPath, true, L"");
+    // Proactively capture module state (is64 + master dll) so subsequent UI refresh uses correct flags
+    bool is64Origin = false; Helper::IsProcess64(pid, is64Origin);
+    bool dllLoadedOrigin = false; Helper::IsModuleLoaded(pid, is64Origin ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoadedOrigin);
+    PM_UpdateEntryModuleState(pid, is64Origin, dllLoadedOrigin);
     // Find other PIDs with the same path and update them too
     std::vector<DWORD> matches = PM_FindPidsByHash(h);
     for (DWORD mpid : matches) {
         PM_UpdateEntryFields(mpid, ntPath, true, L"");
+        bool is64 = false; Helper::IsProcess64(mpid, is64);
+        bool dllLoaded = false; Helper::IsModuleLoaded(mpid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+        PM_UpdateEntryModuleState(mpid, is64, dllLoaded);
         // Also update UI row if present
         int item = list->GetNextItem(-1, LVNI_ALL);
         while (item != -1) {
@@ -97,8 +104,6 @@ void HookActions::HandleAddHook(CUMControllerDlg* dlg, Filter* filter, CListCtrl
             item = list->GetNextItem(item, LVNI_ALL);
         }
         if (item != -1) {
-            bool is64 = false; Helper::IsProcess64(mpid, is64);
-            bool dllLoaded = false; Helper::IsModuleLoaded(mpid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
             DWORD flags = PF_IN_HOOK_LIST;
             if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
             if (is64) flags |= PF_IS_64BIT;
@@ -140,17 +145,22 @@ void HookActions::HandleRemoveHook(CUMControllerDlg* dlg, Filter* filter, CListC
 
     // Update ProcessManager entries matching this NT path using hash-based lookup
     PM_UpdateEntryFields(pid, ntPath, false, L"");
+    // Keep module state (architecture + master dll loaded) up to date for originating PID
+    bool is64Origin = false; Helper::IsProcess64(pid, is64Origin);
+    bool dllLoadedOrigin = false; Helper::IsModuleLoaded(pid, is64Origin ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoadedOrigin);
+    PM_UpdateEntryModuleState(pid, is64Origin, dllLoadedOrigin);
     std::vector<DWORD> matches = PM_FindPidsByHash(hash);
     for (DWORD mpid : matches) {
         PM_UpdateEntryFields(mpid, ntPath, false, L"");
+        bool is64 = false; Helper::IsProcess64(mpid, is64);
+        bool dllLoaded = false; Helper::IsModuleLoaded(mpid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+        PM_UpdateEntryModuleState(mpid, is64, dllLoaded);
         int item = list->GetNextItem(-1, LVNI_ALL);
         while (item != -1) {
             if ((DWORD)list->GetItemData(item) == mpid) break;
             item = list->GetNextItem(item, LVNI_ALL);
         }
         if (item != -1) {
-            bool is64 = false; Helper::IsProcess64(mpid, is64);
-            bool dllLoaded = false; Helper::IsModuleLoaded(mpid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
             DWORD flags = 0;
             if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
             if (is64) flags |= PF_IS_64BIT;
