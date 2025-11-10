@@ -47,7 +47,8 @@ TraceEventCallback(
 			if (lastWasNewline) continue;
 			cleaned[ri++] = L'\n';
 			lastWasNewline = true;
-		} else {
+		}
+		else {
 			cleaned[ri++] = c;
 			lastWasNewline = false;
 		}
@@ -73,10 +74,27 @@ int main() {
 	TraceStart();
 }
 void WaitThreadProc() {
-	HANDLE hEvent = OpenEvent(SYNCHRONIZE, FALSE, SIGNALEVENTNAME);
-	WaitForSingleObject(hEvent, INFINITE);
-	CloseHandle(hEvent);
-	// MessageBoxA(NULL, "CloseConfirm", "EVT", MB_OK);
+	HANDLE hStop = OpenEvent(SYNCHRONIZE, FALSE, SIGNALEVENTNAME);
+	HANDLE hClear = OpenEvent(SYNCHRONIZE, FALSE, ETW_TRACER_CLEAR_EVENT);
+	HANDLE handles[2];
+	DWORD count = 0;
+	if (hStop) handles[count++] = hStop;
+	if (hClear) handles[count++] = hClear;
+	if (count == 0) {
+		TraceStop();
+		exit(0);
+	}
+	for (;;) {
+		DWORD r = WaitForMultipleObjects(count, handles, FALSE, INFINITE);
+		if (r == WAIT_OBJECT_0) { // stop
+			break;
+		} else if (count == 2 && r == WAIT_OBJECT_0 + 1) { // clear
+			system("cls");
+			wprintf(L"[cleared by controller]\n");
+		}
+	}
+	if (hClear) CloseHandle(hClear);
+	if (hStop) CloseHandle(hStop);
 	TraceStop();
 	exit(0);
 }

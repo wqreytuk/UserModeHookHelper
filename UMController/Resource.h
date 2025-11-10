@@ -18,6 +18,8 @@
 #define ID_MENU_REMOVE_HOOK_SINGLE 40005
 // Add from executable via Tools menu (distinct from context-menu add-by-process)
 #define ID_MENU_ADD_EXE        40004
+// Clear ETW log via Tools menu
+#define ID_MENU_CLEAR_ETW       40006
 // Menu resource for dialog Tools menu
 #define IDR_TOOLS_MENU         129
 #define IDD_REMOVE_HOOK_DLG    140

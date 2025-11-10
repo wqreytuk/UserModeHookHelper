@@ -3,8 +3,10 @@
 #include "Helper.h"
 
  ETW::ETW() {
-	// create an event used to signal event trace
+	// create an event used to signal event trace stop
 	m_Event = CreateEvent(NULL, FALSE, FALSE, SIGNALEVENTNAME);
+	// open (or create if not existing yet) the clear event used to request console clearing
+	m_ClearEvent = CreateEvent(NULL, FALSE, FALSE, ETW_TRACER_CLEAR_EVENT);
 }
 void ETW::Reg() { 
 	ULONG status = EventRegister(&ProviderGUID,
@@ -18,6 +20,10 @@ void ETW::UnReg() {
 	// turn off etw tracer first by signal share event
 	SetEvent(m_Event);
 	CloseHandle(m_Event);
+	if (m_ClearEvent) {
+		CloseHandle(m_ClearEvent);
+		m_ClearEvent = nullptr;
+	}
 
 	if (m_ProviderHandle) {
 		EventUnregister(m_ProviderHandle);
@@ -71,4 +77,11 @@ void ETW::Log(_In_ PCWSTR Format, ...) {
 	Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0'; // ensure null-termination
 
 	EventWriteString(m_ProviderHandle, 0, 0, Buffer);
+}
+
+void ETW::Clear() {
+	// Fire the clear event so the tracer (if running) clears its display.
+	if (m_ClearEvent) {
+		SetEvent(m_ClearEvent);
+	}
 }

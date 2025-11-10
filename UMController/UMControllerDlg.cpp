@@ -200,6 +200,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_MENU_REMOVE_HOOK_SINGLE, &CUMControllerDlg::OnRemoveHook)
 	ON_COMMAND(ID_MENU_INJECT_DLL, &CUMControllerDlg::OnInjectDll)
 	ON_COMMAND(ID_MENU_ADD_EXE, &CUMControllerDlg::OnAddExecutableToHookList)
+	ON_COMMAND(ID_MENU_CLEAR_ETW, &CUMControllerDlg::OnClearEtwLog)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
 END_MESSAGE_MAP()
 
@@ -1005,5 +1006,11 @@ void CUMControllerDlg::OnRemoveExecutablesFromHookList() {
 		// Dialog already performed removals and updated PM
 		// Optionally refresh UI here
 	}
+}
+
+void CUMControllerDlg::OnClearEtwLog() {
+	// Fire clear event; tracer will clear its own console.
+	app.GetETW().Clear();
+	app.GetETW().Log(L"[controller requested ETW clear]\n");
 }
 

@@ -8,6 +8,8 @@ static const GUID ProviderGUID =
 // Named event used by EtwTracer to signal the parent process that the
 // tracer has successfully started and is ready to receive events.
 #define ETW_TRACER_READY_EVENT _T("UMHH_ETW_TRACER_READY_9527")
+// Named event used by controller to request the tracer to clear its console.
+#define ETW_TRACER_CLEAR_EVENT _T("UMHH_ETW_TRACER_CLEAR_9527")
 
 class ETW {
 public:
@@ -18,8 +20,11 @@ public:
 	void Log(_In_ PCWSTR Format, ...);
 	void UnReg();
 	void StartTracer();
+	// Signal tracer to clear its console output.
+	void Clear();
 private:
 	REGHANDLE m_ProviderHandle;
 	HANDLE m_Event;
+	HANDLE m_ClearEvent;
 };
 #endif
