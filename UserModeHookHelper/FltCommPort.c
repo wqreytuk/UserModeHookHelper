@@ -5,12 +5,9 @@
 #include "PortCtx.h"
 #include "DriverCtx.h"
 
-<<<<<<< HEAD
-=======
 // Some WDK versions may not declare PsGetProcessWow64Process; forward-declare it here.
 extern PVOID PsGetProcessWow64Process(IN PEPROCESS Process);
 
->>>>>>> origin/main
 // Forward declarations for modular command handlers (defined below)
 static NTSTATUS Handle_SetUserDir(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_AddHook(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -18,10 +15,9 @@ static NTSTATUS Handle_RemoveHook(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSi
 static NTSTATUS Handle_CheckHookList(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_GetImagePathByPid(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_GetHookSection(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
-<<<<<<< HEAD
-=======
+
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
->>>>>>> origin/main
+
 // NOTE: Do NOT declare or call user-mode-only path conversion helpers from
 // kernel code here. NT-path resolution is performed in user-mode. The driver
 // keeps a simple fallback when a path isn't supplied by user-mode.
@@ -239,12 +235,9 @@ Comm_MessageNotify(
 	case CMD_GET_IMAGE_PATH_BY_PID:
 		status = Handle_GetImagePathByPid(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
-<<<<<<< HEAD
-=======
 	case CMD_IS_PROCESS_WOW64:
 		status = Handle_IsProcessWow64(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
->>>>>>> origin/main
 	case CMD_ENUM_HOOKS:
 		status = Handle_EnumHooks(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
@@ -429,9 +422,8 @@ NTSTATUS Comm_BroadcastApcQueued(DWORD ProcessId, PULONG outNotifiedCount) {
 	if (outNotifiedCount) *outNotifiedCount = notified;
 	return STATUS_SUCCESS;
 }
+ 
 
-<<<<<<< HEAD
-=======
 static NTSTATUS
 Handle_IsProcessWow64(
 	PUMHH_COMMAND_MESSAGE msg,
@@ -472,8 +464,7 @@ Handle_IsProcessWow64(
 		return STATUS_BUFFER_TOO_SMALL;
 	}
 }
-
->>>>>>> origin/main
+ 
 // ---------- Command handlers (modularized) ----------
 
 static NTSTATUS

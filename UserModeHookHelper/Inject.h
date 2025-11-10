@@ -1,7 +1,5 @@
-<<<<<<< HEAD
+
 #ifndef INJECT_H
-=======
-???#ifndef INJECT_H\r\n
 #define INJECT_H
 
 #include "Common.h"
