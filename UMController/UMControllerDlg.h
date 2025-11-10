@@ -58,11 +58,13 @@ public:
     afx_msg LRESULT OnUpdateProcess(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnDestroy();
+    afx_msg LRESULT OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam);
     
 private:
 	Filter m_Filter;
 	CListCtrl m_ProcListCtrl;
 	CMenu m_Menu;
+	class HookProcDlg* m_pHookDlg = nullptr; // single modeless hook dialog instance
 	bool CheckHookList(const std::wstring& imagePath);
     afx_msg LRESULT OnFatalMessage(WPARAM wParam, LPARAM lParam);
 	// Periodic rescan state

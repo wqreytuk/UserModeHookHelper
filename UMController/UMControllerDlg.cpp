@@ -202,6 +202,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_MENU_ADD_EXE, &CUMControllerDlg::OnAddExecutableToHookList)
 	ON_COMMAND(ID_MENU_CLEAR_ETW, &CUMControllerDlg::OnClearEtwLog)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
+	ON_MESSAGE(HookProcDlg::kMsgHookDlgDestroyed, &CUMControllerDlg::OnHookDlgDestroyed)
 END_MESSAGE_MAP()
 
 
@@ -989,15 +990,36 @@ void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
 		// For now silently ignore double-click when master DLL not present.
 		if (pResult) *pResult = 0; return;
 	}
-
-	// Launch simple modal dialog (Hook Process) - placeholder; will be replaced later by full implementation
-	// Fetch process entry snapshot for name display
-	ProcessEntry e; int idx=-1;
-	std::wstring nameDisplay = L"(unknown)";
+	// If existing dialog is open:
+	if (m_pHookDlg) {
+		if (m_pHookDlg->GetSafeHwnd()) {
+			if (m_pHookDlg->GetPid() == pid) { // reuse existing dialog
+				m_pHookDlg->SetForegroundWindow();
+				if (pResult) *pResult = 0; return; 
+			}
+			// Request destruction; OnDestroy will post message; do not delete here.
+			m_pHookDlg->DestroyWindow();
+			// Keep pointer until OnHookDlgDestroyed arrives to avoid premature deletion.
+			m_pHookDlg = nullptr; // safe to null to prevent reuse while closing
+		}
+	}
+	ProcessEntry e; int idx=-1; std::wstring nameDisplay = L"(unknown)";
 	if (PM_GetEntryCopyByPid(pid, e, &idx)) nameDisplay = e.name.empty()?nameDisplay:e.name;
-	HookProcDlg dlg(pid, nameDisplay, this);
-	dlg.DoModal();
+	m_pHookDlg = new HookProcDlg(pid, nameDisplay, this);
+	if (!m_pHookDlg->CreateModeless(this)) {
+		delete m_pHookDlg; m_pHookDlg = nullptr;
+		MessageBox(L"Failed to create hook dialog.", L"Hook", MB_ICONERROR);
+	} else {
+		m_pHookDlg->ShowWindow(SW_SHOW);
+	}
 	if (pResult) *pResult = 0;
+}
+
+LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {
+	UNREFERENCED_PARAMETER(wParam); UNREFERENCED_PARAMETER(lParam);
+	// No delete needed; ownership released when pointer nulled on close request.
+	m_pHookDlg = nullptr;
+	return 0;
 }
 
 void CUMControllerDlg::OnRemoveExecutablesFromHookList() {
