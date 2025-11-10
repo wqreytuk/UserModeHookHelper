@@ -488,7 +488,7 @@ bool Filter::FLTCOMM_MapHookSectionToSet(std::unordered_set<unsigned long long>&
 	CloseHandle(hSec);
 	return true;
 }
-\r\nbool Filter::FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64) {
+bool Filter::FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64) {
 	// Build simple message with DWORD pid payload
 	const size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD) - 1;
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
@@ -506,7 +506,7 @@ bool Filter::FLTCOMM_MapHookSectionToSet(std::unordered_set<unsigned long long>&
 	outIsWow64 = (reply ? true : false);
 	return true;
 }
-\r\n
+
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	app.GetETW().Log(L"FLTCOMM_RemoveHookByHash: request hash=0x%I64x\n", hash);
 	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1;

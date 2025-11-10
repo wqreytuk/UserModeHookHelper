@@ -339,10 +339,10 @@ BOOL CUMControllerDlg::OnInitDialog()
 
 	// Start the asynchronous listener now that the initial list is populated
 	m_Filter.StartListener();
-\r\n	// Provide Helper with pointer to our Filter instance so it may query
+	// Provide Helper with pointer to our Filter instance so it may query
 	// the kernel for authoritative information (e.g., WoW64 checks).
 	Helper::SetFilterInstance(&m_Filter);
-\r\n
+
 	// Start periodic rescan thread to detect processes that died without
 	// receiving a notification (or to reconcile missed events). The thread
 	// snapshots running PIDs and posts EXIT messages for any PID no longer

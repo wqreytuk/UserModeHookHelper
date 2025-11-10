@@ -39,10 +39,10 @@ public:
 	// Determine whether the target process is 64-bit. Returns true on success
 	// and sets outIs64. On failure returns false and leaves outIs64 unchanged.
 	static bool IsProcess64(DWORD pid, bool& outIs64);
-\r\n	// Set the Filter instance used by Helper for kernel queries. The caller
+	// Set the Filter instance used by Helper for kernel queries. The caller
 	// should set this once during initialization (e.g., from the dialog).
 	static void SetFilterInstance(class Filter* f);
-\r\n
+
 	// Check if a module with the given (case-insensitive) base name is loaded
 	// in the target process. Returns true on success and sets outPresent.
 	// Fails (returns false) if the process cannot be opened or enumerated.
@@ -51,7 +51,7 @@ private:
 	// Shared reusable buffer for path queries. Protected by m_bufMutex.
 	static std::unique_ptr<TCHAR[]> m_sharedBuf;
 	static size_t m_sharedBufCap;
-	static std::mutex m_bufMutex;\r\n	// Optional pointer to the Filter instance owned by the UI. May be NULL.
-	static Filter* m_filterInstance;\r\n
+	static std::mutex m_bufMutex;	// Optional pointer to the Filter instance owned by the UI. May be NULL.
+	static Filter* m_filterInstance;
 };
 #endif
