@@ -39,10 +39,11 @@ void ProcessResolver::StartLoaderResolver(CUMControllerDlg* dlg, const std::vect
 			std::wstring cmdline;
 			Helper::GetProcessCommandLineByPID(pid, cmdline);
 			// Compute module/arch state once in background
+			// Compute architecture unconditionally so cached state is accurate even if not in hook list yet.
 			bool is64 = false;
+			Helper::IsProcess64(pid, is64);
 			bool dllLoaded = false;
 			if (inHook) {
-				Helper::IsProcess64(pid, is64);
 				const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 				Helper::IsModuleLoaded(pid, dllName, dllLoaded);
 			}
@@ -68,10 +69,11 @@ void ProcessResolver::StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filt
 		std::wstring cmdline;
 		Helper::GetProcessCommandLineByPID(pid, cmdline);
 		// Compute module/arch state once in background
-		bool is64 = false;
+		// Compute architecture unconditionally so cached state is accurate even if not yet in hook list.
+		bool is64 = false; 
+		Helper::IsProcess64(pid, is64);
 		bool dllLoaded = false;
 		if (inHook) {
-			Helper::IsProcess64(pid, is64);
 			const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 			Helper::IsModuleLoaded(pid, dllName, dllLoaded);
 		}
@@ -88,10 +90,10 @@ void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
 		int waited = 0;
 		bool dllLoaded = false;
         while (waited < MAX_MS) {
-            bool is64 = false;
-            Helper::IsProcess64(pid, is64);
-            const wchar_t* targetName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
-            Helper::IsModuleLoaded(pid, targetName, dllLoaded);
+			bool is64 = false;
+			Helper::IsProcess64(pid, is64);
+			const wchar_t* targetName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+			Helper::IsModuleLoaded(pid, targetName, dllLoaded);
 			if (dllLoaded) break;
 			std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS));
 			waited += INTERVAL_MS;
@@ -99,15 +101,11 @@ void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
 
 		// If DLL loaded, try to resolve path and check hook list; otherwise
 		// still update UI to clear any transient state.
-        if (dllLoaded) {
-            // Update cached module state so UI can use it without re-query
-            PM_UpdateEntryModuleState(pid, dllLoaded ? true : false, dllLoaded);
-            ::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
-        } else {
-            // Ensure module state is updated as not-loaded
-            PM_UpdateEntryModuleState(pid, false, false);
-            ::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
-        }
+		// Determine final arch for cached state
+		bool finalIs64 = false; 
+		Helper::IsProcess64(pid, finalIs64);
+		PM_UpdateEntryModuleState(pid, finalIs64, dllLoaded);
+		::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
 		return;
 	}).detach();
 }
