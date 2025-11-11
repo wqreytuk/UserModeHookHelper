@@ -155,13 +155,13 @@ int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam
 
 	int res = 0;
 	switch (pDlg->m_SortColumn) {
-	case 0: // PID numeric
+	case 0: // name (now column 0)
+		res = _wcsicmp(a.name.c_str(), b.name.c_str());
+		break;
+	case 1: // PID numeric (now column 1)
 		if (a.pid < b.pid) res = -1;
 		else if (a.pid > b.pid) res = 1;
 		else res = 0;
-		break;
-	case 1: // name
-		res = _wcsicmp(a.name.c_str(), b.name.c_str());
 		break;
 	case 2: // InHookList: Yes before No when ascending
 		if (a.bInHookList == b.bInHookList) res = 0;
@@ -223,8 +223,9 @@ BOOL CUMControllerDlg::OnInitDialog()
 	ASSERT((IDM_ABOUTBOX & 0xFFF0) == IDM_ABOUTBOX);
 	ASSERT(IDM_ABOUTBOX < 0xF000);
 
-	m_ProcListCtrl.InsertColumn(0, L"PID", LVCFMT_LEFT, 100);
-	m_ProcListCtrl.InsertColumn(1, L"Process Name", LVCFMT_LEFT, 200);
+	// Column order swapped: 0 = Process Name, 1 = PID (tree-friendly for potential hierarchy later)
+	m_ProcListCtrl.InsertColumn(0, L"Process Name", LVCFMT_LEFT, 200);
+	m_ProcListCtrl.InsertColumn(1, L"PID", LVCFMT_LEFT, 100);
 	// Column 2: HookState (Yes/No/master/x86|x64), Column 3: NT Path, Column 4: Start Params
 	m_ProcListCtrl.InsertColumn(2, L"HookState", LVCFMT_LEFT, 120);
 	m_ProcListCtrl.InsertColumn(3, L"NT Path", LVCFMT_LEFT, 400);
@@ -666,8 +667,8 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 				if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
 				if (is64) flags |= PF_IS_64BIT;
 				PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
-				int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(all[idx].pid).c_str());
-				m_ProcListCtrl.SetItemText(nIndex, 1, all[idx].name.c_str());
+				int nIndex = m_ProcListCtrl.InsertItem(i, all[idx].name.c_str());
+				m_ProcListCtrl.SetItemText(nIndex, 1, std::to_wstring(all[idx].pid).c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(packed).c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
 				m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
@@ -770,8 +771,8 @@ void CUMControllerDlg::LoadProcessList() {
 	auto all = PM_GetAll();
 
 	for (size_t idx = 0; idx < all.size(); idx++) {
-		int nIndex = m_ProcListCtrl.InsertItem(i, std::to_wstring(all[idx].pid).c_str());
-		m_ProcListCtrl.SetItemText(nIndex, 1, all[idx].name.c_str());
+		int nIndex = m_ProcListCtrl.InsertItem(i, all[idx].name.c_str());
+		m_ProcListCtrl.SetItemText(nIndex, 1, std::to_wstring(all[idx].pid).c_str());
 		// On-demand arch/module queries only if process already in hook list.
 		DWORD flags = 0;
 		bool is64 = false;
@@ -856,15 +857,12 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			if (nameLower.find(filterLower) != std::wstring::npos) showNow = true;
 		}
 			if (showNow) {
-			int newIdx = PM_GetIndex(pid);
-			int nIndex = m_ProcListCtrl.InsertItem(newIdx, std::to_wstring(pid).c_str());
-			// If the kernel provided a process name in lParam, show it immediately;
-			// otherwise display a resolving placeholder while the resolver runs.
-			if (!entry.name.empty()) {
-				m_ProcListCtrl.SetItemText(nIndex, 1, entry.name.c_str());
-			} else {
-				m_ProcListCtrl.SetItemText(nIndex, 1, L"(resolving)");
-			}
+				int newIdx = PM_GetIndex(pid);
+				// Column 0 now Process Name; show name or placeholder there. PID is column 1.
+				CString pidStr; pidStr.Format(L"%u", pid);
+				const wchar_t* nameOrResolving = entry.name.empty() ? L"(resolving)" : entry.name.c_str();
+				int nIndex = m_ProcListCtrl.InsertItem(newIdx, nameOrResolving);
+				m_ProcListCtrl.SetItemText(nIndex, 1, pidStr);
 			m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(MAKE_ITEMDATA(pid, 0)).c_str());
 			m_ProcListCtrl.SetItemText(nIndex, 3, L"");
 			m_ProcListCtrl.SetItemText(nIndex, 4, L"");
@@ -915,9 +913,9 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 				if (nameLower.find(filterLower) != std::wstring::npos) showNow = true;
 			}
 			if (!showNow) return 0;
-			// Insert new item for this PID
-			int newItem = m_ProcListCtrl.InsertItem(idx, std::to_wstring(pid).c_str());
-			m_ProcListCtrl.SetItemText(newItem, 1, e.name.c_str());
+			// Insert new item for this PID (column 0 = name, column 1 = PID)
+			int newItem = m_ProcListCtrl.InsertItem(idx, e.name.c_str());
+			m_ProcListCtrl.SetItemText(newItem, 1, std::to_wstring(pid).c_str());
 			m_ProcListCtrl.SetItemText(newItem, 2, FormatHookColumn(MAKE_ITEMDATA(pid, (e.bInHookList?PF_IN_HOOK_LIST:0))).c_str());
 			m_ProcListCtrl.SetItemText(newItem, 3, e.path.c_str());
 			m_ProcListCtrl.SetItemText(newItem, 4, e.cmdline.c_str());
@@ -1000,7 +998,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 				item = m_ProcListCtrl.GetNextItem(item, LVNI_ALL);
 			}
 			if (item != -1) {
-				m_ProcListCtrl.SetItemText(item, 1, L"(resolving)");
+				m_ProcListCtrl.SetItemText(item, 0, L"(resolving)");
 				m_ProcListCtrl.SetItemText(item, 2, L"No");
 				m_ProcListCtrl.SetItemText(item, 3, L"");
 				m_ProcListCtrl.SetItemText(item, 4, L"");
@@ -1133,18 +1131,36 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 
 void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
 {
-	// Identify selected item
-	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	// Identify clicked row reliably using NMHDR (rather than current selection only)
+	if (m_StartupInProgress) { if (pResult) *pResult = 0; return; }
+	LPNMITEMACTIVATE pAct = reinterpret_cast<LPNMITEMACTIVATE>(pNMHDR);
+	int nItem = -1;
+	if (pAct && pAct->iItem >= 0) nItem = pAct->iItem; else nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
 	if (nItem == -1) { if (pResult) *pResult = 0; return; }
-	if (m_StartupInProgress) { if (pResult) *pResult = 0; return; } // block double-click during startup
 	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
 	DWORD pid = PID_FROM_ITEMDATA(packed);
 	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
 	bool dllLoaded = (flags & PF_MASTER_DLL_LOADED) != 0;
-	if (!dllLoaded) {
-		// For now silently ignore double-click when master DLL not present.
-		if (pResult) *pResult = 0; return;
+	bool inHook = (flags & PF_IN_HOOK_LIST) != 0;
+	// If not yet marked loaded but entry is in hook list, perform a live check so we can
+	// open the dialog immediately when the master DLL actually appears.
+	if (!dllLoaded && inHook) {
+		bool is64 = false; Helper::IsProcess64(pid, is64);
+		const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+		bool liveLoaded = false; Helper::IsModuleLoaded(pid, dllName, liveLoaded);
+		if (liveLoaded) {
+			flags |= PF_MASTER_DLL_LOADED;
+			if (is64) flags |= PF_IS_64BIT; // ensure arch flag present if discovered here
+			packed = MAKE_ITEMDATA(pid, flags);
+			// Update UI cached state
+			m_ProcListCtrl.SetItemData(nItem, (DWORD_PTR)packed);
+			m_ProcListCtrl.SetItemText(nItem, 2, FormatHookColumn(packed).c_str());
+			dllLoaded = true;
+		}
 	}
+	if (!dllLoaded) { if (pResult) *pResult = 0; return; }
+	// Respond for double-click on ANY column now (previously only PID visually worked).
+	// Optionally could restrict to specific columns by checking pAct->iSubItem.
 	// Always create a fresh dialog. If an existing one is open, destroy it first.
 	if (m_pHookDlg && m_pHookDlg->GetSafeHwnd()) {
 		m_pHookDlg->DestroyWindow(); // will self-delete in PostNcDestroy
