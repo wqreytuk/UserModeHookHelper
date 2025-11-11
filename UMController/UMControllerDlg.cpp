@@ -990,18 +990,10 @@ void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
 		// For now silently ignore double-click when master DLL not present.
 		if (pResult) *pResult = 0; return;
 	}
-	// If existing dialog is open:
-	if (m_pHookDlg) {
-		if (m_pHookDlg->GetSafeHwnd()) {
-			if (m_pHookDlg->GetPid() == pid) { // reuse existing dialog
-				m_pHookDlg->SetForegroundWindow();
-				if (pResult) *pResult = 0; return; 
-			}
-			// Request destruction; OnDestroy will post message; do not delete here.
-			m_pHookDlg->DestroyWindow();
-			// Keep pointer until OnHookDlgDestroyed arrives to avoid premature deletion.
-			m_pHookDlg = nullptr; // safe to null to prevent reuse while closing
-		}
+	// Always create a fresh dialog. If an existing one is open, destroy it first.
+	if (m_pHookDlg && m_pHookDlg->GetSafeHwnd()) {
+		m_pHookDlg->DestroyWindow(); // will self-delete in PostNcDestroy
+		// Do NOT null here; wait for destroy message to ensure pointer isn't reused prematurely.
 	}
 	ProcessEntry e; int idx=-1; std::wstring nameDisplay = L"(unknown)";
 	if (PM_GetEntryCopyByPid(pid, e, &idx)) nameDisplay = e.name.empty()?nameDisplay:e.name;
@@ -1016,9 +1008,14 @@ void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
 }
 
 LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {
-	UNREFERENCED_PARAMETER(wParam); UNREFERENCED_PARAMETER(lParam);
-	// No delete needed; ownership released when pointer nulled on close request.
-	m_pHookDlg = nullptr;
+	UNREFERENCED_PARAMETER(lParam);
+	HookProcDlg* pDlg = reinterpret_cast<HookProcDlg*>(wParam);
+	if (pDlg == m_pHookDlg) {
+		// Delete the dialog object now that the window is gone.
+		HookProcDlg* toDelete = m_pHookDlg;
+		m_pHookDlg = nullptr;
+		delete toDelete;
+	}
 	return 0;
 }
 

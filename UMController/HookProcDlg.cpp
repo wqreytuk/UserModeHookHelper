@@ -32,14 +32,15 @@ BOOL HookProcDlg::OnInitDialog() {
 void HookProcDlg::OnDestroy() {
     m_ModuleList.Detach();
     CDialogEx::OnDestroy();
-    // Notify parent that dialog is destroyed so it can clear pointer
+    // Notify parent that dialog is destroyed so it can clear pointer (wParam = this)
     CWnd* parent = GetParent();
     if (parent && parent->GetSafeHwnd()) {
-        ::PostMessage(parent->GetSafeHwnd(), HookProcDlg::kMsgHookDlgDestroyed, (WPARAM)m_pid, 0);
+        // Send the dialog pointer in wParam so parent can distinguish which instance died
+        ::PostMessage(parent->GetSafeHwnd(), HookProcDlg::kMsgHookDlgDestroyed, (WPARAM)this, 0);
     }
 }
 
-// Removed PostNcDestroy self-delete; parent owns lifetime and will delete pointer.
+// Lifetime: object allocated with new in parent; parent deletes in destroy handler.
 
 void HookProcDlg::PopulateModuleList() {
     m_ModuleList.DeleteAllItems();
