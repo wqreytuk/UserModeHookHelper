@@ -16,6 +16,9 @@ public:
 	// NEW: get NT (native) image path for a PID. Returns true on success and
 	// fills outNtPath with an NT-style path (e.g. "\Device\HarddiskVolume2\...").
 	static bool GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath);
+	// Overload: reuse an already opened PROCESS_QUERY_LIMITED_INFORMATION handle
+	// to avoid a second OpenProcess. Caller retains ownership of hProcess.
+	static bool GetFullImageNtPathFromHandle(HANDLE hProcess, std::wstring& outNtPath);
 
 	// Resolve NT path: try user-mode then kernel fallback via Filter.
 	static bool ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& outNtPath);

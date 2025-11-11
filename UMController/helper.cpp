@@ -93,6 +93,13 @@ bool Helper::GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath) {
 	if (!hProcess) {
 		return false;
 	}
+	bool ok = GetFullImageNtPathFromHandle(hProcess, outNtPath);
+	CloseHandle(hProcess);
+	return ok;
+}
+
+bool Helper::GetFullImageNtPathFromHandle(HANDLE hProcess, std::wstring& outNtPath) {
+	if (!hProcess) return false;
 
 	// Ensure we have a reasonably large shared buffer and call QueryFullProcessImageName
 	// only once. We choose a large default to avoid a second call to grow the buffer.
@@ -108,10 +115,8 @@ bool Helper::GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath) {
 	// Prepare size as input: number of TCHARs in buffer (excluding room for explicit null)
 	DWORD size = (DWORD)(m_sharedBufCap - 1);
 	if (!QueryFullProcessImageName(hProcess, 1, m_sharedBuf.get(), &size)) {
-		CloseHandle(hProcess);
 		return false;
 	}
-	CloseHandle(hProcess);
 
 	// Ensure null termination and assign
 	m_sharedBuf.get()[size] = (TCHAR)0;

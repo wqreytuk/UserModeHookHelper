@@ -83,9 +83,7 @@ private:
 
 	// Startup progress state (snapshot-based)
 	bool m_StartupInProgress = false;
-	size_t m_TotalStartupPids = 0; // count of initial snapshot processes only
-	std::unordered_set<DWORD> m_StartupSnapshotPids; // snapshot PIDs
-	std::unordered_set<DWORD> m_SnapshotResolvedPids; // resolved (path known or failed)
+	size_t m_TotalStartupPids = 0; // total processes enumerated in initial snapshot
 	// Session composite key cache (PID + creation time)
 	struct ProcKey {
 		DWORD pid{};
@@ -107,9 +105,6 @@ private:
 		}
 	};
 	std::unordered_map<ProcKey, std::wstring, ProcKeyHash, ProcKeyEq> m_SessionNtPathCache; // composite key -> NT path
-	UINT_PTR m_StartupTimeoutTimer = 0; // timer id for fallback completion
-	DWORD m_StartupBeginTick = 0; // tick count at startup enter
-	DWORD m_StartupTimeoutMs = 7000; // fallback threshold
 	// Persistent NT path registry cache (hash=NT path) loaded at startup & pruned on completion.
 	// Composite registry cache loaded at startup (PID+FILETIME -> NT path)
 	std::unordered_map<ProcKey, std::wstring, ProcKeyHash, ProcKeyEq> m_CompositeRegistryCache;
@@ -117,8 +112,7 @@ private:
 	bool m_BackgroundPersistStarted = false; // background thread launched
 	bool m_CachePersisted = false; // composite cache written this session
 	void FinishStartupIfDone(); // persistence only (no UI)
-	void CompleteStartupUI(); // UI enable/hide when startup resolutions done
+	void CompleteStartupUI(); // UI enable/hide after enumeration completes
 	LRESULT OnPostEnumCleanup(WPARAM, LPARAM);
-	void UpdateStartupPercent();
 	// Inline resolution now performed in LoadProcessList.
 };

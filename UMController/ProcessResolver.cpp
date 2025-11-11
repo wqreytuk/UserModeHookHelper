@@ -38,16 +38,15 @@ void ProcessResolver::StartLoaderResolver(CUMControllerDlg* dlg, const std::vect
 			}
 			std::wstring cmdline;
 			Helper::GetProcessCommandLineByPID(pid, cmdline);
-			// Compute module/arch state once in background
-			// Compute architecture unconditionally so cached state is accurate even if not in hook list yet.
+			// On-demand arch & DLL presence only if process is in hook list.
 			bool is64 = false;
-			Helper::IsProcess64(pid, is64);
 			bool dllLoaded = false;
 			if (inHook) {
+				Helper::IsProcess64(pid, is64);
 				const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 				Helper::IsModuleLoaded(pid, dllName, dllLoaded);
 			}
-			PM_UpdateEntryModuleState(pid, is64, dllLoaded);
+			// Update only fields; do not persist module state cache globally.
 			PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
 			::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_LOAD);
 		}
@@ -68,16 +67,13 @@ void ProcessResolver::StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filt
 	// app.GetETW().Log(L"StartSingleResolver: pid=%u checked via IPC => %s\n", pid, inHook ? L"IN_HOOKLIST" : L"NOT_IN_HOOKLIST");
 		std::wstring cmdline;
 		Helper::GetProcessCommandLineByPID(pid, cmdline);
-		// Compute module/arch state once in background
-		// Compute architecture unconditionally so cached state is accurate even if not yet in hook list.
-		bool is64 = false; 
-		Helper::IsProcess64(pid, is64);
+		bool is64 = false;
 		bool dllLoaded = false;
 		if (inHook) {
+			Helper::IsProcess64(pid, is64);
 			const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 			Helper::IsModuleLoaded(pid, dllName, dllLoaded);
 		}
-		PM_UpdateEntryModuleState(pid, is64, dllLoaded);
 		PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
 		::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
 	}).detach();
@@ -89,7 +85,8 @@ void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
 		const int INTERVAL_MS = 1000;
 		int waited = 0;
 		bool dllLoaded = false;
-        while (waited < MAX_MS) { // try 10 times, interval 1s
+		// Original simpler polling: just watch for master DLL load regardless of hook state.
+		while (waited < MAX_MS) {
 			bool is64 = false;
 			Helper::IsProcess64(pid, is64);
 			const wchar_t* targetName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
@@ -98,13 +95,6 @@ void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS));
 			waited += INTERVAL_MS;
 		}
-
-		// If DLL loaded, try to resolve path and check hook list; otherwise
-		// still update UI to clear any transient state.
-		// Determine final arch for cached state
-		bool finalIs64 = false; 
-		Helper::IsProcess64(pid, finalIs64);
-		PM_UpdateEntryModuleState(pid, finalIs64, dllLoaded);
 		::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
 		return;
 	}).detach();
