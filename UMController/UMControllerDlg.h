@@ -12,6 +12,7 @@
 #include <thread>
 #include <unordered_set>
 #include "ProcessManager.h"
+#include <functional>
 
 // CUMControllerDlg dialog
 class CUMControllerDlg : public CDialogEx
@@ -59,10 +60,14 @@ public:
 	afx_msg void OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnDestroy();
     afx_msg LRESULT OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam);
+	afx_msg void OnSize(UINT nType, int cx, int cy);
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
     
 private:
 	Filter m_Filter;
 	CListCtrl m_ProcListCtrl;
+	CProgressCtrl m_StartupProgress;
+	CStatic m_StartupPct;
 	CMenu m_Menu;
 	class HookProcDlg* m_pHookDlg = nullptr; // single modeless hook dialog instance
 	bool CheckHookList(const std::wstring& imagePath);
@@ -75,4 +80,45 @@ private:
 	int m_SortColumn = 0;
 	bool m_SortAscending = true;
 	static int CALLBACK ProcListCompareFunc(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort);
+
+	// Startup progress state (snapshot-based)
+	bool m_StartupInProgress = false;
+	size_t m_TotalStartupPids = 0; // count of initial snapshot processes only
+	std::unordered_set<DWORD> m_StartupSnapshotPids; // snapshot PIDs
+	std::unordered_set<DWORD> m_SnapshotResolvedPids; // resolved (path known or failed)
+	// Session composite key cache (PID + creation time)
+	struct ProcKey {
+		DWORD pid{};
+		FILETIME createTime{}; // 64-bit value via High/Low
+	};
+	struct ProcKeyHash {
+		size_t operator()(ProcKey const& k) const noexcept {
+			// Mix pid and creation time into 64 bits then fold
+			unsigned long long ct = (((unsigned long long)k.createTime.dwHighDateTime) << 32) | k.createTime.dwLowDateTime;
+			unsigned long long h = ct ^ (unsigned long long)k.pid * 0x9E3779B185EBCA87ULL;
+			// final avalanche
+			h ^= (h >> 33); h *= 0xff51afd7ed558ccdULL; h ^= (h >> 33); h *= 0xc4ceb9fe1a85ec53ULL; h ^= (h >> 33);
+			return (size_t)h;
+		}
+	};
+	struct ProcKeyEq {
+		bool operator()(ProcKey const& a, ProcKey const& b) const noexcept {
+			return a.pid == b.pid && a.createTime.dwLowDateTime == b.createTime.dwLowDateTime && a.createTime.dwHighDateTime == b.createTime.dwHighDateTime;
+		}
+	};
+	std::unordered_map<ProcKey, std::wstring, ProcKeyHash, ProcKeyEq> m_SessionNtPathCache; // composite key -> NT path
+	UINT_PTR m_StartupTimeoutTimer = 0; // timer id for fallback completion
+	DWORD m_StartupBeginTick = 0; // tick count at startup enter
+	DWORD m_StartupTimeoutMs = 7000; // fallback threshold
+	// Persistent NT path registry cache (hash=NT path) loaded at startup & pruned on completion.
+	// Composite registry cache loaded at startup (PID+FILETIME -> NT path)
+	std::unordered_map<ProcKey, std::wstring, ProcKeyHash, ProcKeyEq> m_CompositeRegistryCache;
+	std::vector<std::tuple<DWORD,DWORD,DWORD,std::wstring>> m_PersistSnapshotEntries; // for writing back
+	bool m_BackgroundPersistStarted = false; // background thread launched
+	bool m_CachePersisted = false; // composite cache written this session
+	void FinishStartupIfDone(); // persistence only (no UI)
+	void CompleteStartupUI(); // UI enable/hide when startup resolutions done
+	LRESULT OnPostEnumCleanup(WPARAM, LPARAM);
+	void UpdateStartupPercent();
+	// Inline resolution now performed in LoadProcessList.
 };

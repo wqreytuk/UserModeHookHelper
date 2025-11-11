@@ -187,6 +187,8 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
 	ON_WM_QUERYDRAGICON()
+	ON_WM_SIZE()
+	ON_WM_TIMER()
 	ON_EN_CHANGE(IDC_EDIT_SEARCH, &CUMControllerDlg::OnEnChangeEditSearch)
 	ON_NOTIFY(NM_RCLICK, IDC_LIST_PROC, &CUMControllerDlg::OnNMRClickListProc)
 	ON_NOTIFY(NM_DBLCLK, IDC_LIST_PROC, &CUMControllerDlg::OnNMDblclkListProc)
@@ -203,6 +205,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_MENU_CLEAR_ETW, &CUMControllerDlg::OnClearEtwLog)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
 	ON_MESSAGE(HookProcDlg::kMsgHookDlgDestroyed, &CUMControllerDlg::OnHookDlgDestroyed)
+	ON_MESSAGE(WM_APP_POST_ENUM_CLEANUP, &CUMControllerDlg::OnPostEnumCleanup)
 END_MESSAGE_MAP()
 
 
@@ -288,8 +291,52 @@ BOOL CUMControllerDlg::OnInitDialog()
 			app.GetETW().Log(L"Hook section mapping failed after %dms; resolver will fall back to per-path IPC\n", MAX_MS);
 		}
 	}
-	LoadProcessList();
-	FilterProcessList(L"");
+	// Initialize startup progress UI before enumeration so inline resolution / resolver can update it.
+	m_StartupProgress.Attach(GetDlgItem(IDC_PROGRESS_STARTUP)->m_hWnd);
+	m_StartupPct.Attach(GetDlgItem(IDC_STATIC_STARTUP_PCT)->m_hWnd);
+	m_StartupProgress.SetRange(0, 100);
+	m_StartupProgress.SetPos(0);
+	m_StartupProgress.ShowWindow(SW_SHOW);
+	if (m_StartupPct.GetSafeHwnd()) m_StartupPct.SetWindowTextW(L"0%");
+	m_StartupInProgress = true;
+	m_StartupBeginTick = GetTickCount();
+	if (!m_StartupTimeoutTimer) m_StartupTimeoutTimer = SetTimer(1, 1000, NULL);
+	m_StartupSnapshotPids.clear();
+	m_SnapshotResolvedPids.clear();
+	// Load existing composite process cache (PID:CREATIONTIME=NT path) for quick lookup before resolution.
+	try {
+		std::vector<std::tuple<DWORD,DWORD,DWORD,std::wstring>> persisted;
+		if (RegistryStore::ReadCompositeProcCache(persisted)) {
+			for (auto &t : persisted) {
+				ProcKey k{ std::get<0>(t), std::get<1>(t), std::get<2>(t) };
+				m_CompositeRegistryCache.emplace(k, std::get<3>(t));
+			}
+		}
+	} catch(...) {
+		TRACE("[Startup] Failed to read composite process cache; continuing without it.\n");
+		m_CompositeRegistryCache.clear();
+	}
+	LoadProcessList(); // inline resolution attempts (does not auto-complete all)
+	// Launch background cleanup to remove duplicates / exited processes shortly after enumeration
+	{
+		auto hwnd = this->GetSafeHwnd();
+		std::thread([hwnd]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			if (hwnd) ::PostMessage(hwnd, WM_APP_POST_ENUM_CLEANUP, 0, 0);
+		}).detach();
+	}
+	// Launch background persistence of composite snapshot cache immediately after enumeration
+	if (!m_BackgroundPersistStarted) {
+		m_BackgroundPersistStarted = true;
+		std::thread([this]() { FinishStartupIfDone(); }).detach();
+	}
+	m_TotalStartupPids = m_StartupSnapshotPids.size();
+	// UpdateStartupPercent(); // initial percentage (should be <100 unless trivially small)
+	if (m_StartupInProgress) {
+		m_ProcListCtrl.EnableWindow(FALSE);
+		if (GetMenu()) EnableMenuItem(GetMenu()->m_hMenu, 0, MF_BYPOSITION | MF_GRAYED);
+		if (CWnd* search = GetDlgItem(IDC_EDIT_SEARCH)) search->EnableWindow(FALSE);
+	}
 
 	// Register process notify callback so UI updates on create/exit.
 	// The callback now receives an optional UTF-16 process name. If present
@@ -418,6 +465,43 @@ void CUMControllerDlg::OnDestroy()
 		m_RescanThread.join();
 	}
 	if (m_RescanEvent) { CloseHandle(m_RescanEvent); m_RescanEvent = NULL; }
+	if (m_StartupTimeoutTimer) { KillTimer(m_StartupTimeoutTimer); m_StartupTimeoutTimer = 0; }
+}
+
+void CUMControllerDlg::OnSize(UINT nType, int cx, int cy) {
+	CDialogEx::OnSize(nType, cx, cy);
+	if (!m_ProcListCtrl.GetSafeHwnd()) return; // controls not yet created
+	CWnd* pSearch = GetDlgItem(IDC_EDIT_SEARCH);
+	const int margin = 8;
+	const int searchHeight = 24;
+	const int searchSpacing = 6; // space below search box
+	const int progressHeight = 20;
+	CRect client; GetClientRect(&client);
+	bool progressVisible = m_StartupInProgress && m_StartupProgress.GetSafeHwnd() && m_StartupProgress.IsWindowVisible();
+
+	int topY = margin; // search box top
+	int listTop = topY + searchHeight + searchSpacing;
+	int listBottom = client.bottom - margin;
+
+	if (progressVisible) {
+		int progressWidth = cx / 3; if (progressWidth < 150) progressWidth = 150; else if (progressWidth > 300) progressWidth = 300;
+		int pctWidth = 50;
+		int progressY = client.bottom - progressHeight - margin;
+		listBottom = progressY - margin; // leave gap above progress bar
+		// Position progress controls
+		if (m_StartupProgress.GetSafeHwnd()) m_StartupProgress.MoveWindow(margin, progressY, progressWidth, progressHeight);
+		if (m_StartupPct.GetSafeHwnd()) m_StartupPct.MoveWindow(margin + progressWidth + 6, progressY, pctWidth, progressHeight);
+	}
+
+	// Position search box full width minus margins and ensure visible (ZW-order)
+	if (pSearch && pSearch->GetSafeHwnd()) {
+		pSearch->MoveWindow(margin, topY, cx - 2 * margin, searchHeight);
+		pSearch->BringWindowToTop();
+	}
+	// Position process list between search and bottom (or progress bar)
+	int listHeight = listBottom - listTop;
+	if (listHeight < 40) listHeight = 40; // minimum
+	m_ProcListCtrl.MoveWindow(margin, listTop, cx - 2 * margin, listHeight);
 }
 
 
@@ -588,6 +672,22 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 }
 
 void CUMControllerDlg::LoadProcessList() {
+	// get total process count
+	size_t totalCount = 0;
+	{
+		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+		if (snapshot == INVALID_HANDLE_VALUE) return;
+
+		PROCESSENTRY32 pe32 = { sizeof(pe32) };
+		std::vector<DWORD> pids;
+		if (Process32First(snapshot, &pe32)) {
+			do {
+				totalCount++;
+			} while (Process32Next(snapshot, &pe32));
+		}
+	}
+	m_TotalStartupPids = totalCount;
+	size_t resolved = 0;
 	PM_Clear();
 	m_ProcListCtrl.DeleteAllItems();
 
@@ -606,18 +706,56 @@ void CUMControllerDlg::LoadProcessList() {
 			entry.name = pe32.szExeFile;
 			entry.path.clear();
 			entry.cmdline.clear();
-			entry.bInHookList = false; // will be updated in background
-			// Capture process creation time (startTime) if possible to help
-			// detect PID reuse. Attempt to open the process briefly.
-			HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+				entry.bInHookList = false; // will be updated inline for path; modules later
+				// Capture process creation time and attempt inline NT path/command line resolution.
+				HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
 			if (h) {
 				FILETIME createTime, exitTime, kernelTime, userTime;
 				if (GetProcessTimes(h, &createTime, &exitTime, &kernelTime, &userTime)) {
 					entry.startTime = createTime;
 				}
-				CloseHandle(h);
+					// Composite cache lookup first, then fallback resolve
+					ProcKey key{ pid, createTime };
+					std::wstring ntPath;
+					auto itComp = m_CompositeRegistryCache.find(key);
+					if (itComp != m_CompositeRegistryCache.end()) {
+						ntPath = itComp->second; // cache hit
+					} else {
+						Helper::GetFullImageNtPathByPID(pid, ntPath);
+					}
+					if (!ntPath.empty()) {
+						entry.path = ntPath;
+						// std::wstring cmdline; Helper::GetProcessCommandLineByPID(pid, cmdline); entry.cmdline = cmdline;
+						std::wstring cmdline = L"N/A"; entry.cmdline = cmdline;
+						bool inHook = false;
+						if (PM_HasHookHashCache()) {
+							const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+							size_t len = ntPath.size()*sizeof(wchar_t);
+							unsigned long long hval = Helper::GetNtPathHash(bytes, len);
+							inHook = PM_IsHashInHookSet(hval);
+						} else {
+							inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
+						}
+						entry.bInHookList = inHook;
+						m_SessionNtPathCache.emplace(key, ntPath);
+						// prepare for persistence (dedupe by key)
+						bool have=false; for (auto &t : m_PersistSnapshotEntries) { if (std::get<0>(t)==pid && std::get<1>(t)==createTime.dwHighDateTime && std::get<2>(t)==createTime.dwLowDateTime) { have=true; break; } }
+						if (!have) m_PersistSnapshotEntries.emplace_back(pid, createTime.dwHighDateTime, createTime.dwLowDateTime, ntPath);
+					}
+					CloseHandle(h);
+					if (!m_StartupInProgress) {
+						Helper::Fatal(L"Progress bar should be initialized before calling LoadProcessList\n");
+					}
+					int pct = 0; if (m_TotalStartupPids > 0) pct = (int)((++resolved * 100) / m_TotalStartupPids);
+					int boundedPct2 = (pct < 0 ? 0 : (pct > 100 ? 100 : pct));
+					m_StartupProgress.SetPos(boundedPct2);
+					if (m_StartupPct.GetSafeHwnd()) { CString t; t.Format(L"%d%%", pct); m_StartupPct.SetWindowText(t); }
 			}
 			PM_AddEntry(entry);
+				if (m_StartupInProgress) {
+					m_StartupSnapshotPids.insert(pid);
+					if (!entry.path.empty()) m_SnapshotResolvedPids.insert(pid);
+				}
 		} while (Process32Next(snapshot, &pe32));
 	}
 
@@ -649,8 +787,15 @@ void CUMControllerDlg::LoadProcessList() {
 		i++;
 	}
 
-	// Start background resolver using ProcessResolver helper
-	ProcessResolver::StartLoaderResolver(this, pids, &m_Filter);
+	// Start resolver for entries lacking path so progress rises gradually as they resolve.
+	std::vector<DWORD> needPath;
+	for (auto &e : all) if (e.path.empty()) needPath.push_back(e.pid);
+	if (!needPath.empty()) ProcessResolver::StartLoaderResolver(this, needPath, &m_Filter);
+	// Module/dll/arch checks for path-known entries
+	std::vector<DWORD> needModule;
+	for (auto &e : all) if (!e.path.empty()) needModule.push_back(e.pid);
+	if (!needModule.empty()) ProcessResolver::StartLoaderResolver(this, needModule, &m_Filter);
+	UpdateStartupPercent();
 }
 
 LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
@@ -796,6 +941,16 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 	m_ProcListCtrl.SetItemText(item, 3, path.c_str());
 	m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
 	m_ProcListCtrl.SetItemData(item, (DWORD_PTR)mergedPacked);
+		// Update startup progress only when a snapshot PID obtains a path
+		if (m_StartupInProgress && m_StartupSnapshotPids.find(pid) != m_StartupSnapshotPids.end()) {
+			if (!path.empty()) {
+				m_SnapshotResolvedPids.insert(pid);
+				FILETIME ft = e.startTime;
+				bool have=false; for (auto &t : m_PersistSnapshotEntries) { if (std::get<0>(t)==pid && std::get<1>(t)==ft.dwHighDateTime && std::get<2>(t)==ft.dwLowDateTime) { have=true; break; } }
+				if (!have) m_PersistSnapshotEntries.emplace_back(pid, ft.dwHighDateTime, ft.dwLowDateTime, path);
+			}
+			UpdateStartupPercent();
+		}
 		return 0;
 	}
 
@@ -860,8 +1015,14 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 		}
 FULL_EXIT:
 		// Process truly exited: remove entry via ProcessManager
+		bool wasSnapshot = m_StartupInProgress && (m_StartupSnapshotPids.find(pid) != m_StartupSnapshotPids.end());
 		ProcessEntry removedCopy;
 		PM_RemoveByPid(pid);
+		// Treat snapshot exit as resolved to avoid progress stall
+		if (wasSnapshot) {
+			m_SnapshotResolvedPids.insert(pid);
+			UpdateStartupPercent();
+		}
 		// app.GetETW().Log(L"removing process pid %d from process list\n", pid);
 		int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
 		while (item != -1) {
@@ -982,6 +1143,7 @@ void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
 	// Identify selected item
 	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
 	if (nItem == -1) { if (pResult) *pResult = 0; return; }
+	if (m_StartupInProgress) { if (pResult) *pResult = 0; return; } // block double-click during startup
 	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
 	DWORD pid = PID_FROM_ITEMDATA(packed);
 	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
@@ -1017,6 +1179,114 @@ LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {
 		delete toDelete;
 	}
 	return 0;
+}
+
+
+void CUMControllerDlg::UpdateStartupPercent() {
+	if (!m_StartupInProgress) return;
+	size_t resolved = m_SnapshotResolvedPids.size();
+	int pct = 0; if (m_TotalStartupPids>0) pct = (int)((resolved * 100) / m_TotalStartupPids);
+	int boundedPct2 = (pct < 0 ? 0 : (pct > 100 ? 100 : pct));
+	m_StartupProgress.SetPos(boundedPct2);
+	if (m_StartupPct.GetSafeHwnd()) { CString t; t.Format(L"%d%%", pct); m_StartupPct.SetWindowText(t); }
+	if (m_TotalStartupPids == 0 || m_SnapshotResolvedPids.size() >= m_TotalStartupPids) {
+		CompleteStartupUI();
+	}
+}
+
+void CUMControllerDlg::FinishStartupIfDone() {
+	if (m_CachePersisted) return; // already persisted once
+	if (!m_PersistSnapshotEntries.empty()) {
+		std::vector<std::tuple<DWORD,DWORD,DWORD,std::wstring>> dedup;
+		std::unordered_set<unsigned long long> seen; // simple 64-bit key combine
+		for (auto &t : m_PersistSnapshotEntries) {
+			DWORD pid = std::get<0>(t);
+			DWORD hi = std::get<1>(t);
+			DWORD lo = std::get<2>(t);
+			const std::wstring &path = std::get<3>(t);
+			if (path.empty()) continue;
+			unsigned long long k = (static_cast<unsigned long long>(pid) << 32) ^ (static_cast<unsigned long long>(hi) * 1315423911ULL) ^ static_cast<unsigned long long>(lo);
+			if (seen.insert(k).second) dedup.emplace_back(pid, hi, lo, path); // keep hi:lo order
+		}
+		RegistryStore::WriteCompositeProcCache(dedup);
+	}
+	m_CachePersisted = true;
+}
+
+void CUMControllerDlg::CompleteStartupUI() {
+	if (!m_StartupInProgress) return;
+	m_StartupInProgress = false;
+	m_StartupProgress.SetPos(100);
+	m_StartupProgress.ShowWindow(SW_HIDE);
+	if (m_StartupPct.GetSafeHwnd()) m_StartupPct.ShowWindow(SW_HIDE);
+	m_ProcListCtrl.EnableWindow(TRUE);
+	if (GetMenu()) EnableMenuItem(GetMenu()->m_hMenu, 0, MF_BYPOSITION | MF_ENABLED);
+	if (CWnd* search = GetDlgItem(IDC_EDIT_SEARCH)) search->EnableWindow(TRUE);
+	if (m_StartupTimeoutTimer) { KillTimer(m_StartupTimeoutTimer); m_StartupTimeoutTimer = 0; }
+}
+
+LRESULT CUMControllerDlg::OnPostEnumCleanup(WPARAM, LPARAM) {
+	// Build set of live PIDs
+	std::unordered_set<DWORD> live;
+	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snap != INVALID_HANDLE_VALUE) {
+		PROCESSENTRY32 pe = { sizeof(pe) };
+		if (Process32First(snap, &pe)) {
+			do {
+				if (pe.th32ProcessID != 0 && pe.th32ProcessID != 4) live.insert(pe.th32ProcessID);
+			} while (Process32Next(snap, &pe));
+		}
+		CloseHandle(snap);
+	}
+	// Identify duplicates & dead items among UI rows
+	std::unordered_set<DWORD> seen;
+	std::vector<int> dupRows;
+	std::vector<int> deadRows;
+	int idx = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
+	while (idx != -1) {
+		DWORD packed = (DWORD)m_ProcListCtrl.GetItemData(idx);
+		DWORD pid = PID_FROM_ITEMDATA(packed);
+		if (!seen.insert(pid).second) {
+			dupRows.push_back(idx);
+		} else if (live.find(pid) == live.end()) {
+			deadRows.push_back(idx);
+		}
+		idx = m_ProcListCtrl.GetNextItem(idx, LVNI_ALL);
+	}
+	// Remove duplicate rows (keep first occurrence)
+	for (auto it = dupRows.rbegin(); it != dupRows.rend(); ++it) {
+		m_ProcListCtrl.DeleteItem(*it);
+	}
+	// Remove dead rows
+	for (auto it = deadRows.rbegin(); it != deadRows.rend(); ++it) {
+		DWORD packed = (DWORD)m_ProcListCtrl.GetItemData(*it);
+		DWORD pid = PID_FROM_ITEMDATA(packed);
+		PM_RemoveByPid(pid);
+		m_ProcListCtrl.DeleteItem(*it);
+		if (m_StartupInProgress) {
+			m_StartupSnapshotPids.erase(pid);
+			m_SnapshotResolvedPids.erase(pid);
+		}
+	}
+	if (m_StartupInProgress && (!deadRows.empty() || !dupRows.empty())) {
+		m_TotalStartupPids = m_StartupSnapshotPids.size();
+		UpdateStartupPercent();
+	}
+	return 0;
+}
+
+void CUMControllerDlg::OnTimer(UINT_PTR nIDEvent) {
+	if (nIDEvent == m_StartupTimeoutTimer && m_StartupInProgress) {
+		DWORD elapsed = GetTickCount() - m_StartupBeginTick;
+		if (elapsed >= m_StartupTimeoutMs) {
+			// Mark all remaining snapshot PIDs as resolved (best-effort) to avoid indefinite stall
+			for (auto pid : m_StartupSnapshotPids) {
+				m_SnapshotResolvedPids.insert(pid);
+			}
+			UpdateStartupPercent(); // will trigger FinishStartupIfDone
+		}
+	}
+	CDialogEx::OnTimer(nIDEvent);
 }
 
 void CUMControllerDlg::OnRemoveExecutablesFromHookList() {

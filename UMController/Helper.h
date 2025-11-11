@@ -47,6 +47,9 @@ public:
 	// in the target process. Returns true on success and sets outPresent.
 	// Fails (returns false) if the process cannot be opened or enumerated.
 	static bool IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent);
+	// Convert an integer value to uppercase hexadecimal without leading zeros.
+	// Returns L"0" when value==0. Does NOT include any prefix like 0x.
+	static std::wstring ToHex(ULONGLONG value);
 private:
 	// Shared reusable buffer for path queries. Protected by m_bufMutex.
 	static std::unique_ptr<TCHAR[]> m_sharedBuf;

@@ -17,18 +17,22 @@ void ETW::Reg() {
 }
 
 void ETW::UnReg() {
-	// turn off etw tracer first by signal share event
-	SetEvent(m_Event);
-	CloseHandle(m_Event);
+	if (m_Unregistered) return; // idempotent
+	// Signal tracer stop event if valid
+	if (m_Event) {
+		SetEvent(m_Event);
+		CloseHandle(m_Event);
+		m_Event = nullptr;
+	}
 	if (m_ClearEvent) {
 		CloseHandle(m_ClearEvent);
 		m_ClearEvent = nullptr;
 	}
-
 	if (m_ProviderHandle) {
 		EventUnregister(m_ProviderHandle);
 		m_ProviderHandle = 0;
 	}
+	m_Unregistered = true;
 }
 
 ETW::~ETW() {

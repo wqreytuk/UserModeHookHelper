@@ -43,9 +43,7 @@ CUMControllerApp app;
 
 BOOL CUMControllerApp::InitInstance()
 {
-	// initialize ETW provider from app-owned instance
-	app.GetETW().StartTracer();
-	app.GetETW().Reg();
+	// Delay ETW provider initialization until after MFC/controls are ready to avoid early ASSERTs
 	// InitCommonControlsEx() is required on Windows XP if an application
 	// manifest specifies use of ComCtl32.dll version 6 or later to enable
 	// visual styles.  Otherwise, any window creation will fail.
@@ -58,12 +56,14 @@ BOOL CUMControllerApp::InitInstance()
 
 	CWinApp::InitInstance();
 
+	// Now safe to start ETW tracing (window/dialog not yet created but MFC core initialized)
+	GetETW().StartTracer();
+	GetETW().Reg();
+
 
 	AfxEnableControlContainer();
 
-	// Create the shell manager, in case the dialog contains
-	// any shell tree view or shell list view controls.
-	CShellManager *pShellManager = new CShellManager;
+	// (Removed) Shell manager creation: not needed since dialog has no shell controls.
 
 	// Activate "Windows Native" visual manager for enabling themes in MFC controls
 	CMFCVisualManager::SetDefaultManager(RUNTIME_CLASS(CMFCVisualManagerWindows));
@@ -96,11 +96,7 @@ BOOL CUMControllerApp::InitInstance()
 		TRACE(traceAppMsg, 0, "Warning: if you are using MFC controls on the dialog, you cannot #define _AFX_NO_MFC_CONTROLS_IN_DIALOGS.\n");
 	}
 
-	// Delete the shell manager created above.
-	if (pShellManager != nullptr)
-	{
-		delete pShellManager;
-	}
+	// Shell manager not used; no deletion required.
 
 #if !defined(_AFXDLL) && !defined(_AFX_NO_MFC_CONTROLS_IN_DIALOGS)
 	ControlBarCleanUp();

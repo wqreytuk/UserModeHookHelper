@@ -321,3 +321,20 @@ bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent
 	if (ok) outPresent = present;
 	return ok;
 }
+
+std::wstring Helper::ToHex(ULONGLONG value) {
+	if (value == 0) return L"0";
+	static const wchar_t* digits = L"0123456789ABCDEF";
+	std::wstring out;
+	bool started = false;
+	for (int nib = 15; nib >= 0; --nib) { // 16 nibbles for 64-bit
+		ULONGLONG shift = (ULONGLONG)nib * 4ULL;
+		unsigned v = (unsigned)((value >> shift) & 0xF);
+		if (!started) {
+			if (v == 0) continue;
+			started = true;
+		}
+		out.push_back(digits[v]);
+	}
+	return out;
+}

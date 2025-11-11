@@ -26,6 +26,16 @@
 #define IDD_HOOK_PROC_DLG       141
 
 #define IDC_BTN_HOOK            1006
+// Hook dialog new controls
+#define IDC_LIST_MODULES         1010
+#define IDC_EDIT_OFFSET          1011
+#define IDC_EDIT_DIRECT          1012
+#define IDC_STATIC_MODULE        1013
+#define IDC_STATIC_OFFSET        1014
+#define IDC_STATIC_DIRECT        1015
+#define IDC_BTN_APPLY_HOOK       1016
+#define IDC_PROGRESS_STARTUP      1017
+#define IDC_STATIC_STARTUP_PCT     1018
 
 // Next default values for new objects
 // 

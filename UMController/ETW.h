@@ -26,5 +26,6 @@ private:
 	REGHANDLE m_ProviderHandle;
 	HANDLE m_Event;
 	HANDLE m_ClearEvent;
+	bool m_Unregistered{ false }; // guard double UnReg calls
 };
 #endif

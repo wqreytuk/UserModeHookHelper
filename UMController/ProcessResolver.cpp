@@ -86,10 +86,10 @@ void ProcessResolver::StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filt
 void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
 	std::thread([hwnd, pid]() {
 		const int MAX_MS = 10000; // 10s
-		const int INTERVAL_MS = 250;
+		const int INTERVAL_MS = 1000;
 		int waited = 0;
 		bool dllLoaded = false;
-        while (waited < MAX_MS) {
+        while (waited < MAX_MS) { // try 10 times, interval 1s
 			bool is64 = false;
 			Helper::IsProcess64(pid, is64);
 			const wchar_t* targetName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
