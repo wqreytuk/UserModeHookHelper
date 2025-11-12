@@ -1287,26 +1287,42 @@ void CUMControllerDlg::OnClearEtwLog() {
 }
 
 void CUMControllerDlg::OnOpenEtwLog() {
-	// Determine EtwTracer.log path (same logic tracer uses)
+	// Find newest EtwTracer_*.log (timestamped) or fallback to legacy EtwTracer.log
 	auto tracerExe = Helper::GetCurrentModulePath(L"EtwTracer.exe");
-	std::wstring folder;
-	size_t pos = tracerExe.find_last_of(L"/\\");
-	if (pos != std::wstring::npos) folder = tracerExe.substr(0, pos); else folder = L".";
-	std::wstring logPath = folder + L"\\EtwTracer.log";
-	TCHAR logPathBuf[MAX_PATH] = {0};
-	// Use lstrcpynW for portability; previous _wcsncpy_s was incorrect (identifier not found)
-	lstrcpynW(logPathBuf, logPath.c_str(), _countof(logPathBuf));
-	if (!Helper::IsFileExists(logPathBuf)) {
-		CString msg; msg.Format(L"Log file not found:\n%s\nStart tracer first.", logPath.c_str());
-		MessageBox(msg, L"ETW Trace Log", MB_ICONINFORMATION);
+	std::wstring folder; size_t pos = tracerExe.find_last_of(L"/\\");
+	folder = (pos != std::wstring::npos) ? tracerExe.substr(0,pos) : L".";
+	WIN32_FIND_DATAW fd{};
+	std::wstring pattern = folder + L"\\EtwTracer_*.log";
+	HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+	FILETIME newestFT{0,0};
+	std::wstring newest;
+	if (hFind != INVALID_HANDLE_VALUE) {
+		BOOL more = TRUE;
+		while (more) {
+			// Skip directories
+			if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+				if (CompareFileTime(&fd.ftLastWriteTime, &newestFT) > 0) {
+					newestFT = fd.ftLastWriteTime;
+					newest = folder + L"\\" + fd.cFileName;
+				}
+			}
+			more = FindNextFileW(hFind, &fd);
+		}
+		FindClose(hFind);
+	}
+	if (newest.empty()) {
+		// fallback legacy name
+		std::wstring legacy = folder + L"\\EtwTracer.log";
+		TCHAR tmp[MAX_PATH]; lstrcpynW(tmp, legacy.c_str(), _countof(tmp));
+		if (Helper::IsFileExists(tmp)) newest = legacy;
+	}
+	if (newest.empty()) {
+		MessageBox(L"No tracer log file found. Start tracer first.", L"ETW Trace Log", MB_ICONINFORMATION);
 		return;
 	}
-	SHELLEXECUTEINFOW sei{ sizeof(sei) };
-	sei.lpFile = L"notepad.exe";
-	sei.lpParameters = logPath.c_str();
-	sei.nShow = SW_SHOWNORMAL;
+	SHELLEXECUTEINFOW sei{ sizeof(sei) }; sei.lpFile = L"notepad.exe"; sei.lpParameters = newest.c_str(); sei.nShow = SW_SHOWNORMAL;
 	if (!ShellExecuteExW(&sei)) {
-		CString msg; msg.Format(L"Failed to open log with Notepad (error %lu).", GetLastError());
+		CString msg; msg.Format(L"Failed to open log %s (error %lu).", newest.c_str(), GetLastError());
 		MessageBox(msg, L"ETW Trace Log", MB_ICONERROR);
 	}
 }

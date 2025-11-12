@@ -166,13 +166,16 @@ VOID WINAPI TraceEventCallback(_In_ PEVENT_RECORD EventRecord)
 void CreateWaitSignalThread();
 
 int wmain() {
-	// Always log beside EtwTracer.exe using fixed filename EtwTracer.log
+	// Log beside EtwTracer.exe with timestamped filename EtwTracer_YYYYMMDD_HHMMSS.log
 	wchar_t exePath[MAX_PATH]; exePath[0]=0;
 	GetModuleFileNameW(NULL, exePath, _countof(exePath));
 	std::wstring p(exePath);
 	size_t pos = p.find_last_of(L"/\\");
 	std::wstring folder = (pos==std::wstring::npos) ? L"." : p.substr(0,pos);
-	std::wstring logPath = folder + L"\\EtwTracer.log";
+	SYSTEMTIME st; GetLocalTime(&st);
+	wchar_t stamp[32];
+	swprintf_s(stamp, _countof(stamp), L"%04u%02u%02u_%02u%02u%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+	std::wstring logPath = folder + L"\\EtwTracer_" + stamp + L".log";
 	StartFileLogging(logPath);
 	wprintf(L"[etwtracer] file logging enabled: %s\n", logPath.c_str());
 	CreateWaitSignalThread();
@@ -196,9 +199,13 @@ void WaitThreadProc() {
 		DWORD r = WaitForMultipleObjects(count, handles, FALSE, INFINITE);
 		if (r == WAIT_OBJECT_0) { // stop
 			break;
-		} else if (count == 2 && r == WAIT_OBJECT_0 + 1) { // clear
+		} else if (count == 2 && r == WAIT_OBJECT_0 + 1) { // clear console only; keep file intact
 			system("cls");
 			wprintf(L"[cleared by controller]\n");
+			// Optionally append marker to file for visibility (non-destructive)
+			if (gFileHandle != INVALID_HANDLE_VALUE) {
+				const char marker[] = "[cleared by controller]\n"; DWORD written=0; WriteFile(gFileHandle, marker, (DWORD)sizeof(marker)-1, &written, NULL);
+			}
 		}
 	}
 	if (hClear) CloseHandle(hClear);
