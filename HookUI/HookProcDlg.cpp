@@ -3,6 +3,7 @@
 #include <tlhelp32.h>
 #include <cwchar>
 #include <cwctype>
+#include <CommCtrl.h> // for EM_SETCUEBANNER
 #include "../HookCoreLib/HookCore.h"
 
 // Local hex formatting (replaces dependency on Helper.h for ToHex)
@@ -25,25 +26,35 @@ BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
     ON_NOTIFY(NM_CUSTOMDRAW, IDC_HOOKUI_LIST_MODULES, &HookProcDlg::OnCustomDrawModules)
 END_MESSAGE_MAP()
 
+// ---------------- Missing method implementations (restored) ----------------
+
 HookProcDlg::HookProcDlg(DWORD pid, const std::wstring& name, IHookServices* services, CWnd* parent)
     : CDialogEx(IDD_HOOKUI_PROC_DLG, parent), m_pid(pid), m_name(name), m_services(services) {}
 
-BOOL HookProcDlg::CreateModeless(CWnd* parent) { return Create(IDD_HOOKUI_PROC_DLG, parent); }
+BOOL HookProcDlg::CreateModeless(CWnd* parent) {
+    return Create(IDD_HOOKUI_PROC_DLG, parent);
+}
 
 BOOL HookProcDlg::OnInitDialog() {
     CDialogEx::OnInitDialog();
+    // Title
     CString title; title.Format(L"Hook Process PID %lu - %s", m_pid, m_name.c_str());
     SetWindowText(title);
+    // Attach list control
     m_ModuleList.Attach(GetDlgItem(IDC_HOOKUI_LIST_MODULES)->m_hWnd);
     m_ModuleList.InsertColumn(0, L"Base", LVCFMT_LEFT, 80);
     m_ModuleList.InsertColumn(1, L"Size", LVCFMT_LEFT, 70);
     m_ModuleList.InsertColumn(2, L"Name", LVCFMT_LEFT, 140);
     m_ModuleList.InsertColumn(3, L"Path", LVCFMT_LEFT, 300);
-    m_ModuleList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+    m_ModuleList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
     LONG lvStyle = ::GetWindowLong(m_ModuleList.GetSafeHwnd(), GWL_STYLE);
     lvStyle |= LVS_SHOWSELALWAYS; ::SetWindowLong(m_ModuleList.GetSafeHwnd(), GWL_STYLE, lvStyle);
     ::SetWindowPos(m_ModuleList.GetSafeHwnd(), nullptr, 0,0,0,0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
     PopulateModuleList();
+    // Cue banner
+    if (CWnd* wDirectEdit = GetDlgItem(IDC_HOOKUI_EDIT_DIRECT)) {
+        ::SendMessage(wDirectEdit->GetSafeHwnd(), EM_SETCUEBANNER, 0, (LPARAM)L"(Preview DLL version)");
+    }
     return TRUE;
 }
 
@@ -73,6 +84,7 @@ void HookProcDlg::PopulateModuleList() {
     }
     CloseHandle(snap);
 }
+
 
 void HookProcDlg::OnColumnClickModules(NMHDR* pNMHDR, LRESULT* pResult) {
     LPNMLISTVIEW pNMLV = reinterpret_cast<LPNMLISTVIEW>(pNMHDR);
@@ -138,8 +150,11 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
     int topYModulesLabel = 7;
     int listTop = topYModulesLabel + 11;
     int listH = cy - listTop - 60; if(listH < 80) listH = 80;
-    // Move list
-    m_ModuleList.MoveWindow(margin, listTop, listW, listH);
+    // Begin batched positioning to avoid redraw artifacts (overlapping buttons)
+    HDWP hdwp = BeginDeferWindowPos(10);
+    if (!hdwp) {
+        m_ModuleList.MoveWindow(margin, listTop, listW, listH);
+    }
     // Right panel x origin
     int panelX = margin + listW + margin;
     int y = listTop; // align with list top
@@ -147,16 +162,26 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
     CWnd* wOffsetLabel = GetDlgItem(IDC_HOOKUI_STATIC_OFFSET);
     CWnd* wOffsetEdit  = GetDlgItem(IDC_HOOKUI_EDIT_OFFSET);
     if (wOffsetLabel && wOffsetEdit) {
-        wOffsetLabel->MoveWindow(panelX, y, rightPanelW - margin, labelH);
-        wOffsetEdit->MoveWindow(panelX, y + labelH + 2, rightPanelW - margin, editH);
+        if (hdwp) {
+            hdwp = DeferWindowPos(hdwp, wOffsetLabel->GetSafeHwnd(), nullptr, panelX, y, rightPanelW - margin, labelH, SWP_NOZORDER|SWP_NOACTIVATE);
+            hdwp = DeferWindowPos(hdwp, wOffsetEdit->GetSafeHwnd(),  nullptr, panelX, y + labelH + 2, rightPanelW - margin, editH, SWP_NOZORDER|SWP_NOACTIVATE);
+        } else {
+            wOffsetLabel->MoveWindow(panelX, y, rightPanelW - margin, labelH);
+            wOffsetEdit->MoveWindow(panelX, y + labelH + 2, rightPanelW - margin, editH);
+        }
         y += labelH + 2 + editH + interY;
     }
     // Direct address label + edit
     CWnd* wDirectLabel = GetDlgItem(IDC_HOOKUI_STATIC_DIRECT);
     CWnd* wDirectEdit  = GetDlgItem(IDC_HOOKUI_EDIT_DIRECT);
     if (wDirectLabel && wDirectEdit) {
-        wDirectLabel->MoveWindow(panelX, y, rightPanelW - margin, labelH);
-        wDirectEdit->MoveWindow(panelX, y + labelH + 2, rightPanelW - margin, editH);
+        if (hdwp) {
+            hdwp = DeferWindowPos(hdwp, wDirectLabel->GetSafeHwnd(), nullptr, panelX, y, rightPanelW - margin, labelH, SWP_NOZORDER|SWP_NOACTIVATE);
+            hdwp = DeferWindowPos(hdwp, wDirectEdit->GetSafeHwnd(),  nullptr, panelX, y + labelH + 2, rightPanelW - margin, editH, SWP_NOZORDER|SWP_NOACTIVATE);
+        } else {
+            wDirectLabel->MoveWindow(panelX, y, rightPanelW - margin, labelH);
+            wDirectEdit->MoveWindow(panelX, y + labelH + 2, rightPanelW - margin, editH);
+        }
         y += labelH + 2 + editH + interY;
     }
     // Buttons
@@ -164,8 +189,13 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
     CWnd* wClose = GetDlgItem(IDCANCEL);
     int btnW = (rightPanelW - margin - 5) / 2; if (btnW < 60) btnW = 60;
     if (wApply && wClose) {
-        wApply->MoveWindow(panelX, y, btnW, btnH);
-        wClose->MoveWindow(panelX + btnW + 5, y, btnW, btnH);
+        if (hdwp) {
+            hdwp = DeferWindowPos(hdwp, wApply->GetSafeHwnd(), nullptr, panelX, y, btnW, btnH, SWP_NOZORDER|SWP_NOACTIVATE);
+            hdwp = DeferWindowPos(hdwp, wClose->GetSafeHwnd(), nullptr, panelX + btnW + 5, y, btnW, btnH, SWP_NOZORDER|SWP_NOACTIVATE);
+        } else {
+            wApply->MoveWindow(panelX, y, btnW, btnH);
+            wClose->MoveWindow(panelX + btnW + 5, y, btnW, btnH);
+        }
         y += btnH + interY;
     }
     // Hint text near bottom left (keep original resource position relative to bottom)
@@ -173,8 +203,19 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
     if (wHint) {
         int hintY = listTop + listH + 5;
         if (hintY + 16 > cy) hintY = cy - 20;
-        wHint->MoveWindow(margin, hintY, listW - margin, 16);
+        if (hdwp) {
+            hdwp = DeferWindowPos(hdwp, wHint->GetSafeHwnd(), nullptr, margin, hintY, listW - margin, 16, SWP_NOZORDER|SWP_NOACTIVATE);
+        } else {
+            wHint->MoveWindow(margin, hintY, listW - margin, 16);
+        }
     }
+    // List last so it paints under others
+    if (hdwp) {
+        hdwp = DeferWindowPos(hdwp, m_ModuleList.GetSafeHwnd(), nullptr, margin, listTop, listW, listH, SWP_NOZORDER|SWP_NOACTIVATE);
+        EndDeferWindowPos(hdwp);
+    }
+    // Force a redraw to avoid stale overlapped visuals
+    RedrawWindow(nullptr, nullptr, RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_UPDATENOW);
 }
 
 void HookProcDlg::OnGetMinMaxInfo(MINMAXINFO* lpMMI) { CDialogEx::OnGetMinMaxInfo(lpMMI); lpMMI->ptMinTrackSize.x=480; lpMMI->ptMinTrackSize.y=260; }
@@ -184,4 +225,24 @@ int CALLBACK HookProcDlg::ModuleCompare(LPARAM lParam1, LPARAM lParam2, LPARAM l
 void HookProcDlg::OnModuleItemChanged(NMHDR* pNMHDR, LRESULT* pResult){ if(pResult) *pResult=0; }
 void HookProcDlg::OnEnSetFocusOffset(){ }
 void HookProcDlg::OnEnSetFocusDirect(){ }
-void HookProcDlg::OnCustomDrawModules(NMHDR* pNMHDR, LRESULT* pResult){ if(pResult) *pResult=CDRF_DODEFAULT; }
+void HookProcDlg::OnCustomDrawModules(NMHDR* pNMHDR, LRESULT* pResult){
+    NMLVCUSTOMDRAW* pCD = reinterpret_cast<NMLVCUSTOMDRAW*>(pNMHDR);
+    if (!pCD || !pResult) return;
+    switch (pCD->nmcd.dwDrawStage) {
+    case CDDS_PREPAINT:
+        *pResult = CDRF_NOTIFYITEMDRAW; // we only need per-item notifications
+        return;
+    case CDDS_ITEMPREPAINT:
+        {
+            UINT itemIndex = (UINT)pCD->nmcd.dwItemSpec;
+            BOOL isSelected = (m_ModuleList.GetItemState(itemIndex, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+            if (isSelected) {
+                pCD->clrTextBk = GetSysColor(COLOR_HIGHLIGHT);
+                pCD->clrText   = GetSysColor(COLOR_HIGHLIGHTTEXT);
+            }
+            *pResult = CDRF_DODEFAULT;
+            return;
+        }
+    }
+    *pResult = CDRF_DODEFAULT;
+}

@@ -1,7 +1,8 @@
+// Ensure consistent linkage with header export macro
 #include "HookUIFactory.h"
 #include "HookProcDlg.h"
 
-// Definition matches prototype with HOOKUI_API macro in header.
+// Definition (do not repeat HOOKUI_API to avoid dllimport definition when HOOKUI_EXPORTS not set at build time)
 BOOL WINAPI ShowHookDialog(HWND hParent, DWORD pid, const wchar_t* processName, IHookServices* services) {
     // Ensure MFC uses this DLL's module state so dialog resources are found.
     AFX_MANAGE_STATE(AfxGetStaticModuleState());
