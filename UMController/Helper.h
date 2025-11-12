@@ -5,7 +5,7 @@
 #define BUFSIZE 1024
 #include <memory>
 #include <mutex>
-class Helper{
+class Helper {
 public:
 	typedef void(*FatalHandlerType)(const wchar_t* message);
 	// Hash an NT-style path (as byte buffer). Returns 64-bit FNV-1a hash.

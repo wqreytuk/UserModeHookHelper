@@ -12,6 +12,7 @@ public:
     virtual ~CRemoveHookDlg();
     virtual BOOL OnInitDialog();
     afx_msg void OnOk();
+    afx_msg void OnSize(UINT nType, int cx, int cy);
     DECLARE_MESSAGE_MAP()
 private:
     Filter* m_pFilter;

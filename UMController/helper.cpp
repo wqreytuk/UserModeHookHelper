@@ -38,7 +38,8 @@ void Helper::Fatal(const wchar_t* message) {
 		// message to the UI thread). Do NOT call long-blocking operations
 		// here.
 		handler(message);
-	} else {
+	}
+	else {
 		app.GetETW().Log(L"Fatal: %s\n", message);
 		app.GetETW().UnReg();
 		exit(-1);
@@ -274,16 +275,16 @@ bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 		// If the FLT IPC failed, fall back to existing user-mode logic.
 	}
 	// UMController is always built as x64. Simplify logic: detect WOW64.
-	typedef BOOL (WINAPI *IsWow64Process2_t)(HANDLE, USHORT*, USHORT*);
-	typedef BOOL (WINAPI *IsWow64Process_t)(HANDLE, PBOOL);
+	typedef BOOL(WINAPI *IsWow64Process2_t)(HANDLE, USHORT*, USHORT*);
+	typedef BOOL(WINAPI *IsWow64Process_t)(HANDLE, PBOOL);
 	static IsWow64Process2_t s_pIsWow64Process2 = nullptr;
-	static IsWow64Process_t  s_pIsWow64Process  = nullptr;
+	static IsWow64Process_t  s_pIsWow64Process = nullptr;
 	static bool s_resolved = false;
 	if (!s_resolved) {
 		HMODULE hK32 = GetModuleHandleW(L"kernel32.dll");
 		if (hK32) {
 			s_pIsWow64Process2 = (IsWow64Process2_t)GetProcAddress(hK32, "IsWow64Process2");
-			s_pIsWow64Process  = (IsWow64Process_t)GetProcAddress(hK32, "IsWow64Process");
+			s_pIsWow64Process = (IsWow64Process_t)GetProcAddress(hK32, "IsWow64Process");
 		}
 		s_resolved = true;
 	}
@@ -295,7 +296,8 @@ bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 		USHORT pMachine = 0, nMachine = 0;
 		if (!s_pIsWow64Process2(h, &pMachine, &nMachine)) { CloseHandle(h); return false; }
 		is64 = (pMachine == 0); // pMachine != 0 => WOW64 (i.e., 32-bit process)
-	} else if (s_pIsWow64Process) {
+	}
+	else if (s_pIsWow64Process) {
 		BOOL wow = FALSE;
 		if (!s_pIsWow64Process(h, &wow)) { CloseHandle(h); return false; }
 		is64 = !wow;

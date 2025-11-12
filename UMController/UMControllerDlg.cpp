@@ -22,6 +22,7 @@
 #include "RemoveHookDlg.h"
 #include "RegistryStore.h"
 #include "HookProcDlg.h"
+#include "Resource.h" // ensure menu ID definitions (IDR_MAIN_MENU) visible
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -202,6 +203,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_MENU_INJECT_DLL, &CUMControllerDlg::OnInjectDll)
 	ON_COMMAND(ID_MENU_ADD_EXE, &CUMControllerDlg::OnAddExecutableToHookList)
 	ON_COMMAND(ID_MENU_CLEAR_ETW, &CUMControllerDlg::OnClearEtwLog)
+	ON_COMMAND(ID_MENU_OPEN_ETW_LOG, &CUMControllerDlg::OnOpenEtwLog)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
 	ON_MESSAGE(HookProcDlg::kMsgHookDlgDestroyed, &CUMControllerDlg::OnHookDlgDestroyed)
 	ON_MESSAGE(WM_APP_POST_ENUM_CLEANUP, &CUMControllerDlg::OnPostEnumCleanup)
@@ -431,8 +433,8 @@ BOOL CUMControllerDlg::OnInitDialog()
 		}
 	});
 
-	// Load and set the Tools menu for the dialog
-	if (m_Menu.LoadMenu(IDR_TOOLS_MENU)) {
+	// Load and set the main menu (Tools + Log)
+	if (m_Menu.LoadMenu(IDR_MAIN_MENU)) {
 		SetMenu(&m_Menu);
 	}
 
@@ -1282,5 +1284,30 @@ void CUMControllerDlg::OnClearEtwLog() {
 	// Fire clear event; tracer will clear its own console.
 	app.GetETW().Clear();
 	app.GetETW().Log(L"[controller requested ETW clear]\n");
+}
+
+void CUMControllerDlg::OnOpenEtwLog() {
+	// Determine EtwTracer.log path (same logic tracer uses)
+	auto tracerExe = Helper::GetCurrentModulePath(L"EtwTracer.exe");
+	std::wstring folder;
+	size_t pos = tracerExe.find_last_of(L"/\\");
+	if (pos != std::wstring::npos) folder = tracerExe.substr(0, pos); else folder = L".";
+	std::wstring logPath = folder + L"\\EtwTracer.log";
+	TCHAR logPathBuf[MAX_PATH] = {0};
+	// Use lstrcpynW for portability; previous _wcsncpy_s was incorrect (identifier not found)
+	lstrcpynW(logPathBuf, logPath.c_str(), _countof(logPathBuf));
+	if (!Helper::IsFileExists(logPathBuf)) {
+		CString msg; msg.Format(L"Log file not found:\n%s\nStart tracer first.", logPath.c_str());
+		MessageBox(msg, L"ETW Trace Log", MB_ICONINFORMATION);
+		return;
+	}
+	SHELLEXECUTEINFOW sei{ sizeof(sei) };
+	sei.lpFile = L"notepad.exe";
+	sei.lpParameters = logPath.c_str();
+	sei.nShow = SW_SHOWNORMAL;
+	if (!ShellExecuteExW(&sei)) {
+		CString msg; msg.Format(L"Failed to open log with Notepad (error %lu).", GetLastError());
+		MessageBox(msg, L"ETW Trace Log", MB_ICONERROR);
+	}
 }
 

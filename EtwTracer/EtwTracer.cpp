@@ -4,6 +4,114 @@
 #include "../UMController/ETW.h"
 #include <evntrace.h>
 #include <evntcons.h>
+#include <string>
+#include <vector>
+#include <mutex>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
+
+// Simple asynchronous file logger for ETWTracer.
+// Writes each formatted line (same as console output) to a UTF-8 file without
+// blocking the ETW callback thread.
+namespace {
+	std::mutex              gLogMutex;
+	std::condition_variable gLogCv;
+	std::vector<std::wstring> gPendingLines; // queued lines
+	std::atomic<bool>       gLogStop{ false };
+	std::thread             gLogThread;
+	HANDLE                  gFileHandle = INVALID_HANDLE_VALUE; // Win32 file for overlapped simplicity
+	bool                    gUtf8BomWritten = false;
+	std::wstring            gLogPath; // chosen path
+
+	void LogThreadProc() {
+		std::vector<std::wstring> local;
+		while (!gLogStop.load()) {
+			{
+				std::unique_lock<std::mutex> lk(gLogMutex);
+				if (gPendingLines.empty()) {
+					gLogCv.wait_for(lk, std::chrono::milliseconds(500));
+				}
+				if (!gPendingLines.empty()) {
+					local.swap(gPendingLines); // take batch
+				}
+			}
+			if (!local.empty() && gFileHandle != INVALID_HANDLE_VALUE) {
+				// Write each line as UTF-8.
+				for (auto &w : local) {
+					// Convert to UTF-8
+					if (w.empty()) {
+						const char nl[] = "\n";
+						DWORD written=0; WriteFile(gFileHandle, nl, sizeof(nl)-1, &written, NULL);
+						continue;
+					}
+					int need = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), NULL, 0, NULL, NULL);
+					if (need <= 0) continue;
+					std::string utf8(need, '\0');
+					// Use &utf8[0] to obtain a writable buffer compatible with pre-C++17 std::string
+					WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &utf8[0], need, NULL, NULL);
+					// Ensure newline termination
+					if (utf8.empty() || utf8.back() != '\n') utf8.push_back('\n');
+					DWORD written=0; WriteFile(gFileHandle, utf8.data(), (DWORD)utf8.size(), &written, NULL);
+				}
+				local.clear();
+			}
+		}
+		// Final flush of remaining lines
+		if (gFileHandle != INVALID_HANDLE_VALUE) {
+			std::vector<std::wstring> rem;
+			{
+				std::lock_guard<std::mutex> lk(gLogMutex);
+				rem.swap(gPendingLines);
+			}
+			for (auto &w : rem) {
+				int need = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), NULL, 0, NULL, NULL);
+				if (need <= 0) continue;
+				std::string utf8(need, '\0');
+				WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &utf8[0], need, NULL, NULL);
+				if (utf8.empty() || utf8.back() != '\n') utf8.push_back('\n');
+				DWORD written=0; WriteFile(gFileHandle, utf8.data(), (DWORD)utf8.size(), &written, NULL);
+			}
+		}
+	}
+
+	void StartFileLogging(const std::wstring &path) {
+		if (path.empty()) return;
+		gLogPath = path;
+		gFileHandle = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, NULL,
+			OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (gFileHandle == INVALID_HANDLE_VALUE) return;
+		// Move to end for append
+		SetFilePointer(gFileHandle, 0, NULL, FILE_END);
+		// If file newly created (size==0), write UTF-8 BOM for readability in editors
+		LARGE_INTEGER sz; if (GetFileSizeEx(gFileHandle, &sz) && sz.QuadPart == 0) {
+			const unsigned char bom[3] = { 0xEF,0xBB,0xBF };
+			DWORD written=0; WriteFile(gFileHandle, bom, 3, &written, NULL);
+			gUtf8BomWritten = true;
+		}
+		gLogStop.store(false);
+		gLogThread = std::thread(LogThreadProc);
+	}
+
+	void QueueLogLine(const std::wstring &line) {
+		if (gFileHandle == INVALID_HANDLE_VALUE) return; // file logging disabled
+		{
+			std::lock_guard<std::mutex> lk(gLogMutex);
+			gPendingLines.push_back(line);
+		}
+		gLogCv.notify_one();
+	}
+
+	void StopFileLogging() {
+		gLogStop.store(true);
+		gLogCv.notify_one();
+		if (gLogThread.joinable()) gLogThread.join();
+		if (gFileHandle != INVALID_HANDLE_VALUE) {
+			CloseHandle(gFileHandle);
+			gFileHandle = INVALID_HANDLE_VALUE;
+		}
+	}
+}
 
 GUID SessionGuid = {
 	0x890e3076, 0x8441, 0x4e13, { 0x90, 0x32, 0xd1, 0x29, 0xa4, 0xa6, 0x40, 0x5a } };
@@ -24,54 +132,54 @@ TraceStart(
 	VOID
 );
 
-VOID
-WINAPI
-TraceEventCallback(
-	_In_ PEVENT_RECORD EventRecord
-)
+VOID WINAPI TraceEventCallback(_In_ PEVENT_RECORD EventRecord)
 {
-	if (!EventRecord->UserData)
-	{
-		return;
-	}
-
-	// Collapse duplicate newlines and trim trailing newline
-	PWCHAR raw = (PWCHAR)EventRecord->UserData;
-	WCHAR cleaned[4096];
-	size_t ri = 0;
-	bool lastWasNewline = false;
-	for (size_t i = 0; raw[i] != L'\0' && ri + 1 < _countof(cleaned); ++i) {
-		WCHAR c = raw[i];
-		if (c == L'\r') continue;
-		if (c == L'\n') {
-			if (lastWasNewline) continue;
-			cleaned[ri++] = L'\n';
-			lastWasNewline = true;
-		}
-		else {
-			cleaned[ri++] = c;
-			lastWasNewline = false;
-		}
-	}
-	if (ri > 0 && cleaned[ri - 1] == L'\n') ri--;
-	cleaned[ri] = L'\0';
-
-	// Timestamp
-	SYSTEMTIME st;
-	GetLocalTime(&st);
-
-	wprintf(L"%04u-%02u-%02u %02u:%02u:%02u.%03u [%u:%u] %s\n",
-		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
-		EventRecord->EventHeader.ProcessId,
-		EventRecord->EventHeader.ThreadId,
-		cleaned);
+    if (!EventRecord->UserData) return;
+    // Normalize newline sequences
+    PWCHAR raw = (PWCHAR)EventRecord->UserData;
+    WCHAR cleaned[4096];
+    size_t ri = 0; bool lastWasNewline = false;
+    for (size_t i = 0; raw[i] != L'\0' && ri + 1 < _countof(cleaned); ++i) {
+        WCHAR c = raw[i];
+        if (c == L'\r') continue;
+        if (c == L'\n') {
+            if (lastWasNewline) continue;
+            cleaned[ri++] = L'\n'; lastWasNewline = true;
+        } else { cleaned[ri++] = c; lastWasNewline = false; }
+    }
+    if (ri > 0 && cleaned[ri - 1] == L'\n') ri--;
+    cleaned[ri] = L'\0';
+    SYSTEMTIME st; GetLocalTime(&st);
+    wchar_t line[4600];
+    _snwprintf_s(line, _TRUNCATE, L"%04u-%02u-%02u %02u:%02u:%02u.%03u [%u:%u] %s\n",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+        EventRecord->EventHeader.ProcessId,
+        EventRecord->EventHeader.ThreadId,
+        cleaned);
+    // Console output immediate
+    wprintf(L"%s", line);
+    // Queue for file persistence (minus trailing newline to let writer add one)
+    std::wstring toQueue(line);
+    if (!toQueue.empty() && toQueue.back() == L'\n') toQueue.pop_back();
+    QueueLogLine(toQueue);
 }
 void CreateWaitSignalThread();
 
-int main() {
+int wmain() {
+	// Always log beside EtwTracer.exe using fixed filename EtwTracer.log
+	wchar_t exePath[MAX_PATH]; exePath[0]=0;
+	GetModuleFileNameW(NULL, exePath, _countof(exePath));
+	std::wstring p(exePath);
+	size_t pos = p.find_last_of(L"/\\");
+	std::wstring folder = (pos==std::wstring::npos) ? L"." : p.substr(0,pos);
+	std::wstring logPath = folder + L"\\EtwTracer.log";
+	StartFileLogging(logPath);
+	wprintf(L"[etwtracer] file logging enabled: %s\n", logPath.c_str());
 	CreateWaitSignalThread();
-	TraceStop();
-	TraceStart();
+	TraceStop(); // ensure clean state
+	ULONG ec = TraceStart();
+	StopFileLogging();
+	return (int)ec;
 }
 void WaitThreadProc() {
 	HANDLE hStop = OpenEvent(SYNCHRONIZE, FALSE, SIGNALEVENTNAME);
@@ -96,6 +204,7 @@ void WaitThreadProc() {
 	if (hClear) CloseHandle(hClear);
 	if (hStop) CloseHandle(hStop);
 	TraceStop();
+	StopFileLogging();
 	exit(0);
 }
 void CreateWaitSignalThread() {

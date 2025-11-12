@@ -19,6 +19,7 @@ CRemoveHookDlg::~CRemoveHookDlg() {}
 
 BEGIN_MESSAGE_MAP(CRemoveHookDlg, CDialogEx)
     ON_COMMAND(IDOK, &CRemoveHookDlg::OnOk)
+    ON_WM_SIZE()
 END_MESSAGE_MAP()
 
 BOOL CRemoveHookDlg::OnInitDialog() {
@@ -29,10 +30,19 @@ BOOL CRemoveHookDlg::OnInitDialog() {
     if (!m_pFilter) return TRUE;
     std::vector<std::wstring> paths;
     if (!m_pFilter->FLTCOMM_EnumHookPaths(paths)) return TRUE;
+    int maxPixel = 0;
+    CDC* pDC = lb->GetDC();
     for (const auto &p : paths) {
         std::wstring display = p.empty() ? L"(unknown)" : p;
         lb->AddString(display.c_str());
+        if (pDC) {
+            CSize sz = pDC->GetTextExtent(display.c_str());
+            if (sz.cx > maxPixel) maxPixel = sz.cx;
+        }
     }
+    if (pDC) lb->ReleaseDC(pDC);
+    // Add some padding so long paths don't truncate immediately at edge
+    if (maxPixel > 0) lb->SetHorizontalExtent(maxPixel + 20);
     return TRUE;
 }
 
@@ -85,4 +95,22 @@ void CRemoveHookDlg::OnOk() {
     }
 
     EndDialog(IDOK);
+}
+
+void CRemoveHookDlg::OnSize(UINT nType, int cx, int cy) {
+    CDialogEx::OnSize(nType, cx, cy);
+    // Resize list box to fill most of client area and reposition buttons at bottom-right
+    CListBox* lb = (CListBox*)GetDlgItem(IDC_LIST_PROC);
+    CWnd* okBtn = GetDlgItem(IDOK);
+    CWnd* cancelBtn = GetDlgItem(IDCANCEL);
+    if (!lb || !okBtn || !cancelBtn) return;
+    const int margin = 7;
+    const int buttonHeight = 18;
+    const int buttonWidth = 80;
+    int listBottom = cy - margin - buttonHeight - 8; // leave space for buttons
+    if (listBottom < 60) listBottom = 60;
+    lb->MoveWindow(margin, 20, cx - 2*margin, listBottom - 20);
+    int btnY = cy - margin - buttonHeight;
+    cancelBtn->MoveWindow(cx - margin - buttonWidth, btnY, buttonWidth, buttonHeight);
+    okBtn->MoveWindow(cx - margin - 2*buttonWidth - 8, btnY, buttonWidth, buttonHeight);
 }

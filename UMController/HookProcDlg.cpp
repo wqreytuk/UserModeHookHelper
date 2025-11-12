@@ -3,6 +3,7 @@
 #include "HookProcDlg.h"
 #include "Helper.h"
 #include "UMController.h"
+#include "ProcFlags.h" // for MASTER_X64_DLL_BASENAME / MASTER_X86_DLL_BASENAME
 
 // Define public static message constant
 const UINT HookProcDlg::kMsgHookDlgDestroyed = WM_APP + 0x501;
@@ -12,6 +13,10 @@ BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
     ON_WM_SIZE()
     ON_WM_GETMINMAXINFO()
     ON_NOTIFY(LVN_COLUMNCLICK, IDC_LIST_MODULES, &HookProcDlg::OnColumnClickModules)
+    ON_NOTIFY(LVN_ITEMCHANGED, IDC_LIST_MODULES, &HookProcDlg::OnModuleItemChanged)
+    ON_EN_SETFOCUS(IDC_EDIT_OFFSET, &HookProcDlg::OnEnSetFocusOffset)
+    ON_EN_SETFOCUS(IDC_EDIT_DIRECT, &HookProcDlg::OnEnSetFocusDirect)
+    ON_NOTIFY(NM_CUSTOMDRAW, IDC_LIST_MODULES, &HookProcDlg::OnCustomDrawModules)
 END_MESSAGE_MAP()
 
 BOOL HookProcDlg::OnInitDialog() {
@@ -25,6 +30,12 @@ BOOL HookProcDlg::OnInitDialog() {
     m_ModuleList.InsertColumn(2, L"Name", LVCFMT_LEFT, 140);
     m_ModuleList.InsertColumn(3, L"Path", LVCFMT_LEFT, 300);
     m_ModuleList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+    // Keep selection visible when focus moves to offset/edit controls (fix: selection disappears while typing)
+    LONG lvStyle = ::GetWindowLong(m_ModuleList.GetSafeHwnd(), GWL_STYLE);
+    lvStyle |= LVS_SHOWSELALWAYS;
+    ::SetWindowLong(m_ModuleList.GetSafeHwnd(), GWL_STYLE, lvStyle);
+    // Force style refresh so LVS_SHOWSELALWAYS takes effect immediately
+    ::SetWindowPos(m_ModuleList.GetSafeHwnd(), nullptr, 0,0,0,0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
     PopulateModuleList();
     return TRUE;
 }
@@ -82,43 +93,81 @@ bool HookProcDlg::GetSelectedModule(std::wstring& name, ULONGLONG& base) const {
     return true;
 }
 
-ULONGLONG HookProcDlg::ParseAddressText(const std::wstring& text, bool& ok) const {
+ULONGLONG HookProcDlg::ParseAddressText(const std::wstring& input, bool& ok) const {
+    // Enhanced parser supporting:
+    //  - windbg style: fffff801`a86f7240 (with optional 0x prefix)
+    //  - plain hex: fffff801a86f7240 / 0xfffff801a86f7240
+    //  - moduleName+offset (module+0x123 / module+456)
+    //  - moduleBase+offset (hexBase+hexOff / hexBase+decOff)
     ok = false;
-    if (text.empty()) return 0;
-    // Simple parse: hex (0x...), decimal, or module+offset (mod+0xOFF / mod+DEC)
+    if (input.empty()) return 0ULL;
+    auto trim = [](const std::wstring& s)->std::wstring {
+        size_t a = 0, b = s.size();
+        while (a < b && iswspace(s[a])) ++a;
+        while (b > a && iswspace(s[b-1])) --b;
+        return s.substr(a, b-a);
+    };
+    std::wstring text = trim(input);
+    if (text.empty()) return 0ULL;
+    // Remove any backticks (windbg high`low separator)
+    std::wstring noTick; noTick.reserve(text.size());
+    for (wchar_t c : text) { if (c != L'`') noTick.push_back(c); }
+    text.swap(noTick);
     size_t plusPos = text.find(L'+');
-    std::wstring modPart, offPart;
-    if (plusPos != std::wstring::npos) {
-        modPart = text.substr(0, plusPos);
-        offPart = text.substr(plusPos + 1);
-    }
-    auto parseNumber = [&](const std::wstring& s, ULONGLONG& value)->bool {
-        if (s.size() > 2 && (s[0] == L'0') && (s[1] == L'x' || s[1] == L'X')) {
-            wchar_t* end = nullptr;
-            value = wcstoull(s.c_str() + 2, &end, 16);
-            return end && *end == 0;
-        } else {
-            wchar_t* end = nullptr;
-            value = wcstoull(s.c_str(), &end, 10);
-            return end && *end == 0;
+    auto parseHexFlexible = [&](const std::wstring& s, ULONGLONG& value)->bool {
+        std::wstring t = trim(s);
+        if (t.empty()) return false;
+        // strip optional 0x
+        if (t.size()>2 && t[0]==L'0' && (t[1]==L'x' || t[1]==L'X')) t = t.substr(2);
+        // all hex digits? (allow a-fA-F0-9)
+        for (wchar_t c : t) { if (!(iswdigit(c) || (c>=L'a'&&c<=L'f') || (c>=L'A'&&c<=L'F'))) return false; }
+        wchar_t* end=nullptr; value = wcstoull(t.c_str(), &end, 16); return end && *end==0; };
+    auto parseDec = [&](const std::wstring& s, ULONGLONG& value)->bool {
+        std::wstring t = trim(s); if (t.empty()) return false;
+        for (wchar_t c: t) { if (!iswdigit(c)) return false; }
+        wchar_t* end=nullptr; value = wcstoull(t.c_str(), &end, 10); return end && *end==0; };
+    auto parseNumberAuto = [&](const std::wstring& s, ULONGLONG& value)->bool {
+        // Decide hex vs dec
+        std::wstring t = trim(s);
+        if (t.empty()) return false;
+        if ((t.size()>2 && t[0]==L'0' && (t[1]==L'x'||t[1]==L'X')) || t.find_first_of(L"abcdefABCDEF")!=std::wstring::npos) {
+            return parseHexFlexible(t, value);
         }
+        // try decimal then hex fallback for very large values w/out letters
+        if (parseDec(t, value)) return true;
+        return parseHexFlexible(t, value);
     };
     if (plusPos == std::wstring::npos) {
-        ULONGLONG v = 0;
-        if (parseNumber(text, v)) { ok = true; return v; }
-        return 0;
-    } else {
-        // module+offset form: locate module base from list
-        ULONGLONG base = 0; bool found = false;
-        for (int i = 0; i < m_ModuleList.GetItemCount(); ++i) {
-            if (_wcsicmp(m_ModuleList.GetItemText(i, 2), modPart.c_str()) == 0) {
-                base = (ULONGLONG)m_ModuleList.GetItemData(i); found = true; break;
-            }
-        }
-        if (!found) return 0;
-        ULONGLONG off = 0; if (!parseNumber(offPart, off)) return 0;
-        ok = true; return base + off;
+        // Single component: either raw address (hex/dec) or windbg format already normalized
+        ULONGLONG addr=0; if (parseNumberAuto(text, addr)) { ok=true; return addr; }
+        return 0ULL;
     }
+    // base+offset form
+    std::wstring basePart = text.substr(0, plusPos);
+    std::wstring offPart  = text.substr(plusPos+1);
+    ULONGLONG offset=0; if (!parseNumberAuto(offPart, offset)) return 0ULL;
+    // Try module name first
+    ULONGLONG baseAddr=0; bool moduleNameMatch=false; int nameMatchCount=0; int matchedIndex=-1;
+    for (int i=0;i<m_ModuleList.GetItemCount();++i) {
+        CString nmC = m_ModuleList.GetItemText(i,2);
+        std::wstring nm = nmC.GetString();
+        if (_wcsicmp(nm.c_str(), basePart.c_str())==0) {
+            nameMatchCount++; matchedIndex = i; moduleNameMatch=true; baseAddr = (ULONGLONG)m_ModuleList.GetItemData(i);
+        }
+    }
+    if (moduleNameMatch) {
+        // If duplicate module names discovered, force user to use explicit base address to avoid ambiguity
+        if (nameMatchCount > 1) {
+            return 0ULL; // caller will interpret ok=false and prompt user
+        }
+        ok=true; return baseAddr + offset;
+    }
+    // Not a module name: treat as base address string
+    ULONGLONG parsedBase=0; if (!parseNumberAuto(basePart, parsedBase)) return 0ULL;
+    // Optional: verify base exists in module list (helps catch typos)
+    bool baseExists=false; for (int i=0;i<m_ModuleList.GetItemCount();++i) { if ((ULONGLONG)m_ModuleList.GetItemData(i)==parsedBase) { baseExists=true; break; } }
+    if (!baseExists) return 0ULL;
+    ok=true; return parsedBase + offset;
 }
 
 void HookProcDlg::OnBnClickedApplyHook() {
@@ -129,34 +178,73 @@ void HookProcDlg::OnBnClickedApplyHook() {
     ULONGLONG finalAddr = 0; bool addrOk = false;
     if (!direct.empty()) {
         finalAddr = ParseAddressText(direct, addrOk);
+        if (!addrOk) {
+            // If user used module+offset form with duplicate module names, show guidance.
+            size_t plusPos = direct.find(L'+');
+            if (plusPos != std::wstring::npos) {
+                std::wstring left = direct.substr(0, plusPos);
+                // count matches to explain failure
+                int count=0; for (int i=0;i<m_ModuleList.GetItemCount();++i) { if (_wcsicmp(m_ModuleList.GetItemText(i,2), left.c_str())==0) count++; }
+                if (count > 1) {
+                    MessageBox(L"Multiple modules share that name. Use explicit base address (moduleBase+offset) instead.", L"Hook", MB_ICONWARNING);
+                    return;
+                }
+            }
+        }
     }
     if (!addrOk && !relOff.empty()) {
-        // Use module selection + offset
+        // Fallback: selection + relative offset (hex/decimal/backtick accepted)
         std::wstring selName; ULONGLONG base=0;
         if (GetSelectedModule(selName, base)) {
-            // parse offset (hex or dec)
-            bool offOk=false; ULONGLONG off=0;
-            if (!relOff.empty()) {
-                bool dummy; off = ParseAddressText(relOff, dummy); // reuse parser for numeric
-                offOk = (off!=0 || relOff==L"0");
-            }
+            bool offOk=false; ULONGLONG off=0; bool dummy=false;
+            off = ParseAddressText(relOff, dummy); // parseNumberAuto semantics
+            offOk = dummy; // ok flag returned in dummy
             if (offOk) { finalAddr = base + off; addrOk = true; }
         }
     }
     if (!addrOk) {
-        MessageBox(L"Failed to parse address. Provide direct address or select module+offset.", L"Hook", MB_ICONERROR);
+        MessageBox(L"Failed to parse address. Acceptable formats:\n  fffff801`a86f7240\n  0xfffff801a86f7240\n  moduleName+0xOFFSET (unique name)\n  moduleBase+offset\nOr select a module and enter an offset.", L"Hook", MB_ICONERROR);
         return;
     }
-    // Log debug info only (no hooking yet)
-    app.GetETW().Log(L"Hook request: pid=%u addr=0x%llX direct='%s' offset='%s'\n", m_pid, finalAddr, direct.c_str(), relOff.c_str());
-    MessageBox(L"Hook request logged (debug stub).", L"Hook", MB_OK | MB_ICONINFORMATION);
+    // Determine owning module to enforce master DLL exclusion
+    std::wstring owningName; bool owningFound=false; ULONGLONG owningBase=0; ULONGLONG owningSize=0;
+    for (int i=0;i<m_ModuleList.GetItemCount();++i) {
+        ULONGLONG base = (ULONGLONG)m_ModuleList.GetItemData(i);
+        // size column text -> parse hex after 0x
+        CString sizeText = m_ModuleList.GetItemText(i,1);
+        std::wstring szStr = sizeText.GetString(); ULONGLONG szVal=0; bool szOk=false;
+        if (!szStr.empty()) {
+            if (szStr.rfind(L"0x",0)==0) { wchar_t* end=nullptr; szVal = wcstoull(szStr.c_str()+2,&end,16); if (end && *end==0) szOk=true; }
+            else { wchar_t* end=nullptr; szVal = wcstoull(szStr.c_str(),&end,10); if (end && *end==0) szOk=true; }
+        }
+        if (!szOk) continue;
+        if (finalAddr >= base && finalAddr < base + szVal) {
+            owningFound=true; owningBase=base; owningSize=szVal; owningName = m_ModuleList.GetItemText(i,2).GetString();
+            break;
+        }
+    }
+    if (owningFound) {
+        if (_wcsicmp(owningName.c_str(), MASTER_X64_DLL_BASENAME)==0 || _wcsicmp(owningName.c_str(), MASTER_X86_DLL_BASENAME)==0) {
+            MessageBox(L"Refusing to hook inside master DLL. Select a target function from another module.", L"Hook", MB_ICONERROR);
+            return;
+        }
+    }
+    // TODO: Actual hook invocation (driver/IPC) not implemented here. For now, log details.
+    app.GetETW().Log(L"Hook request: pid=%u addr=0x%llX owner=%s base=0x%llX size=0x%llX direct='%s' offset='%s'\n",
+        m_pid, finalAddr, owningFound?owningName.c_str():L"(unknown)", owningBase, owningSize, direct.c_str(), relOff.c_str());
+    MessageBox(L"Hook request parsed and validated (master DLL excluded). Backend not yet implemented.", L"Hook", MB_OK | MB_ICONINFORMATION);
 }
 
 void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
     CDialogEx::OnSize(nType, cx, cy);
     if (!m_ModuleList.GetSafeHwnd()) return;
     const int margin = 7;
-    const int rightPanelWidth = 140 + margin + 65 + 65; // rough width occupied by edits/buttons region
+    // Compute dynamic right panel width based on minimum button/edit widths + margin
+    const int editWidth = 140;
+    const int buttonWidth = 65;
+    const int buttonGap = 10; // gap between Apply and Close buttons to avoid overlap
+    const int panelPadding = margin; // space between list and panel
+    int rightPanelWidth = editWidth + panelPadding + buttonWidth * 2 + buttonGap; // approximate horizontal footprint
     int listWidth = cx - (rightPanelWidth) - (margin * 2);
     if (listWidth < 100) listWidth = 100;
     // Get label bottom so list starts below it
@@ -177,11 +265,31 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
     moveCtrl(IDC_EDIT_OFFSET, panelLeft, 30, 140, 18);
     moveCtrl(IDC_STATIC_DIRECT, panelLeft, 55, 140, 14);
     moveCtrl(IDC_EDIT_DIRECT, panelLeft, 67, 140, 18);
-    moveCtrl(IDC_BTN_APPLY_HOOK, panelLeft, 100, 65, 20);
-    moveCtrl(IDCANCEL, panelLeft + 75, 100, 65, 20);
+    // Place buttons side-by-side with explicit gap to prevent painting overlap.
+    int applyX = panelLeft;
+    int applyY = 100;
+    int closeX = applyX + buttonWidth + buttonGap;
+    moveCtrl(IDC_BTN_APPLY_HOOK, applyX, applyY, buttonWidth, 20);
+    moveCtrl(IDCANCEL, closeX, applyY, buttonWidth, 20);
+    // Force redraw to mitigate stale invalid region causing "overlap" until hover.
+    if (CWnd* applyBtn = GetDlgItem(IDC_BTN_APPLY_HOOK)) applyBtn->Invalidate();
+    if (CWnd* closeBtn = GetDlgItem(IDCANCEL)) closeBtn->Invalidate();
     // Hint label at bottom
-    int hintY = margin + listHeight + 25;
-    CWnd* hint = GetDlgItem(IDC_STATIC_MODULE); // reuse existing static? original is Modules label - keep
+    // Reposition hint label (now has its own ID) below the list but above bottom margin.
+    CWnd* hint = GetDlgItem(IDC_STATIC_HINT);
+    if (hint && hint->GetSafeHwnd()) {
+        CRect rcHint; hint->GetWindowRect(&rcHint); ScreenToClient(&rcHint);
+        int hintH = rcHint.Height();
+        // Calculate desired Y just below list plus small gap
+        int hintY = labelBottom + listHeight + 6;
+        // If would overflow, clamp to bottom margin
+        if (hintY + hintH + margin > cy) hintY = cy - hintH - margin;
+        // Center horizontally within client
+        int hintW = rcHint.Width();
+        int hintX = (cx - hintW) / 2;
+        if (hintX < margin) hintX = margin;
+        hint->MoveWindow(hintX, hintY, hintW, hintH);
+    }
     // Adjust columns: expand Path column to remaining width
     int baseW = m_ModuleList.GetColumnWidth(0);
     int sizeW = m_ModuleList.GetColumnWidth(1);
@@ -235,4 +343,80 @@ int CALLBACK HookProcDlg::ModuleCompare(LPARAM lParam1, LPARAM lParam2, LPARAM l
         result = _wcsicmp(t1.c_str(), t2.c_str());
     }
     return self->m_sortAscending ? result : -result;
+}
+
+void HookProcDlg::OnModuleItemChanged(NMHDR* pNMHDR, LRESULT* pResult) {
+    LPNMLISTVIEW p = reinterpret_cast<LPNMLISTVIEW>(pNMHDR);
+    if (p && (p->uChanged & LVIF_STATE)) {
+        if ((p->uNewState & LVIS_SELECTED) != 0) {
+            m_lastSelectedIndex = p->iItem;
+        }
+    }
+    if (pResult) *pResult = 0;
+}
+
+void HookProcDlg::OnEnSetFocusOffset() {
+    // Restore selection highlight if list lost focus and visual cleared
+    if (m_lastSelectedIndex >= 0 && m_lastSelectedIndex < m_ModuleList.GetItemCount()) {
+        m_ModuleList.SetItemState(m_lastSelectedIndex, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        m_ModuleList.RedrawItems(m_lastSelectedIndex, m_lastSelectedIndex);
+    }
+}
+
+void HookProcDlg::OnEnSetFocusDirect() {
+    if (m_lastSelectedIndex >= 0 && m_lastSelectedIndex < m_ModuleList.GetItemCount()) {
+        m_ModuleList.SetItemState(m_lastSelectedIndex, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        m_ModuleList.RedrawItems(m_lastSelectedIndex, m_lastSelectedIndex);
+    }
+}
+
+void HookProcDlg::OnCustomDrawModules(NMHDR* pNMHDR, LRESULT* pResult) {
+    LPNMLVCUSTOMDRAW cd = reinterpret_cast<LPNMLVCUSTOMDRAW>(pNMHDR);
+    if (!cd) { if (pResult) *pResult = 0; return; }
+    DWORD stage = cd->nmcd.dwDrawStage;
+    if (stage == CDDS_PREPAINT) {
+        // Request item notifications
+        *pResult = CDRF_NOTIFYITEMDRAW; return;
+    }
+    if (stage == CDDS_ITEMPREPAINT) {
+        int iItem = (int)cd->nmcd.dwItemSpec;
+        if (iItem == m_lastSelectedIndex && (m_ModuleList.GetItemState(iItem, LVIS_SELECTED) & LVIS_SELECTED)) {
+            // Ask for subitem notifications so we can paint all columns with same highlight
+            *pResult = CDRF_NOTIFYSUBITEMDRAW; return;
+        }
+        *pResult = CDRF_DODEFAULT; return;
+    }
+    if (stage == (CDDS_ITEMPREPAINT | CDDS_SUBITEM)) {
+        int iItem = (int)cd->nmcd.dwItemSpec;
+        if (iItem == m_lastSelectedIndex && (m_ModuleList.GetItemState(iItem, LVIS_SELECTED) & LVIS_SELECTED)) {
+            // Owner-draw the subitem to ensure active highlight color even when list loses focus.
+            // Retrieve subitem rect
+            CRect rcSub{};
+            LVITEM lvi{}; lvi.mask = LVIF_STATE; lvi.iItem = iItem; lvi.iSubItem = cd->iSubItem;
+            // Use LVM_GETSUBITEMRECT
+            LVITEMINDEX idx; idx.iItem = iItem; idx.iGroup = 0; // group not used
+            RECT r{}; r.top = cd->iSubItem; // per MSDN, top holds subitem index for LVM_GETSUBITEMRECT
+            if (m_ModuleList.GetSafeHwnd() && ListView_GetSubItemRect(m_ModuleList.GetSafeHwnd(), iItem, cd->iSubItem, LVIR_BOUNDS, &r)) {
+                rcSub = r;
+            } else {
+                // fallback: use nmcd.rc for entire row (not ideal for multiple columns)
+                rcSub = cd->nmcd.rc;
+            }
+            CDC* dc = CDC::FromHandle(cd->nmcd.hdc);
+            if (dc) {
+                COLORREF bk = ::GetSysColor(COLOR_HIGHLIGHT);
+                COLORREF tx = ::GetSysColor(COLOR_HIGHLIGHTTEXT);
+                dc->FillSolidRect(rcSub, bk);
+                // Fetch text for this subitem
+                CString txt = m_ModuleList.GetItemText(iItem, cd->iSubItem);
+                // Adjust rect for some padding
+                CRect rcText = rcSub; rcText.left += 4; rcText.right -= 2;
+                dc->SetTextColor(tx);
+                dc->SetBkColor(bk);
+                dc->DrawText(txt, rcText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            }
+            *pResult = CDRF_SKIPDEFAULT; return;
+        }
+    }
+    *pResult = CDRF_DODEFAULT;
 }

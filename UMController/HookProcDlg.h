@@ -28,12 +28,16 @@ protected:
     afx_msg void OnBnClickedApplyHook();
     afx_msg void OnSize(UINT nType, int cx, int cy);
     afx_msg void OnGetMinMaxInfo(MINMAXINFO* lpMMI);
+    afx_msg void OnModuleItemChanged(NMHDR* pNMHDR, LRESULT* pResult);
+    afx_msg void OnEnSetFocusOffset();
+    afx_msg void OnEnSetFocusDirect();
+    afx_msg void OnCustomDrawModules(NMHDR* pNMHDR, LRESULT* pResult);
     DECLARE_MESSAGE_MAP()
 
 private:
     void PopulateModuleList();
     bool GetSelectedModule(std::wstring& name, ULONGLONG& base) const;
-    ULONGLONG ParseAddressText(const std::wstring& text, bool& ok) const; // stub parser
+    ULONGLONG ParseAddressText(const std::wstring& text, bool& ok) const; // enhanced parser supporting windbg/backtick, module+offset, base+offset
 
     DWORD m_pid;
     std::wstring m_name;
@@ -42,4 +46,5 @@ private:
     int m_sortColumn = 0;
     bool m_sortAscending = true;
     static int CALLBACK ModuleCompare(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort);
+    int m_lastSelectedIndex = -1; // track last module selection to restore visual state
 };

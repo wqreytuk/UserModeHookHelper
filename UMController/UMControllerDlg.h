@@ -47,6 +47,7 @@ protected:
 	afx_msg void OnAddExecutableToHookList();
 	afx_msg void OnRemoveExecutablesFromHookList();
 	afx_msg void OnClearEtwLog();
+	afx_msg void OnOpenEtwLog();
 	DECLARE_MESSAGE_MAP()
 public:
 	void LoadProcessList();
