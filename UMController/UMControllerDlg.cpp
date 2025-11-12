@@ -248,10 +248,17 @@ BOOL CUMControllerDlg::OnInitDialog()
 		}
 	}
 
-	// Set the icon for this dialog.  The framework does this automatically
-	//  when the application's main window is not a dialog
-	SetIcon(m_hIcon, TRUE);			// Set big icon
-	SetIcon(m_hIcon, FALSE);		// Set small icon
+	// Explicitly load both big and small icons to ensure taskbar uses new UMHH icon
+	HINSTANCE hInst = AfxGetInstanceHandle();
+	HICON hBig = (HICON)::LoadImage(hInst, MAKEINTRESOURCE(IDR_MAINFRAME), IMAGE_ICON,
+		GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+	if (!hBig) hBig = m_hIcon;
+	HICON hSmall = (HICON)::LoadImage(hInst, MAKEINTRESOURCE(IDR_MAINFRAME), IMAGE_ICON,
+		GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+	if (!hSmall) hSmall = m_hIcon;
+	SetIcon(hBig, TRUE);
+	SetIcon(hSmall, FALSE);
+	m_hIcon = hBig; // keep big icon for minimized drawing
 
 	CEdit* pEdit = (CEdit*)GetDlgItem(IDC_EDIT_SEARCH);
 	pEdit->SendMessage(EM_SETCUEBANNER, 0, (LPARAM)L"<Filter By Name>");
