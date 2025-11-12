@@ -72,7 +72,9 @@ private:
 	CProgressCtrl m_StartupProgress;
 	CStatic m_StartupPct;
 	CMenu m_Menu;
-	class HookProcDlg* m_pHookDlg = nullptr; // single modeless hook dialog instance
+	HMODULE m_hHookUiDll = NULL; // dynamic HookUI DLL handle
+	typedef BOOL (WINAPI *PFN_ShowHookDialog)(HWND, DWORD, const wchar_t*, struct IHookServices*);
+	PFN_ShowHookDialog m_pfnShowHookDialog = nullptr; // resolved factory
 	bool CheckHookList(const std::wstring& imagePath);
     afx_msg LRESULT OnFatalMessage(WPARAM wParam, LPARAM lParam);
 	// Periodic rescan state

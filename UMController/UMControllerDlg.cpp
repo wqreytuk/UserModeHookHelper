@@ -21,7 +21,7 @@
 #include "IPC.h"
 #include "RemoveHookDlg.h"
 #include "RegistryStore.h"
-#include "HookProcDlg.h"
+#include "HookInterfaces.h" // services adapter remains local; dialog now in HookUI DLL
 #include "Resource.h" // ensure menu ID definitions (IDR_MAIN_MENU) visible
 
 #ifdef _DEBUG
@@ -213,10 +213,31 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_MENU_CLEAR_ETW, &CUMControllerDlg::OnClearEtwLog)
 	ON_COMMAND(ID_MENU_OPEN_ETW_LOG, &CUMControllerDlg::OnOpenEtwLog)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
-	ON_MESSAGE(HookProcDlg::kMsgHookDlgDestroyed, &CUMControllerDlg::OnHookDlgDestroyed)
+	// Hook dialog destruction message now supplied by DLL (numeric constant)
+	ON_MESSAGE(WM_APP + 0x701, &CUMControllerDlg::OnHookDlgDestroyed)
 	ON_MESSAGE(WM_APP_POST_ENUM_CLEANUP, &CUMControllerDlg::OnPostEnumCleanup)
 	ON_COMMAND(IDM_ABOUTBOX, &CUMControllerDlg::OnHelpAbout)
 END_MESSAGE_MAP()
+// Adapter implementing IHookServices for current process (bridges to ETW tracer)
+class HookServicesAdapter : public IHookServices {
+public:
+	void Log(const wchar_t* fmt, ...) override {
+		wchar_t buffer[1024];
+		va_list ap; va_start(ap, fmt);
+		_vsnwprintf_s(buffer, _countof(buffer), _TRUNCATE, fmt, ap);
+		va_end(ap);
+		app.GetETW().Log(L"%s", buffer);
+	}
+	void LogCore(const wchar_t* fmt, ...) override {
+		wchar_t buffer[1024];
+		va_list ap; va_start(ap, fmt);
+		_vsnwprintf_s(buffer, _countof(buffer), _TRUNCATE, fmt, ap);
+		va_end(ap);
+		// Dedicated prefix so HookCore diagnostics are distinguishable.
+		app.GetETW().Log(L"[HookCore] %s", buffer);
+	}
+};
+static HookServicesAdapter g_HookServices; // singleton adapter instance
 
 
 // CUMControllerDlg message handlers
@@ -1156,31 +1177,29 @@ void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
 	// Respond for double-click on ANY column now (previously only PID visually worked).
 	// Optionally could restrict to specific columns by checking pAct->iSubItem.
 	// Always create a fresh dialog. If an existing one is open, destroy it first.
-	if (m_pHookDlg && m_pHookDlg->GetSafeHwnd()) {
-		m_pHookDlg->DestroyWindow(); // will self-delete in PostNcDestroy
-		// Do NOT null here; wait for destroy message to ensure pointer isn't reused prematurely.
-	}
-	ProcessEntry e; int idx=-1; std::wstring nameDisplay = L"(unknown)";
-	if (PM_GetEntryCopyByPid(pid, e, &idx)) nameDisplay = e.name.empty()?nameDisplay:e.name;
-	m_pHookDlg = new HookProcDlg(pid, nameDisplay, this);
-	if (!m_pHookDlg->CreateModeless(this)) {
-		delete m_pHookDlg; m_pHookDlg = nullptr;
-		MessageBox(L"Failed to create hook dialog.", L"Hook", MB_ICONERROR);
-	} else {
-		m_pHookDlg->ShowWindow(SW_SHOW);
-	}
+	 // Dynamic load HookUI.dll and invoke ShowHookDialog export
+	 if (!m_hHookUiDll) {
+	 	m_hHookUiDll = ::LoadLibraryW(L"HookUI.dll");
+	 	if (!m_hHookUiDll) {
+	 		MessageBox(L"HookUI.dll not found. Deploy the HookUI module next to the executable.", L"Hook", MB_ICONERROR);
+	 		if (pResult) *pResult = 0; return; }
+	 }
+	 if (!m_pfnShowHookDialog) {
+	 	m_pfnShowHookDialog = (PFN_ShowHookDialog)::GetProcAddress(m_hHookUiDll, "ShowHookDialog");
+	 	if (!m_pfnShowHookDialog) {
+	 		MessageBox(L"ShowHookDialog export missing in HookUI.dll.", L"Hook", MB_ICONERROR);
+	 		if (pResult) *pResult = 0; return; }
+	 }
+	 ProcessEntry e; int idx=-1; std::wstring nameDisplay = L"(unknown)"; if (PM_GetEntryCopyByPid(pid, e, &idx)) nameDisplay = e.name.empty()?nameDisplay:e.name;
+	 if (!m_pfnShowHookDialog(this->GetSafeHwnd(), pid, nameDisplay.c_str(), &g_HookServices)) {
+	 	MessageBox(L"Failed to show hook dialog via HookUI DLL.", L"Hook", MB_ICONERROR);
+	 }
 	if (pResult) *pResult = 0;
 }
 
 LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {
-	UNREFERENCED_PARAMETER(lParam);
-	HookProcDlg* pDlg = reinterpret_cast<HookProcDlg*>(wParam);
-	if (pDlg == m_pHookDlg) {
-		// Delete the dialog object now that the window is gone.
-		HookProcDlg* toDelete = m_pHookDlg;
-		m_pHookDlg = nullptr;
-		delete toDelete;
-	}
+	UNREFERENCED_PARAMETER(wParam); UNREFERENCED_PARAMETER(lParam);
+	// Dialog self-managed inside DLL; nothing to clean locally.
 	return 0;
 }
 

@@ -230,8 +230,10 @@ void HookProcDlg::OnBnClickedApplyHook() {
         }
     }
     // TODO: Actual hook invocation (driver/IPC) not implemented here. For now, log details.
-    app.GetETW().Log(L"Hook request: pid=%u addr=0x%llX owner=%s base=0x%llX size=0x%llX direct='%s' offset='%s'\n",
-        m_pid, finalAddr, owningFound?owningName.c_str():L"(unknown)", owningBase, owningSize, direct.c_str(), relOff.c_str());
+    if (m_services) {
+        m_services->Log(L"Hook request: pid=%u addr=0x%llX owner=%s base=0x%llX size=0x%llX direct='%s' offset='%s'\n",
+            m_pid, finalAddr, owningFound?owningName.c_str():L"(unknown)", owningBase, owningSize, direct.c_str(), relOff.c_str());
+    }
     MessageBox(L"Hook request parsed and validated (master DLL excluded). Backend not yet implemented.", L"Hook", MB_OK | MB_ICONINFORMATION);
 }
 

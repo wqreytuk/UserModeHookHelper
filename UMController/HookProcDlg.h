@@ -5,11 +5,12 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include "resource.h"
+#include "HookInterfaces.h"
 
 class HookProcDlg : public CDialogEx {
 public:
-    HookProcDlg(DWORD pid, const std::wstring& name, CWnd* parent = nullptr)
-        : CDialogEx(IDD_HOOK_PROC_DLG, parent), m_pid(pid), m_name(name) {}
+    HookProcDlg(DWORD pid, const std::wstring& name, IHookServices* services, CWnd* parent = nullptr)
+        : CDialogEx(IDD_HOOK_PROC_DLG, parent), m_pid(pid), m_name(name), m_services(services) {}
 
     // Create modeless
     BOOL CreateModeless(CWnd* parent) { return Create(IDD_HOOK_PROC_DLG, parent); }
@@ -47,4 +48,5 @@ private:
     bool m_sortAscending = true;
     static int CALLBACK ModuleCompare(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort);
     int m_lastSelectedIndex = -1; // track last module selection to restore visual state
+    IHookServices* m_services = nullptr; // logging / future kernel ops abstraction
 };
