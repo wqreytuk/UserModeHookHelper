@@ -40,13 +40,16 @@
 #define IDC_STATIC_STARTUP_PCT     1018
 #define IDC_STATIC_HINT           1019
 
+// About dialog hyperlink control
+#define IDC_SYSLINK_SITE          1020
+
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        145
 #define _APS_NEXT_COMMAND_VALUE         32772
-#define _APS_NEXT_CONTROL_VALUE         1007
+#define _APS_NEXT_CONTROL_VALUE         1021
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

@@ -32,13 +32,13 @@ protected:
 
 
 // Implementation
+
 protected:
 	HICON m_hIcon;
 
 	// Generated message map functions
 	virtual BOOL OnInitDialog();
 	virtual BOOL PreTranslateMessage(MSG* pMsg);
-	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 	afx_msg void OnPaint();
 	afx_msg HCURSOR OnQueryDragIcon();
 	afx_msg void OnAddHook();
@@ -48,6 +48,8 @@ protected:
 	afx_msg void OnRemoveExecutablesFromHookList();
 	afx_msg void OnClearEtwLog();
 	afx_msg void OnOpenEtwLog();
+	// Help menu handlers
+	afx_msg void OnHelpAbout();
 	DECLARE_MESSAGE_MAP()
 public:
 	void LoadProcessList();
@@ -62,7 +64,7 @@ public:
 	afx_msg void OnDestroy();
     afx_msg LRESULT OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnSize(UINT nType, int cx, int cy);
-	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	// Removed obsolete OnTimer; enumeration-only mode no longer uses it.
     
 private:
 	Filter m_Filter;

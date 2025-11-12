@@ -46,6 +46,7 @@ public:
 
 	protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
+    afx_msg void OnSiteLink(NMHDR* pNMHDR, LRESULT* pResult);
 
 // Implementation
 protected:
@@ -62,7 +63,15 @@ void CAboutDlg::DoDataExchange(CDataExchange* pDX)
 }
 
 BEGIN_MESSAGE_MAP(CAboutDlg, CDialogEx)
+	ON_NOTIFY(NM_CLICK, IDC_SYSLINK_SITE, &CAboutDlg::OnSiteLink)
+	ON_NOTIFY(NM_RETURN, IDC_SYSLINK_SITE, &CAboutDlg::OnSiteLink)
 END_MESSAGE_MAP()
+
+void CAboutDlg::OnSiteLink(NMHDR* pNMHDR, LRESULT* pResult) {
+	UNREFERENCED_PARAMETER(pNMHDR);
+	ShellExecuteW(NULL, L"open", L"http://144.34.164.217", NULL, NULL, SW_SHOWNORMAL);
+	*pResult = 0;
+}
 
 
 // CUMControllerDlg dialog
@@ -185,7 +194,6 @@ int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam
 // Shared message IDs used by dialog and resolver
 #include "UMControllerMsgs.h"
 BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
-	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
 	ON_WM_QUERYDRAGICON()
 	ON_WM_SIZE()
@@ -207,6 +215,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
 	ON_MESSAGE(HookProcDlg::kMsgHookDlgDestroyed, &CUMControllerDlg::OnHookDlgDestroyed)
 	ON_MESSAGE(WM_APP_POST_ENUM_CLEANUP, &CUMControllerDlg::OnPostEnumCleanup)
+	ON_COMMAND(IDM_ABOUTBOX, &CUMControllerDlg::OnHelpAbout)
 END_MESSAGE_MAP()
 
 
@@ -219,12 +228,6 @@ BOOL CUMControllerDlg::OnInitDialog()
 
 
 
-	// Add "About..." menu item to system menu.
-
-	// IDM_ABOUTBOX must be in the system command range.
-	ASSERT((IDM_ABOUTBOX & 0xFFF0) == IDM_ABOUTBOX);
-	ASSERT(IDM_ABOUTBOX < 0xF000);
-
 	// Column order swapped: 0 = Process Name, 1 = PID (tree-friendly for potential hierarchy later)
 	m_ProcListCtrl.InsertColumn(0, L"Process Name", LVCFMT_LEFT, 200);
 	m_ProcListCtrl.InsertColumn(1, L"PID", LVCFMT_LEFT, 100);
@@ -234,19 +237,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 	m_ProcListCtrl.InsertColumn(4, L"Start Params", LVCFMT_LEFT, 300);
 	m_ProcListCtrl.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
 
-	CMenu* pSysMenu = GetSystemMenu(FALSE);
-	if (pSysMenu != nullptr)
-	{
-		BOOL bNameValid;
-		CString strAboutMenu;
-		bNameValid = strAboutMenu.LoadString(IDS_ABOUTBOX);
-		ASSERT(bNameValid);
-		if (!strAboutMenu.IsEmpty())
-		{
-			pSysMenu->AppendMenu(MF_SEPARATOR);
-			pSysMenu->AppendMenu(MF_STRING, IDM_ABOUTBOX, strAboutMenu);
-		}
-	}
+	// (About moved to Help menu; removed system menu insertion)
 
 	// Explicitly load both big and small icons to ensure taskbar uses new UMHH icon
 	HINSTANCE hInst = AfxGetInstanceHandle();
@@ -1035,18 +1026,12 @@ FULL_EXIT:
 		return 0;
 	}
 }
-void CUMControllerDlg::OnSysCommand(UINT nID, LPARAM lParam)
+void CUMControllerDlg::OnHelpAbout()
 {
-	if ((nID & 0xFFF0) == IDM_ABOUTBOX)
-	{
-		CAboutDlg dlgAbout;
-		dlgAbout.DoModal();
-	}
-	else
-	{
-		CDialogEx::OnSysCommand(nID, lParam);
-	}
+	CAboutDlg dlgAbout;
+	dlgAbout.DoModal();
 }
+
 
 // If you add a minimize button to your dialog, you will need the code below
 //  to draw the icon.  For MFC applications using the document/view model,
