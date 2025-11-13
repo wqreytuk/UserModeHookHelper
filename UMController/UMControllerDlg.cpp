@@ -5,6 +5,7 @@
 #include "pch.h"
 #include "framework.h"
 #include "UMController.h"
+#include "../Shared/LogMacros.h"
 #include "UMControllerDlg.h"
 #include "ProcFlags.h"
 
@@ -39,16 +40,16 @@ class CAboutDlg : public CDialogEx
 public:
 	CAboutDlg();
 
-// Dialog Data
+	// Dialog Data
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_ABOUTBOX };
 #endif
 
-	protected:
+protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
-    afx_msg void OnSiteLink(NMHDR* pNMHDR, LRESULT* pResult);
+	afx_msg void OnSiteLink(NMHDR* pNMHDR, LRESULT* pResult);
 
-// Implementation
+	// Implementation
 protected:
 	DECLARE_MESSAGE_MAP()
 };
@@ -81,7 +82,7 @@ BOOL CUMControllerDlg::PreCreateWindow(CREATESTRUCT& cs)
 {
 	cs.style &= ~WS_MAXIMIZE;
 	cs.style &= ~WS_MINIMIZE;
-	
+
 	return(TRUE);
 }
 
@@ -122,7 +123,8 @@ void CUMControllerDlg::OnLvnColumnclickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	int col = pNMLV->iSubItem;
 	if (m_SortColumn == col) {
 		m_SortAscending = !m_SortAscending;
-	} else {
+	}
+	else {
 		m_SortColumn = col;
 		m_SortAscending = true;
 	}
@@ -226,6 +228,7 @@ public:
 		va_list ap; va_start(ap, fmt);
 		_vsnwprintf_s(buffer, _countof(buffer), _TRUNCATE, fmt, ap);
 		va_end(ap);
+		// Raw pass-through; prefixes handled by caller macros (LOG_CTRL / LOG_UI / LOG_CORE).
 		app.GetETW().Log(L"%s", buffer);
 	}
 	void LogCore(const wchar_t* fmt, ...) override {
@@ -233,8 +236,21 @@ public:
 		va_list ap; va_start(ap, fmt);
 		_vsnwprintf_s(buffer, _countof(buffer), _TRUNCATE, fmt, ap);
 		va_end(ap);
-		// Dedicated prefix so HookCore diagnostics are distinguishable.
-		app.GetETW().Log(L"[HookCore] %s", buffer);
+		// Keep legacy behavior to avoid refactoring existing LogCore call sites yet.
+		app.GetETW().Log(L"[HookCore]   %s", buffer);
+	}
+	bool InjectTrampoline(DWORD targetPid, const wchar_t* fullDllPath) override {
+		if (targetPid == 0 || !fullDllPath || *fullDllPath == L'\0') {
+			app.GetETW().Log(L"[HookCore]   InjectTrampoline: invalid args pid=%u path=%s\n", targetPid, fullDllPath ? fullDllPath : L"(null)");
+			return false;
+		}
+		// Reuse existing IPC file signaling API.
+		if (!IPC_SendInject(targetPid, fullDllPath)) {
+			app.GetETW().Log(L"[HookCore]   InjectTrampoline: IPC_SendInject failed pid=%u path=%s (err=%lu)\n", targetPid, fullDllPath, GetLastError());
+			return false;
+		}
+		app.GetETW().Log(L"[HookCore]   InjectTrampoline: signal sent pid=%u path=%s\n", targetPid, fullDllPath);
+		return true;
 	}
 };
 static HookServicesAdapter g_HookServices; // singleton adapter instance
@@ -282,7 +298,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 	// of calling exit() from a library thread.
 	Helper::SetFatalHandler([](const wchar_t* msg) {
 		// Log first, then post message to the main UI thread.
-		app.GetETW().Log(L"Fatal reported: %s\n", msg);
+		LOG_CTRL_ETW(L"Fatal reported: %s\n", msg);
 		::PostMessage(app.GetHwnd(), WM_APP_FATAL, 0, 0);
 	});
 
@@ -302,14 +318,14 @@ BOOL CUMControllerDlg::OnInitDialog()
 			if (m_Filter.FLTCOMM_MapHookSectionToSet(s)) {
 				PM_SetHookHashSet(s);
 				mapped = true;
-				app.GetETW().Log(L"Hook section mapped and cache populated after %dms\n", waited);
+				LOG_CTRL_ETW(L"Hook section mapped and cache populated after %dms\n", waited);
 				break;
 			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS));
 			waited += INTERVAL_MS;
 		}
 		if (!mapped) {
-			app.GetETW().Log(L"Hook section mapping failed after %dms; resolver will fall back to per-path IPC\n", MAX_MS);
+			LOG_CTRL_ETW(L"Hook section mapping failed after %dms; resolver will fall back to per-path IPC\n", MAX_MS);
 		}
 	}
 	// Initialize startup progress UI before enumeration so inline resolution / resolver can update it.
@@ -323,14 +339,15 @@ BOOL CUMControllerDlg::OnInitDialog()
 	// Enumeration-only progress: no timeout or per-PID resolution tracking.
 	// Load existing composite process cache (PID:CREATIONTIME=NT path) for quick lookup before resolution.
 	try {
-		std::vector<std::tuple<DWORD,DWORD,DWORD,std::wstring>> persisted;
+		std::vector<std::tuple<DWORD, DWORD, DWORD, std::wstring>> persisted;
 		if (RegistryStore::ReadCompositeProcCache(persisted)) {
 			for (auto &t : persisted) {
 				ProcKey k{ std::get<0>(t), std::get<1>(t), std::get<2>(t) };
 				m_CompositeRegistryCache.emplace(k, std::get<3>(t));
 			}
 		}
-	} catch(...) {
+	}
+	catch (...) {
 		TRACE("[Startup] Failed to read composite process cache; continuing without it.\n");
 		m_CompositeRegistryCache.clear();
 	}
@@ -384,7 +401,8 @@ BOOL CUMControllerDlg::OnInitDialog()
 					l = (LPARAM)dup;
 				}
 				::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, w, l);
-			} else {
+			}
+			else {
 				::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, w, 0);
 			}
 		}
@@ -457,7 +475,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 		SetMenu(&m_Menu);
 	}
 
-	app.GetETW().Log(L"dialog init succeed\n");
+	LOG_CTRL_ETW(L"dialog init succeed\n");
 
 
 	return TRUE;  // return TRUE  unless you set the focus to a control
@@ -465,7 +483,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 
 LRESULT CUMControllerDlg::OnFatalMessage(WPARAM, LPARAM) {
 	// Graceful shutdown triggered from fatal handler.
-	app.GetETW().Log(L"OnFatalMessage received, closing dialog.\n");
+	LOG_CTRL_ETW(L"OnFatalMessage received, closing dialog.\n");
 	MessageBox(L"check etw log", L"Attention!", MB_ICONERROR);
 	EndDialog(IDCANCEL);
 	return 0;
@@ -557,8 +575,8 @@ void CUMControllerDlg::OnInjectDll() {
 
 void CUMControllerDlg::OnAddExecutableToHookList() {
 	// Prompt user to select an executable to add to the hook list
-	wchar_t szFile[MAX_PATH] = {0};
-	OPENFILENAME ofn = {0};
+	wchar_t szFile[MAX_PATH] = { 0 };
+	OPENFILENAME ofn = { 0 };
 	ofn.lStructSize = sizeof(ofn);
 	ofn.hwndOwner = NULL;
 	ofn.lpstrFile = szFile;
@@ -595,17 +613,17 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 	}
 
 	// Log success instead of popping a message box
-	app.GetETW().Log(L"Executable added to hook list: %s\n", ntPathToSend.c_str());
+	LOG_CTRL_ETW(L"Executable added to hook list: %s\n", ntPathToSend.c_str());
 
 	// Persist to registry. Rollback kernel entry if persistence fails.
 	if (!RegistryStore::AddPath(ntPathToSend)) {
-		app.GetETW().Log(L"OnAddExecutableToHookList: RegistryStore::AddPath failed for %s - attempting rollback\n", ntPathToSend.c_str());
+		LOG_CTRL_ETW(L"OnAddExecutableToHookList: RegistryStore::AddPath failed for %s - attempting rollback\n", ntPathToSend.c_str());
 		// rollback kernel
 		const UCHAR* b2 = reinterpret_cast<const UCHAR*>(ntPathToSend.c_str());
 		size_t bLen2 = ntPathToSend.size() * sizeof(wchar_t);
 		unsigned long long h2 = Helper::GetNtPathHash(b2, bLen2);
 		if (!m_Filter.FLTCOMM_RemoveHookByHash(h2)) {
-			app.GetETW().Log(L"OnAddExecutableToHookList: rollback RemoveHookByHash failed for %s\n", ntPathToSend.c_str());
+			LOG_CTRL_ETW(L"OnAddExecutableToHookList: rollback RemoveHookByHash failed for %s\n", ntPathToSend.c_str());
 		}
 		::MessageBoxW(NULL, L"Failed to persist hook entry to registry. The kernel entry has been rolled back.", L"Add Executable", MB_OK | MB_ICONERROR);
 		return;
@@ -637,7 +655,8 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 				m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(newPacked).c_str());
 			}
 		}
-	} else {
+	}
+	else {
 		// Best-effort fallback: update entries whose path exactly matches the added path
 		auto all = PM_GetAll();
 		for (const auto &e : all) {
@@ -680,20 +699,20 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 		for (wchar_t c : all[idx].name) nameLower.push_back(towlower(c));
 
 		if (filter.empty() || nameLower.find(filterLower) != std::wstring::npos) {
-				// Use cached module/arch state populated by background resolver
-				bool is64 = all[idx].is64;
-				bool dllLoaded = all[idx].masterDllLoaded;
-				DWORD flags = 0;
-				if (all[idx].bInHookList) flags |= PF_IN_HOOK_LIST;
-				if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-				if (is64) flags |= PF_IS_64BIT;
-				PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
-				int nIndex = m_ProcListCtrl.InsertItem(i, all[idx].name.c_str());
-				m_ProcListCtrl.SetItemText(nIndex, 1, std::to_wstring(all[idx].pid).c_str());
-				m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(packed).c_str());
-				m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
-				m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
-				m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)packed);
+			// Use cached module/arch state populated by background resolver
+			bool is64 = all[idx].is64;
+			bool dllLoaded = all[idx].masterDllLoaded;
+			DWORD flags = 0;
+			if (all[idx].bInHookList) flags |= PF_IN_HOOK_LIST;
+			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+			if (is64) flags |= PF_IS_64BIT;
+			PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
+			int nIndex = m_ProcListCtrl.InsertItem(i, all[idx].name.c_str());
+			m_ProcListCtrl.SetItemText(nIndex, 1, std::to_wstring(all[idx].pid).c_str());
+			m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(packed).c_str());
+			m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
+			m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
+			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)packed);
 			i++;
 		}
 	}
@@ -704,14 +723,14 @@ void CUMControllerDlg::LoadProcessList() {
 	size_t totalCount = 0;
 	PROCESSENTRY32 pe32 = { sizeof(pe32) };
 
-		HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-		if (snapshot == INVALID_HANDLE_VALUE) return;
-		
-		if (Process32First(snapshot, &pe32)) {
-			do {
-				totalCount++;
-			} while (Process32Next(snapshot, &pe32));
-		}
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snapshot == INVALID_HANDLE_VALUE) return;
+
+	if (Process32First(snapshot, &pe32)) {
+		do {
+			totalCount++;
+		} while (Process32Next(snapshot, &pe32));
+	}
 
 	m_TotalStartupPids = totalCount;
 	size_t resolved = 0;
@@ -731,54 +750,56 @@ void CUMControllerDlg::LoadProcessList() {
 			entry.name = pe32.szExeFile;
 			entry.path.clear();
 			entry.cmdline.clear();
-				entry.bInHookList = false; // will be updated inline for path; modules later
-				// Capture process creation time and attempt inline NT path/command line resolution.
-				HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+			entry.bInHookList = false; // will be updated inline for path; modules later
+			// Capture process creation time and attempt inline NT path/command line resolution.
+			HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
 			if (h) {
 				FILETIME createTime, exitTime, kernelTime, userTime;
 				if (GetProcessTimes(h, &createTime, &exitTime, &kernelTime, &userTime)) {
 					entry.startTime = createTime;
 				}
-					// Composite cache lookup first, then fallback resolve
-					ProcKey key{ pid, createTime };
-					std::wstring ntPath;
-					auto itComp = m_CompositeRegistryCache.find(key);
-					if (itComp != m_CompositeRegistryCache.end()) {
-						ntPath = itComp->second; // cache hit
-					} else {
-						// Reuse existing handle to avoid second OpenProcess
-						Helper::GetFullImageNtPathFromHandle(h, ntPath);
+				// Composite cache lookup first, then fallback resolve
+				ProcKey key{ pid, createTime };
+				std::wstring ntPath;
+				auto itComp = m_CompositeRegistryCache.find(key);
+				if (itComp != m_CompositeRegistryCache.end()) {
+					ntPath = itComp->second; // cache hit
+				}
+				else {
+					// Reuse existing handle to avoid second OpenProcess
+					Helper::GetFullImageNtPathFromHandle(h, ntPath);
+				}
+				if (!ntPath.empty()) {
+					entry.path = ntPath;
+					// std::wstring cmdline; Helper::GetProcessCommandLineByPID(pid, cmdline); entry.cmdline = cmdline;
+					std::wstring cmdline = L"N/A"; entry.cmdline = cmdline;
+					bool inHook = false;
+					if (PM_HasHookHashCache()) {
+						const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+						size_t len = ntPath.size() * sizeof(wchar_t);
+						unsigned long long hval = Helper::GetNtPathHash(bytes, len);
+						inHook = PM_IsHashInHookSet(hval);
 					}
-					if (!ntPath.empty()) {
-						entry.path = ntPath;
-						// std::wstring cmdline; Helper::GetProcessCommandLineByPID(pid, cmdline); entry.cmdline = cmdline;
-						std::wstring cmdline = L"N/A"; entry.cmdline = cmdline;
-						bool inHook = false;
-						if (PM_HasHookHashCache()) {
-							const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
-							size_t len = ntPath.size()*sizeof(wchar_t);
-							unsigned long long hval = Helper::GetNtPathHash(bytes, len);
-							inHook = PM_IsHashInHookSet(hval);
-						} else {
-							inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
-						}
-						entry.bInHookList = inHook;
-						m_SessionNtPathCache.emplace(key, ntPath);
-						// prepare for persistence (dedupe by key)
-						bool have=false; for (auto &t : m_PersistSnapshotEntries) { if (std::get<0>(t)==pid && std::get<1>(t)==createTime.dwHighDateTime && std::get<2>(t)==createTime.dwLowDateTime) { have=true; break; } }
-						if (!have) m_PersistSnapshotEntries.emplace_back(pid, createTime.dwHighDateTime, createTime.dwLowDateTime, ntPath);
+					else {
+						inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
 					}
-					CloseHandle(h);
-					if (!m_StartupInProgress) {
-						Helper::Fatal(L"Progress bar should be initialized before calling LoadProcessList\n");
-					}
-					int pct = 0; if (m_TotalStartupPids > 0) pct = (int)((++resolved * 100) / m_TotalStartupPids);
-					int boundedPct2 = (pct < 0 ? 0 : (pct > 100 ? 100 : pct));
-					m_StartupProgress.SetPos(boundedPct2);
-					if (m_StartupPct.GetSafeHwnd()) { CString t; t.Format(L"%d%%", pct); m_StartupPct.SetWindowText(t); }
+					entry.bInHookList = inHook;
+					m_SessionNtPathCache.emplace(key, ntPath);
+					// prepare for persistence (dedupe by key)
+					bool have = false; for (auto &t : m_PersistSnapshotEntries) { if (std::get<0>(t) == pid && std::get<1>(t) == createTime.dwHighDateTime && std::get<2>(t) == createTime.dwLowDateTime) { have = true; break; } }
+					if (!have) m_PersistSnapshotEntries.emplace_back(pid, createTime.dwHighDateTime, createTime.dwLowDateTime, ntPath);
+				}
+				CloseHandle(h);
+				if (!m_StartupInProgress) {
+					Helper::Fatal(L"Progress bar should be initialized before calling LoadProcessList\n");
+				}
+				int pct = 0; if (m_TotalStartupPids > 0) pct = (int)((++resolved * 100) / m_TotalStartupPids);
+				int boundedPct2 = (pct < 0 ? 0 : (pct > 100 ? 100 : pct));
+				m_StartupProgress.SetPos(boundedPct2);
+				if (m_StartupPct.GetSafeHwnd()) { CString t; t.Format(L"%d%%", pct); m_StartupPct.SetWindowText(t); }
 			}
 			PM_AddEntry(entry);
-				// Enumeration-only: progress already advanced; no per-PID tracking needed.
+			// Enumeration-only: progress already advanced; no per-PID tracking needed.
 		} while (Process32Next(snapshot, &pe32));
 	}
 
@@ -859,8 +880,8 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			CloseHandle(h);
 		}
 
-	// Append to ProcessManager
-	PM_AddEntry(entry);
+		// Append to ProcessManager
+		PM_AddEntry(entry);
 
 		// Insert UI item
 		// Decide whether the new entry should be visible under the current filter.
@@ -872,33 +893,34 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 		bool showNow = false;
 		if (filterLower.empty()) {
 			showNow = true;
-		} else if (!entry.name.empty()) {
+		}
+		else if (!entry.name.empty()) {
 			std::wstring nameLower;
 			for (wchar_t c : entry.name) nameLower.push_back(towlower(c));
 			if (nameLower.find(filterLower) != std::wstring::npos) showNow = true;
 		}
-			if (showNow) {
-				int newIdx = PM_GetIndex(pid);
-				// Column 0 now Process Name; show name or placeholder there. PID is column 1.
-				CString pidStr; pidStr.Format(L"%u", pid);
-				const wchar_t* nameOrResolving = entry.name.empty() ? L"(resolving)" : entry.name.c_str();
-				int nIndex = m_ProcListCtrl.InsertItem(newIdx, nameOrResolving);
-				m_ProcListCtrl.SetItemText(nIndex, 1, pidStr);
+		if (showNow) {
+			int newIdx = PM_GetIndex(pid);
+			// Column 0 now Process Name; show name or placeholder there. PID is column 1.
+			CString pidStr; pidStr.Format(L"%u", pid);
+			const wchar_t* nameOrResolving = entry.name.empty() ? L"(resolving)" : entry.name.c_str();
+			int nIndex = m_ProcListCtrl.InsertItem(newIdx, nameOrResolving);
+			m_ProcListCtrl.SetItemText(nIndex, 1, pidStr);
 			m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(MAKE_ITEMDATA(pid, 0)).c_str());
 			m_ProcListCtrl.SetItemText(nIndex, 3, L"");
 			m_ProcListCtrl.SetItemText(nIndex, 4, L"");
-				// Use cached state (may be default until resolver runs)
-				bool is64 = entry.is64;
-				bool dllLoaded = entry.masterDllLoaded;
-				DWORD flags = 0;
-				if (entry.bInHookList) flags |= PF_IN_HOOK_LIST;
-				if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
-				if (is64) flags |= PF_IS_64BIT;
-				m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
+			// Use cached state (may be default until resolver runs)
+			bool is64 = entry.is64;
+			bool dllLoaded = entry.masterDllLoaded;
+			DWORD flags = 0;
+			if (entry.bInHookList) flags |= PF_IN_HOOK_LIST;
+			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
+			if (is64) flags |= PF_IS_64BIT;
+			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
 		}
 
-			// Start resolver for this PID using ProcessResolver helper
-			ProcessResolver::StartSingleResolver(this, pid, &m_Filter);
+		// Start resolver for this PID using ProcessResolver helper
+		ProcessResolver::StartSingleResolver(this, pid, &m_Filter);
 
 		return 0;
 	}
@@ -906,12 +928,12 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 	// Loader or resolver update: wParam contains PID
 	if (lParam == UPDATE_SOURCE_LOAD || lParam == UPDATE_SOURCE_NOTIFY) {
 		DWORD pid = (DWORD)wParam;
-    // Get snapshot
-    ProcessEntry e; int idx = -1;
-    if (!PM_GetEntryCopyByPid(pid, e, &idx)) return 0;
-    bool inHook = e.bInHookList;
-    std::wstring path = e.path;
-    std::wstring cmdline = e.cmdline;
+		// Get snapshot
+		ProcessEntry e; int idx = -1;
+		if (!PM_GetEntryCopyByPid(pid, e, &idx)) return 0;
+		bool inHook = e.bInHookList;
+		std::wstring path = e.path;
+		std::wstring cmdline = e.cmdline;
 
 		int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
 		while (item != -1) {
@@ -937,11 +959,11 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			// Insert new item for this PID (column 0 = name, column 1 = PID)
 			int newItem = m_ProcListCtrl.InsertItem(idx, e.name.c_str());
 			m_ProcListCtrl.SetItemText(newItem, 1, std::to_wstring(pid).c_str());
-			m_ProcListCtrl.SetItemText(newItem, 2, FormatHookColumn(MAKE_ITEMDATA(pid, (e.bInHookList?PF_IN_HOOK_LIST:0))).c_str());
+			m_ProcListCtrl.SetItemText(newItem, 2, FormatHookColumn(MAKE_ITEMDATA(pid, (e.bInHookList ? PF_IN_HOOK_LIST : 0))).c_str());
 			m_ProcListCtrl.SetItemText(newItem, 3, e.path.c_str());
 			m_ProcListCtrl.SetItemText(newItem, 4, e.cmdline.c_str());
-			bool is64=false; Helper::IsProcess64(pid, is64);
-			bool dllLoaded=false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+			bool is64 = false; Helper::IsProcess64(pid, is64);
+			bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
 			DWORD flags = 0;
 			if (e.bInHookList) flags |= PF_IN_HOOK_LIST;
 			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
@@ -950,23 +972,23 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			item = newItem;
 		}
 
-	// On-demand query for arch + master DLL only if now in hook list.
-	DWORD flags = 0;
-	bool is64Now = false;
-	bool dllLoadedNow = false;
-	if (inHook) {
-		Helper::IsProcess64(pid, is64Now);
-		const wchar_t* dllName = is64Now ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
-		Helper::IsModuleLoaded(pid, dllName, dllLoadedNow);
-		flags |= PF_IN_HOOK_LIST;
-		if (dllLoadedNow) flags |= PF_MASTER_DLL_LOADED;
-		if (is64Now) flags |= PF_IS_64BIT;
-	}
-	PROC_ITEMDATA mergedPacked = MAKE_ITEMDATA(pid, flags);
-	m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(mergedPacked).c_str());
-	m_ProcListCtrl.SetItemText(item, 3, path.c_str());
-	m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
-	m_ProcListCtrl.SetItemData(item, (DWORD_PTR)mergedPacked);
+		// On-demand query for arch + master DLL only if now in hook list.
+		DWORD flags = 0;
+		bool is64Now = false;
+		bool dllLoadedNow = false;
+		if (inHook) {
+			Helper::IsProcess64(pid, is64Now);
+			const wchar_t* dllName = is64Now ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+			Helper::IsModuleLoaded(pid, dllName, dllLoadedNow);
+			flags |= PF_IN_HOOK_LIST;
+			if (dllLoadedNow) flags |= PF_MASTER_DLL_LOADED;
+			if (is64Now) flags |= PF_IS_64BIT;
+		}
+		PROC_ITEMDATA mergedPacked = MAKE_ITEMDATA(pid, flags);
+		m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(mergedPacked).c_str());
+		m_ProcListCtrl.SetItemText(item, 3, path.c_str());
+		m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
+		m_ProcListCtrl.SetItemData(item, (DWORD_PTR)mergedPacked);
 		// No progress updates in enumeration-only mode.
 		return 0;
 	}
@@ -1030,7 +1052,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 
 			return 0;
 		}
-FULL_EXIT:
+	FULL_EXIT:
 		// Process truly exited: remove entry via ProcessManager
 		ProcessEntry removedCopy;
 		PM_RemoveByPid(pid);
@@ -1178,22 +1200,24 @@ void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
 	// Optionally could restrict to specific columns by checking pAct->iSubItem.
 	// Always create a fresh dialog. If an existing one is open, destroy it first.
 	 // Dynamic load HookUI.dll and invoke ShowHookDialog export
-	 if (!m_hHookUiDll) {
-	 	m_hHookUiDll = ::LoadLibraryW(L"HookUI.dll");
-	 	if (!m_hHookUiDll) {
-	 		MessageBox(L"HookUI.dll not found. Deploy the HookUI module next to the executable.", L"Hook", MB_ICONERROR);
-	 		if (pResult) *pResult = 0; return; }
-	 }
-	 if (!m_pfnShowHookDialog) {
-	 	m_pfnShowHookDialog = (PFN_ShowHookDialog)::GetProcAddress(m_hHookUiDll, "ShowHookDialog");
-	 	if (!m_pfnShowHookDialog) {
-	 		MessageBox(L"ShowHookDialog export missing in HookUI.dll.", L"Hook", MB_ICONERROR);
-	 		if (pResult) *pResult = 0; return; }
-	 }
-	 ProcessEntry e; int idx=-1; std::wstring nameDisplay = L"(unknown)"; if (PM_GetEntryCopyByPid(pid, e, &idx)) nameDisplay = e.name.empty()?nameDisplay:e.name;
-	 if (!m_pfnShowHookDialog(this->GetSafeHwnd(), pid, nameDisplay.c_str(), &g_HookServices)) {
-	 	MessageBox(L"Failed to show hook dialog via HookUI DLL.", L"Hook", MB_ICONERROR);
-	 }
+	if (!m_hHookUiDll) {
+		m_hHookUiDll = ::LoadLibraryW(L"HookUI.dll");
+		if (!m_hHookUiDll) {
+			MessageBox(L"HookUI.dll not found. Deploy the HookUI module next to the executable.", L"Hook", MB_ICONERROR);
+			if (pResult) *pResult = 0; return;
+		}
+	}
+	if (!m_pfnShowHookDialog) {
+		m_pfnShowHookDialog = (PFN_ShowHookDialog)::GetProcAddress(m_hHookUiDll, "ShowHookDialog");
+		if (!m_pfnShowHookDialog) {
+			MessageBox(L"ShowHookDialog export missing in HookUI.dll.", L"Hook", MB_ICONERROR);
+			if (pResult) *pResult = 0; return;
+		}
+	}
+	ProcessEntry e; int idx = -1; std::wstring nameDisplay = L"(unknown)"; if (PM_GetEntryCopyByPid(pid, e, &idx)) nameDisplay = e.name.empty() ? nameDisplay : e.name;
+	if (!m_pfnShowHookDialog(this->GetSafeHwnd(), pid, nameDisplay.c_str(), &g_HookServices)) {
+		MessageBox(L"Failed to show hook dialog via HookUI DLL.", L"Hook", MB_ICONERROR);
+	}
 	if (pResult) *pResult = 0;
 }
 
@@ -1209,7 +1233,7 @@ LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {
 void CUMControllerDlg::FinishStartupIfDone() {
 	if (m_CachePersisted) return; // already persisted once
 	if (!m_PersistSnapshotEntries.empty()) {
-		std::vector<std::tuple<DWORD,DWORD,DWORD,std::wstring>> dedup;
+		std::vector<std::tuple<DWORD, DWORD, DWORD, std::wstring>> dedup;
 		std::unordered_set<unsigned long long> seen; // simple 64-bit key combine
 		for (auto &t : m_PersistSnapshotEntries) {
 			DWORD pid = std::get<0>(t);
@@ -1260,7 +1284,8 @@ LRESULT CUMControllerDlg::OnPostEnumCleanup(WPARAM, LPARAM) {
 		DWORD pid = PID_FROM_ITEMDATA(packed);
 		if (!seen.insert(pid).second) {
 			dupRows.push_back(idx);
-		} else if (live.find(pid) == live.end()) {
+		}
+		else if (live.find(pid) == live.end()) {
 			deadRows.push_back(idx);
 		}
 		idx = m_ProcListCtrl.GetNextItem(idx, LVNI_ALL);
@@ -1294,18 +1319,18 @@ void CUMControllerDlg::OnRemoveExecutablesFromHookList() {
 void CUMControllerDlg::OnClearEtwLog() {
 	// Fire clear event; tracer will clear its own console.
 	app.GetETW().Clear();
-	app.GetETW().Log(L"[controller requested ETW clear]\n");
+	LOG_CTRL_ETW(L"controller requested ETW clear\n");
 }
 
 void CUMControllerDlg::OnOpenEtwLog() {
 	// Find newest EtwTracer_*.log (timestamped) or fallback to legacy EtwTracer.log
 	auto tracerExe = Helper::GetCurrentModulePath(L"EtwTracer.exe");
 	std::wstring folder; size_t pos = tracerExe.find_last_of(L"/\\");
-	folder = (pos != std::wstring::npos) ? tracerExe.substr(0,pos) : L".";
+	folder = (pos != std::wstring::npos) ? tracerExe.substr(0, pos) : L".";
 	WIN32_FIND_DATAW fd{};
 	std::wstring pattern = folder + L"\\EtwTracer_*.log";
 	HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
-	FILETIME newestFT{0,0};
+	FILETIME newestFT{ 0,0 };
 	std::wstring newest;
 	if (hFind != INVALID_HANDLE_VALUE) {
 		BOOL more = TRUE;

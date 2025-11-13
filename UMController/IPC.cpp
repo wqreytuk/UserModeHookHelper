@@ -6,6 +6,7 @@
 #include <string.h>
 #include "UMController.h" // for app.GetETW()
 #include "Helper.h" // for app.GetETW()
+#include "../Shared/LogMacros.h"
 #include <sddl.h>
 
 
@@ -20,7 +21,7 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 {
 	if (!dllPath || pid == 0) return FALSE;
 
-	app.GetETW().Log(L"IPC_SendInject: pid=%u dll=%s\n", pid, dllPath);
+	LOG_CTRL_ETW(L"IPC_SendInject: pid=%u dll=%s\n", pid, dllPath);
 
 	// Build signal filename in Win32 form
 	WCHAR signalPath[MAX_PATH];
@@ -30,7 +31,7 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	// to WCHAR on the target process side.
 	int asciiLen = WideCharToMultiByte(CP_ACP, 0, dllPath, -1, NULL, 0, NULL, NULL);
 	if (asciiLen <= 0) {
-		app.GetETW().Log(L"IPC_SendInject: WideCharToMultiByte failed\n");
+		LOG_CTRL_ETW(L"IPC_SendInject: WideCharToMultiByte failed\n");
 		return FALSE;
 	}
 	char* asciiBuf = new char[asciiLen];
@@ -50,7 +51,7 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 
 	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
 		sddl, SDDL_REVISION_1, &pSD, NULL)) {
-		app.GetETW().Log(L"ConvertStringSecurityDescriptorToSecurityDescriptorW failed: 0x%x\n", GetLastError());
+		LOG_CTRL_ETW(L"ConvertStringSecurityDescriptorToSecurityDescriptorW failed: 0x%x\n", GetLastError());
 		Helper::Fatal(L"ConvertStringSecurityDescriptorToSecurityDescriptorW function call failed\n");
 		return FALSE;
 	}
@@ -64,7 +65,7 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 
 	HANDLE hFile = CreateFile(signalPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
-		app.GetETW().Log(L"IPC_SendInject: CreateFile %ws failed (%u)\n", signalPath, GetLastError());
+		LOG_CTRL_ETW(L"IPC_SendInject: CreateFile %ws failed (%u)\n", signalPath, GetLastError());
 		LocalFree(pSD);
 
 		Helper::Fatal(L"create signal file failed\n");
@@ -75,14 +76,14 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	// write pid as 4 bytes little-endian
 	DWORD pidValue = pid;
 	if (!WriteFile(hFile, &pidValue, sizeof(pidValue), &written, NULL) || written != sizeof(pidValue)) {
-		app.GetETW().Log(L"IPC_SendInject: WriteFile(pid) failed (%u)\n", GetLastError());
+		LOG_CTRL_ETW(L"IPC_SendInject: WriteFile(pid) failed (%u)\n", GetLastError());
 		CloseHandle(hFile);
 		return FALSE;
 	}
 	// write marker '$'
 	char marker = '$';
 	if (!WriteFile(hFile, &marker, 1, &written, NULL) || written != 1) {
-		app.GetETW().Log(L"IPC_SendInject: WriteFile(marker1) failed (%u)\n", GetLastError());
+		LOG_CTRL_ETW(L"IPC_SendInject: WriteFile(marker1) failed (%u)\n", GetLastError());
 		CloseHandle(hFile);
 		return FALSE;
 	}
@@ -90,14 +91,14 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	size_t dllBytes = (size_t)(asciiLen - 1); // exclude null
 	if (dllBytes > 0) {
 		if (!WriteFile(hFile, asciiBuf, (DWORD)dllBytes, &written, NULL) || written != dllBytes) {
-			app.GetETW().Log(L"IPC_SendInject: WriteFile(dllPath) failed (%u)\n", GetLastError());
+			LOG_CTRL_ETW(L"IPC_SendInject: WriteFile(dllPath) failed (%u)\n", GetLastError());
 			CloseHandle(hFile);
 			return FALSE;
 		}
 	}
 	// write trailing marker '$'
 	if (!WriteFile(hFile, &marker, 1, &written, NULL) || written != 1) {
-		app.GetETW().Log(L"IPC_SendInject: WriteFile(marker2) failed (%u)\n", GetLastError());
+		LOG_CTRL_ETW(L"IPC_SendInject: WriteFile(marker2) failed (%u)\n", GetLastError());
 		CloseHandle(hFile);
 		return FALSE;
 	}
@@ -114,7 +115,7 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 
 	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
 		sddl, SDDL_REVISION_1, &pSD, NULL)) {
-		app.GetETW().Log(L"ConvertStringSecurityDescriptorToSecurityDescriptorW failed: 0x%x\n", GetLastError());
+		LOG_CTRL_ETW(L"ConvertStringSecurityDescriptorToSecurityDescriptorW failed: 0x%x\n", GetLastError());
 		Helper::Fatal(L"ConvertStringSecurityDescriptorToSecurityDescriptorW function call failed\n");
 		return FALSE;
 	}
@@ -122,13 +123,13 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	hFile = CreateFile(eventFilePath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
 		LocalFree(pSD);
-		app.GetETW().Log(L"failed to create event file: %ws\n", eventFilePath);
+		LOG_CTRL_ETW(L"failed to create event file: %ws\n", eventFilePath);
 		Helper::Fatal(L"failed to create event file\n");
 	}
 	else {
 		CloseHandle(hFile);
 		LocalFree(pSD);
-		app.GetETW().Log(L"event file is created ot notify injected dll to process injection request\n");
+		LOG_CTRL_ETW(L"event file is created; notifying injected dll to process injection request\n");
 	}
 	delete[] asciiBuf;
 	return TRUE;

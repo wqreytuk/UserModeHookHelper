@@ -32,6 +32,8 @@ private:
     void PopulateModuleList();
     bool GetSelectedModule(std::wstring& name, ULONGLONG& base) const;
     ULONGLONG ParseAddressText(const std::wstring& text, bool& ok) const;
+    void FreeModuleRows();
+    struct ModuleRow { ULONGLONG base; ULONGLONG size; std::wstring name; std::wstring path; };
     DWORD m_pid; std::wstring m_name; IHookServices* m_services=nullptr; CListCtrl m_ModuleList;
     int m_sortColumn=0; bool m_sortAscending=true; static int CALLBACK ModuleCompare(LPARAM, LPARAM, LPARAM);
 };

@@ -306,14 +306,19 @@ VOID EtwLog(_In_ PCWSTR Format, ...)
 {
 	WCHAR Buffer[1024];
 	va_list args;
-
 	va_start(args, Format);
 	_vsnwprintf(Buffer, RTL_NUMBER_OF(Buffer) - 1, Format, args);
 	va_end(args);
-
-	Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0'; // ensure null-termination
-
-	EventWriteString(ProviderHandle, 0, 0, Buffer);
+	Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0';
+	// Prepend stable prefix unless caller already provided one.
+	if (Buffer[0] == L'[') {
+		EventWriteString(ProviderHandle, 0, 0, Buffer);
+	} else {
+		WCHAR Prefixed[1100];
+		_snwprintf(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[MasterDLL]  %s", Buffer);
+		Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
+		EventWriteString(ProviderHandle, 0, 0, Prefixed);
+	}
 }
 // mainn
 
@@ -434,8 +439,7 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 			ustr->Length = i * sizeof(WCHAR);
 			ustr->MaximumLength = (i + 1) * sizeof(WCHAR);
 
-			// EtwLog(L"wide char dll path character count: %d\n", i);// unicode string for t obe injected dll path : %wZ\n", ustr);// dllPath);
-			EtwLog(L"constructed unicode string for to be injected dll path: %wZ\n", ustr);// dllPath);
+			EtwLog(L"constructed unicode string for to be injected dll path: %wZ\n", ustr);
 
 			pLdrLoadDll(0, 0, ustr, (PHANDLE)dllPath);
 		}

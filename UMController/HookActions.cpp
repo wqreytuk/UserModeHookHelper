@@ -11,6 +11,7 @@
 #include "Resource.h"
 #include "UMController.h"
 #include "RegistryStore.h"
+#include "../Shared/LogMacros.h"
 
 using namespace HookActions;
 
@@ -133,11 +134,11 @@ void HookActions::HandleRemoveHook(CUMControllerDlg* dlg, Filter* filter, CListC
     size_t bytesLen = ntPath.size() * sizeof(wchar_t);
     ULONGLONG hash = (ULONGLONG)Helper::GetNtPathHash(bytes, bytesLen);
 
-    app.GetETW().Log(L"OnRemoveHook: removing hook for pid %u ntpath=%s hash=0x%I64x\n", pid, ntPath.c_str(), hash);
+    LOG_CTRL_ETW(L"OnRemoveHook: removing hook for pid %u ntpath=%s hash=0x%I64x\n", pid, ntPath.c_str(), hash);
 
     bool ok = filter->FLTCOMM_RemoveHookByHash(hash);
     if (!ok) {
-        app.GetETW().Log(L"OnRemoveHook: FLTCOMM_RemoveHookByHash failed for hash=0x%I64x\n", hash);
+		LOG_CTRL_ETW(L"OnRemoveHook: FLTCOMM_RemoveHookByHash failed for hash=0x%I64x\n", hash);
         MessageBox(NULL, L"Failed to remove hook from kernel.", L"Remove Hook", MB_OK | MB_ICONERROR);
         return;
     }
@@ -171,7 +172,7 @@ void HookActions::HandleRemoveHook(CUMControllerDlg* dlg, Filter* filter, CListC
     }
 
     // Log success and post UI updates for matching PIDs instead of a popup
-    app.GetETW().Log(L"Process removed from hook list: pid=%u path=%s\n", pid, ntPath.c_str());
+	LOG_CTRL_ETW(L"Process removed from hook list: pid=%u path=%s\n", pid, ntPath.c_str());
     for (DWORD mpid : matches) {
         ::PostMessage(app.GetHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)mpid, (LPARAM)UPDATE_SOURCE_NOTIFY);
     }
@@ -193,11 +194,11 @@ void HookActions::HandleInjectDll(CUMControllerDlg* dlg, Filter* filter, CListCt
 
     BOOL ok = IPC_SendInject(pid, szFile);
     if (ok) {
-        app.GetETW().Log(L"IPC_SendInject succeeded for pid %u dll %s\n", pid, szFile);
+		LOG_CTRL_ETW(L"IPC_SendInject succeeded for pid %u dll %s\n", pid, szFile);
         // Avoid UI popups on success; post an update that injection was requested
         ::PostMessage(app.GetHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
     } else {
-        app.GetETW().Log(L"IPC_SendInject failed for pid %u dll %s\n", pid, szFile);
+		LOG_CTRL_ETW(L"IPC_SendInject failed for pid %u dll %s\n", pid, szFile);
         MessageBox(NULL, L"Failed to send injection request.", L"Inject DLL", MB_OK | MB_ICONERROR);
     }
 }

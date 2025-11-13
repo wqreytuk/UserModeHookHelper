@@ -39,4 +39,8 @@ typedef struct _UMHH_COMMAND_MESSAGE {
 
 #define X64_DLL L"umhh.dll.x64.dll"
 #define X86_DLL L"umhh.dll.Win32.dll"
+// Trampoline DLLs follow identical naming convention; used when requesting
+// the master injected DLL to load the trampoline export container.
+#define TRAMP_X64_DLL L"umhh.trampoline.dll.x64.dll"
+#define TRAMP_X86_DLL L"umhh.trampoline.dll.Win32.dll"
 #endif

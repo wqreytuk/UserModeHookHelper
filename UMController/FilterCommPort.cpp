@@ -14,6 +14,7 @@
 #include <fltuser.h>
 #include <string>
 #include "FilterCommPort.h"
+#include "../Shared/LogMacros.h"
 #include "../UserModeHookHelper/MacroDef.h"
 #include "ETW.h"
 #include "UMController.h"
@@ -62,11 +63,11 @@ Filter::Filter() {
 		&m_Port
 	);
 	if (hResult != S_OK) {
-		app.GetETW().Log(L"failed to call FilterConnectCommunicationPort: 0x%x\n", hResult);
+		LOG_CTRL_ETW(L"failed to call FilterConnectCommunicationPort: 0x%x\n", hResult);
 		Helper::Fatal(L"FilterConnectCommunicationPort failed in Filter constructor");
 	}
 	else
-		app.GetETW().Log(L"successfully connect to minifilterport: 0x%p\n", m_Port);
+		LOG_CTRL_ETW(L"successfully connect to minifilterport: 0x%p\n", m_Port);
 
 	// Immediately inform kernel of our user-mode base directory where DLLs live.
 	{
@@ -89,7 +90,7 @@ Filter::Filter() {
 				DWORD outbuffer = 0;
 				HRESULT hr2 = FilterSendMessage(m_Port, msg, (DWORD)msgSize, &outbuffer, sizeof(outbuffer), &bytesOut);
 				if ((hr2 != S_OK)||(outbuffer != 0)) {	
-					app.GetETW().Log(L"FilterSendMessage(CMD_SET_USER_DIR) failed: 0x%08x\n", hr2);
+					LOG_CTRL_ETW(L"FilterSendMessage(CMD_SET_USER_DIR) failed: 0x%08x\n", hr2);
 				}
 				free(msg);
 			}
@@ -114,7 +115,7 @@ void Filter::RunListenerLoop() {
 
 		// Use the shared m_ListenerEvent for all overlapped operations.
 		if (!m_ListenerEvent) {
-			app.GetETW().Log(L"RunListenerLoop: m_ListenerEvent not available, aborting\n");
+			LOG_CTRL_ETW(L"RunListenerLoop: m_ListenerEvent not available, aborting\n");
 			break;
 		}
 
@@ -133,7 +134,7 @@ void Filter::RunListenerLoop() {
 			// completed synchronously; get the size
 			if (!GetOverlappedResult(m_Port, &ov, &bytesTransferred, FALSE)) {
 				DWORD err = GetLastError();
-				app.GetETW().Log(L"RunListenerLoop: GetOverlappedResult(sync) failed (%u)\n", err);
+				LOG_CTRL_ETW(L"RunListenerLoop: GetOverlappedResult(sync) failed (%u)\n", err);
 				if (err == ERROR_OPERATION_ABORTED || err == ERROR_INVALID_HANDLE) break;
 				continue;
 			}
@@ -149,7 +150,7 @@ void Filter::RunListenerLoop() {
 				// message ready
 				if (!GetOverlappedResult(m_Port, &ov, &bytesTransferred, FALSE)) {
 					DWORD err = GetLastError();
-					app.GetETW().Log(L"RunListenerLoop: GetOverlappedResult(wait) failed (%u)\n", err);
+					LOG_CTRL_ETW(L"RunListenerLoop: GetOverlappedResult(wait) failed (%u)\n", err);
 					if (err == ERROR_OPERATION_ABORTED || err == ERROR_INVALID_HANDLE) break;
 					continue;
 				}
@@ -158,7 +159,7 @@ void Filter::RunListenerLoop() {
 				continue;
 			}
 		} else {
-			app.GetETW().Log(L"FilterGetMessage failed (async): 0x%08x\n", hr);
+			LOG_CTRL_ETW(L"FilterGetMessage failed (async): 0x%08x\n", hr);
 			break;
 		}
 
@@ -178,7 +179,7 @@ void Filter::RunListenerLoop() {
 			if (totalMsgBytes > headerSize) availableAfterHeader = totalMsgBytes - headerSize;
 			if (availableAfterHeader < UMHH_MSG_HEADER_SIZE) {
 				// malformed or truncated message, ignore
-				app.GetETW().Log(L"RunListenerLoop: truncated message (availableAfterHeader=%u) - ignoring\n", (ULONG)availableAfterHeader);
+				LOG_CTRL_ETW(L"RunListenerLoop: truncated message (availableAfterHeader=%u) - ignoring\n", (ULONG)availableAfterHeader);
 				continue;
 			}
 
@@ -278,7 +279,7 @@ void Filter::StartListener() {
 	if (!QueueUserWorkItem(ListenerWorkItem, this, 0)) {
 		Helper::Fatal(L"QueueUserWorkItem (RtlQueueWorkItem) failed in StartListener\n");
 	}
-	app.GetETW().Log(L"user mode miniport listener queued into work item\n");
+	LOG_CTRL_ETW(L"user mode miniport listener queued into work item\n");
 }
 
 
@@ -316,7 +317,7 @@ boolean Filter::FLTCOMM_CheckHookList(const std::wstring& ntPath) {
 
 	if (S_OK != hResult) {
 		free(msg);
-		app.GetETW().Log(L"failed to call FilterSendMessage: 0x%p\n", hResult);
+		LOG_CTRL_ETW(L"failed to call FilterSendMessage: 0x%p\n", hResult);
 		Helper::Fatal(L"FilterSendMessage failed in FLTCOMM_CheckHookList");
 	}
 	free(msg);
@@ -392,7 +393,7 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 	}
 
 	// Log the add-hook request for diagnostics
-	app.GetETW().Log(L"FLTCOMM_AddHook: request path=%s\n", ntPath.c_str());
+	LOG_CTRL_ETW(L"FLTCOMM_AddHook: request path=%s\n", ntPath.c_str());
 
 	// Compute hash
 	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
@@ -422,12 +423,12 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 		&bytesOut);
 	free(msg);
 	if (hResult == S_OK && st >= 0) {
-		app.GetETW().Log(L"FLTCOMM_AddHook: succeeded path=%s hash=0x%I64x\n", ntPath.c_str(), hash);
+		LOG_CTRL_ETW(L"FLTCOMM_AddHook: succeeded path=%s hash=0x%I64x\n", ntPath.c_str(), hash);
 		SetLastError(ERROR_SUCCESS);
 		return true;
 	}
 	// Any failure here is considered fatal for the app
-	app.GetETW().Log(L"FLTCOMM_AddHook: failed path=%s\n", ntPath.c_str());
+	LOG_CTRL_ETW(L"FLTCOMM_AddHook: failed path=%s\n", ntPath.c_str());
 	SetLastError(21); // ERROR_NOT_READY as sentinel for fatal
 	Helper::Fatal(L"FLTCOMM_AddHook: kernel or IPC failure while adding hook");
 	return false;
@@ -505,24 +506,24 @@ bool Filter::FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64) {
 	free(msg);
 
 	if (hr != S_OK) {
-		app.GetETW().Log(L"FLTCOMM_IsProcessWow64: FilterSendMessage failed hr=0x%08x pid=%u\n", hr, pid);
+		LOG_CTRL_ETW(L"FLTCOMM_IsProcessWow64: FilterSendMessage failed hr=0x%08x pid=%u\n", hr, pid);
 		return false;
 	}
 	if (bytesOut == 0) {
-		app.GetETW().Log(L"FLTCOMM_IsProcessWow64: empty reply pid=%u\n", pid);
+		LOG_CTRL_ETW(L"FLTCOMM_IsProcessWow64: empty reply pid=%u\n", pid);
 		return false;
 	}
 	// Interpret first byte as BOOLEAN; driver may have written 1 or 4 bytes.
 	BOOLEAN b = replyBuf.isWow64;
 	outIsWow64 = (b ? true : false);
 	if (bytesOut != 1 && bytesOut != sizeof(replyBuf)) {
-		app.GetETW().Log(L"FLTCOMM_IsProcessWow64: unexpected reply size=%u (expected 1 or %u) pid=%u\n", bytesOut, (UINT)sizeof(replyBuf), pid);
+		LOG_CTRL_ETW(L"FLTCOMM_IsProcessWow64: unexpected reply size=%u (expected 1 or %u) pid=%u\n", bytesOut, (UINT)sizeof(replyBuf), pid);
 	}
 	return true;
 }
 
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
-	app.GetETW().Log(L"FLTCOMM_RemoveHookByHash: request hash=0x%I64x\n", hash);
+	LOG_CTRL_ETW(L"FLTCOMM_RemoveHookByHash: request hash=0x%I64x\n", hash);
 	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1;
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
 	if (!msg) {
@@ -543,12 +544,12 @@ bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 		&bytesOut);
 	free(msg);
 	if (hResult == S_OK && removed == TRUE) {
-		app.GetETW().Log(L"FLTCOMM_RemoveHookByHash: succeeded hash=0x%I64x\n", hash);
+		LOG_CTRL_ETW(L"FLTCOMM_RemoveHookByHash: succeeded hash=0x%I64x\n", hash);
 		SetLastError(ERROR_SUCCESS);
 		return true;
 	}
 	// Any failure is fatal in user-mode policy
-	app.GetETW().Log(L"FLTCOMM_RemoveHookByHash: failed hash=0x%I64x\n", hash);
+	LOG_CTRL_ETW(L"FLTCOMM_RemoveHookByHash: failed hash=0x%I64x\n", hash);
 	SetLastError(21); // ERROR_NOT_READY as sentinel for fatal
 	Helper::Fatal(L"FLTCOMM_RemoveHookByHash: kernel or IPC failure while removing hook");
 	return false;

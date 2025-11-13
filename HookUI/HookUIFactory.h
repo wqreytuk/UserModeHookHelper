@@ -9,12 +9,13 @@
 #include <afxdialogex.h> // CDialogEx
 #include <string>
 #include "HookInterfaces.h"
-
-// Export macro for this DLL. If HOOKUI_EXPORTS is defined in project settings, we export.
+#define HOOKUI_EXPORTS
+// Export macro for this DLL. Use dllexport when building, plain extern "C" when consuming.
+// (We avoid dllimport to allow GetProcAddress loading without forcing import library semantics.)
 #ifdef HOOKUI_EXPORTS
 #define HOOKUI_API extern "C" __declspec(dllexport)
 #else
-#define HOOKUI_API extern "C" __declspec(dllimport)
+#define HOOKUI_API extern "C"
 #endif
 
 // Unmangled factory function; consumers use GetProcAddress("ShowHookDialog") or import library.

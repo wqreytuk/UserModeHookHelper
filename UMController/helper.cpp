@@ -40,7 +40,7 @@ void Helper::Fatal(const wchar_t* message) {
 		handler(message);
 	}
 	else {
-		app.GetETW().Log(L"Fatal: %s\n", message);
+		app.GetETW().Log(L"[UMCtrl]     Fatal: %s\n", message);
 		app.GetETW().UnReg();
 		exit(-1);
 	}

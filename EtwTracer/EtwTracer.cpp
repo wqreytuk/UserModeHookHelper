@@ -151,7 +151,7 @@ VOID WINAPI TraceEventCallback(_In_ PEVENT_RECORD EventRecord)
     cleaned[ri] = L'\0';
     SYSTEMTIME st; GetLocalTime(&st);
     wchar_t line[4600];
-    _snwprintf_s(line, _TRUNCATE, L"%04u-%02u-%02u %02u:%02u:%02u.%03u [%u:%u] %s\n",
+    _snwprintf_s(line, _TRUNCATE, L"%04u-%02u-%02u %02u:%02u:%02u.%03u [%05u:%05u] %s\n",
         st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
         EventRecord->EventHeader.ProcessId,
         EventRecord->EventHeader.ThreadId,
@@ -177,7 +177,14 @@ int wmain() {
 	swprintf_s(stamp, _countof(stamp), L"%04u%02u%02u_%02u%02u%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
 	std::wstring logPath = folder + L"\\EtwTracer_" + stamp + L".log";
 	StartFileLogging(logPath);
-	wprintf(L"[etwtracer] file logging enabled: %s\n", logPath.c_str());
+	wchar_t line[4600];
+	_snwprintf_s(line, _TRUNCATE, L"%04u-%02u-%02u %02u:%02u:%02u.%03u [%05u:%05u] ",
+		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+		GetCurrentProcessId(),
+		GetCurrentThreadId());
+	// Console output immediate
+	wprintf(L"%s", line);
+	wprintf(L"[EtwTracer]  file logging enabled: %s\n", logPath.c_str());
 	CreateWaitSignalThread();
 	TraceStop(); // ensure clean state
 	ULONG ec = TraceStart();
