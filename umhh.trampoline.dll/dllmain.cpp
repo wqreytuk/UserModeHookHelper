@@ -37,8 +37,8 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called.");
 
 #define DECL_PAIR(num) \
-__declspec(dllexport) VOID trampoline_stage_1_num_##num (INT param, int abcd, int a2bcd, int abc2d) { TRAMP_BODY(num,"1") } \
-__declspec(dllexport) VOID trampoline_stage_2_num_##num (INT param, int abcd, int a2bcd, int abc2d) { TRAMP_BODY(num,"2") }
+extern "C" __declspec(dllexport) VOID trampoline_stage_1_num_##num (INT param, int abcd, int a2bcd, int abc2d) { TRAMP_BODY(num,"1") } \
+extern "C" __declspec(dllexport) VOID trampoline_stage_2_num_##num (INT param, int abcd, int a2bcd, int abc2d) { TRAMP_BODY(num,"2") }
 
 DECL_PAIR(001)
 DECL_PAIR(002)
