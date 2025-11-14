@@ -1,0 +1,4 @@
+﻿  pch.cpp
+  dllmain.cpp
+    正在创建库 C:\Users\x\code\UserModeHookHelper\x64\Debug\umhh.trampoline.dll.x64.lib 和对象 C:\Users\x\code\UserModeHookHelper\x64\Debug\umhh.trampoline.dll.x64.exp
+  umhh.trampoline.dll.vcxproj -> C:\Users\x\code\UserModeHookHelper\x64\Debug\umhh.trampoline.dll.x64.dll
