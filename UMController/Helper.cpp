@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "Helper.h"
 #include "ETW.h"
 #include "UMController.h"
@@ -21,6 +21,8 @@ static std::atomic<Helper::FatalHandlerType> g_fatalHandler(nullptr);
 std::unique_ptr<TCHAR[]> Helper::m_sharedBuf = nullptr;
 size_t Helper::m_sharedBufCap = 0;
 std::mutex Helper::m_bufMutex;
+// Filter instance pointer (nullable)
+Filter* Helper::m_filterInstance = nullptr;
 
 // NOTE: WaitAndExit was removed. Call Helper::Fatal(...) at call sites.
 
@@ -36,8 +38,9 @@ void Helper::Fatal(const wchar_t* message) {
 		// message to the UI thread). Do NOT call long-blocking operations
 		// here.
 		handler(message);
-	} else {
-		app.GetETW().Log(L"Fatal: %s\n", message);
+	}
+	else {
+		app.GetETW().Log(L"[UMCtrl]     Fatal: %s\n", message);
 		app.GetETW().UnReg();
 		exit(-1);
 	}
@@ -91,6 +94,13 @@ bool Helper::GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath) {
 	if (!hProcess) {
 		return false;
 	}
+	bool ok = GetFullImageNtPathFromHandle(hProcess, outNtPath);
+	CloseHandle(hProcess);
+	return ok;
+}
+
+bool Helper::GetFullImageNtPathFromHandle(HANDLE hProcess, std::wstring& outNtPath) {
+	if (!hProcess) return false;
 
 	// Ensure we have a reasonably large shared buffer and call QueryFullProcessImageName
 	// only once. We choose a large default to avoid a second call to grow the buffer.
@@ -106,10 +116,8 @@ bool Helper::GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath) {
 	// Prepare size as input: number of TCHARs in buffer (excluding room for explicit null)
 	DWORD size = (DWORD)(m_sharedBufCap - 1);
 	if (!QueryFullProcessImageName(hProcess, 1, m_sharedBuf.get(), &size)) {
-		CloseHandle(hProcess);
 		return false;
 	}
-	CloseHandle(hProcess);
 
 	// Ensure null termination and assign
 	m_sharedBuf.get()[size] = (TCHAR)0;
@@ -254,17 +262,29 @@ cleanup:
 }
 
 bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
+	// First attempt: if a Filter instance is available, ask the kernel
+	// whether the target process is a WoW64 (32-bit) process. This is
+	// authoritative and avoids user-mode permission issues when opening
+	// target processes.
+	if (Helper::m_filterInstance) {
+		bool isWow64 = false;
+		if (Helper::m_filterInstance->FLTCOMM_IsProcessWow64(pid, isWow64)) {
+			outIs64 = !isWow64;
+			return true;
+		}
+		// If the FLT IPC failed, fall back to existing user-mode logic.
+	}
 	// UMController is always built as x64. Simplify logic: detect WOW64.
-	typedef BOOL (WINAPI *IsWow64Process2_t)(HANDLE, USHORT*, USHORT*);
-	typedef BOOL (WINAPI *IsWow64Process_t)(HANDLE, PBOOL);
+	typedef BOOL(WINAPI *IsWow64Process2_t)(HANDLE, USHORT*, USHORT*);
+	typedef BOOL(WINAPI *IsWow64Process_t)(HANDLE, PBOOL);
 	static IsWow64Process2_t s_pIsWow64Process2 = nullptr;
-	static IsWow64Process_t  s_pIsWow64Process  = nullptr;
+	static IsWow64Process_t  s_pIsWow64Process = nullptr;
 	static bool s_resolved = false;
 	if (!s_resolved) {
 		HMODULE hK32 = GetModuleHandleW(L"kernel32.dll");
 		if (hK32) {
 			s_pIsWow64Process2 = (IsWow64Process2_t)GetProcAddress(hK32, "IsWow64Process2");
-			s_pIsWow64Process  = (IsWow64Process_t)GetProcAddress(hK32, "IsWow64Process");
+			s_pIsWow64Process = (IsWow64Process_t)GetProcAddress(hK32, "IsWow64Process");
 		}
 		s_resolved = true;
 	}
@@ -276,7 +296,8 @@ bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 		USHORT pMachine = 0, nMachine = 0;
 		if (!s_pIsWow64Process2(h, &pMachine, &nMachine)) { CloseHandle(h); return false; }
 		is64 = (pMachine == 0); // pMachine != 0 => WOW64 (i.e., 32-bit process)
-	} else if (s_pIsWow64Process) {
+	}
+	else if (s_pIsWow64Process) {
 		BOOL wow = FALSE;
 		if (!s_pIsWow64Process(h, &wow)) { CloseHandle(h); return false; }
 		is64 = !wow;
@@ -284,6 +305,10 @@ bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 	CloseHandle(h);
 	outIs64 = is64;
 	return true;
+}
+
+void Helper::SetFilterInstance(Filter* f) {
+	Helper::m_filterInstance = f;
 }
 
 bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) {
@@ -302,4 +327,21 @@ bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent
 	CloseHandle(snap);
 	if (ok) outPresent = present;
 	return ok;
+}
+
+std::wstring Helper::ToHex(ULONGLONG value) {
+	if (value == 0) return L"0";
+	static const wchar_t* digits = L"0123456789ABCDEF";
+	std::wstring out;
+	bool started = false;
+	for (int nib = 15; nib >= 0; --nib) { // 16 nibbles for 64-bit
+		ULONGLONG shift = (ULONGLONG)nib * 4ULL;
+		unsigned v = (unsigned)((value >> shift) & 0xF);
+		if (!started) {
+			if (v == 0) continue;
+			started = true;
+		}
+		out.push_back(digits[v]);
+	}
+	return out;
 }
