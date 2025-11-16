@@ -3,6 +3,9 @@
 #include <vector>
 #include "../Shared/HookServices.h" // shared interface (no windows.h here to avoid MFC ordering issue)
 namespace HookCore {
+	// both stage 1 and 2 function is this size
+#define TRAMPOLINE_PLACEHOLDER_FUNCTION_SIZE 0x36B
+#define OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 0x200
 
 #define CCIPC_HOOK_POINT 0x1658c 
 #define PLACEHOLDER_FUNCIONT_OFFSET2 0x59f0
@@ -16,7 +19,7 @@ namespace HookCore {
 // #define PLACEHOLDER_SECOND_FUNCIONT_OFFSET PLACEHOLDER_SECOND_FUNCIONT_OFFSET2+stage_0_xoreaxeaxret_size
 #define stage_0_placeholder_size 8
 // #define stage_1_shellcode_size 0x56+READ_OUT_LEN_ORIASMCODE_LEN-6
-#define stage_2_shellcode_size 0x2c
+#define stage_2_shellcode_size 0x34
 #define stage_1_oriAsmCodeOffset 0x4a
 #define ff25jmpsize 6
 #define stage_1_next_ins_offset 0x23
@@ -43,6 +46,7 @@ namespace HookCore {
 #define recover_byte_value wide_char_patch_value_underscore
 #define recover_word_value 0x63 
 
+	bool	InstallHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_pit, PVOID trampoline_addr);
 
 	bool ConstructTrampoline_x64(IHookServices* services, HANDLE hProcess, PVOID hook_addr, PVOID target_base,
 		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset);

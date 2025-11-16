@@ -1,14 +1,54 @@
-#include "Trampoline.h"
+﻿#include "Trampoline.h"
 #include "../Shared/LogMacros.h"
 #include "Disasm.h"
 namespace HookCore {
 	UCHAR xor_eax_eax_ret[stage_0_xoreaxeaxret_size] = { 0x31,0xc0,0xc3 };
+
+	bool	InstallHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_pit, PVOID trampoline_addr) {
+		DWORD placeholder_func_1Old = 0;
+		if (!::VirtualProtectEx(hProc, hook_addr,
+			ff25jmpsize, PAGE_EXECUTE_READWRITE, &placeholder_func_1Old)) {
+			if (services)
+				LOG_CORE(services, L"InstallHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+		UCHAR ff25[ff25jmpsize] = { 0xff,0x25,0,0,0,0 };
+		*(DWORD*)(ff25 + 4) = (DWORD64)trampoline_pit - (DWORD64)hook_addr - ff25jmpsize;
+
+		if (!::WriteProcessMemory(hProc, trampoline_pit,
+			(void*)(&trampoline_addr), sizeof(PVOID), NULL)) {
+			if (services)
+				LOG_CORE(services, L"InstallHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+		if (!::WriteProcessMemory(hProc, hook_addr,
+			(void*)(ff25), ff25jmpsize, NULL)) {
+			if (services)
+				LOG_CORE(services, L"InstallHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		} 
+
+		if (!::VirtualProtectEx(hProc, hook_addr,
+			ff25jmpsize, placeholder_func_1Old, &placeholder_func_1Old)) {
+			if (services)
+				LOG_CORE(services, L"InstallHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+
+		if (!FlushInstructionCache(hProc, hook_addr, ff25jmpsize)) {
+			if (services)
+				LOG_CORE(services, L"InstallHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+
+		return true;
+	}
 	bool ConstructTrampoline_x64(IHookServices* services, HANDLE hProcess, PVOID hook_addr, PVOID target_base,
 		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset) {
 		DWORD bytesout = 0;
 		DWORD offset = (DWORD)((DWORD64)hook_addr - (DWORD64)target_base);
 		DWORD old = 0;
-		DWORD PLACEHOLDER_FUNCIONT_OFFSET = stage_1_func_offset + (DWORD64)tramp_dll_base + stage_0_xoreaxeaxret_size;
+		DWORD PLACEHOLDER_FUNCIONT_OFFSET = stage_1_func_offset + stage_0_xoreaxeaxret_size;
 		DWORD64 shellcodeAdd = PLACEHOLDER_FUNCIONT_OFFSET + (DWORD64)tramp_dll_base + stage_0_placeholder_size;
 		DWORD placeholder_func_1Old = 0;
 		UCHAR* original_asm_code = 0;
@@ -16,8 +56,11 @@ namespace HookCore {
 		SIZE_T stage_1_shellcode_size = 0;
 		SIZE_T READ_OUT_LEN_ORIASMCODE_LEN = 0;
 
+		DWORD satge_2_func_offset_real = stage_2_func_offset;
+		stage_2_func_offset = stage_1_func_offset + 0x250;
+
 		if (!::VirtualProtectEx(hProcess, (LPVOID)(PLACEHOLDER_FUNCIONT_OFFSET + (DWORD64)tramp_dll_base),
-			fixedTotal_LEN, PAGE_EXECUTE_READWRITE, &placeholder_func_1Old)) {
+			TRAMPOLINE_PLACEHOLDER_FUNCTION_SIZE, PAGE_EXECUTE_READWRITE, &placeholder_func_1Old)) {
 			if (services)
 				LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
 			return false;
@@ -82,6 +125,38 @@ namespace HookCore {
 					LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
 				return false;
 			}
+			// now we have read out the original asm code we need to save
+			// we ned to handle a case which is call or jmp instruction to be the last instruction
+			// we have totaly 0x36B in stage 1 placeholder function, so we can just construct new jmp code at offset 0x200
+			std::vector<uint8_t> v(original_asm_code, original_asm_code + r.preserveLen);
+			DWORD64 rip_rel_target_addr = ResolveRipRelativeTarget(hProcess, stage_1_func_offset + (DWORD64)tramp_dll_base, v);
+			if (rip_rel_target_addr) {
+				// zero indicates that there is no control flow instruction in original instruction, there is no need to construct trampoline code
+				// otherwise, we need to modify original asm code and write a ff25 instruction and a pit at 0x200 of stage_1_func_offset
+				BYTE ff25StubAddr[6] = { 0xff,0x25,0,0,0,0 };
+				if (!::WriteProcessMemory(hProcess, (LPVOID)(OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 + stage_1_func_offset + (DWORD64)tramp_dll_base), (void*)(ff25StubAddr),
+					6, NULL)) {
+					if (services)
+						LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+					return false;
+				}
+				if (!::WriteProcessMemory(hProcess, (LPVOID)(OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 + stage_1_func_offset + (DWORD64)tramp_dll_base + ff25jmpsize), (void*)(&rip_rel_target_addr),
+					8, NULL)) {
+					if (services)
+						LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+					return false;
+				}
+				if (!PatchLastInstruction(
+					original_asm_code,
+					r.preserveLen,
+					stage_1_oriAsmCodeOffset + stage_1_func_offset + (DWORD64)tramp_dll_base,
+					OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 + stage_1_func_offset + (DWORD64)tramp_dll_base)) {
+					if (services)
+						LOG_CORE(services, L"failed to patch the last instruction");
+					return false;
+				}
+			}
+
 		DWORD64 stage_2_addr = 0; 
 		{
 			UCHAR *stage_1 = (UCHAR*)malloc(stage_1_shellcode_size);
@@ -136,20 +211,44 @@ namespace HookCore {
 		}
 		 
 		{
-			UCHAR stage_2_shellcode[stage_2_shellcode_size] = { 0x48, 0x89, 0xe7, 0x48, 0x83, 0xe4,
-				0xf0, 0x48, 0x83, 0xec, 0x50, 0x48, 0x89, 0xf8, 0x48, 0x05, 0x80,
-				0x00, 0x00, 0x00, 0x48, 0x89, 0x44, 0x24, 0x20, 0xff, 0x15, 0x3a, 0x23,
-				0x00, 0x00, 0x48, 0x83, 0xc4, 0x50, 0x48, 0x89, 0xfc, 0xff, 0x25, 0x8d, 0xb8, 0xff, 0xff };
-			 
-			DWORD64 calladdr = stage_2_addr + stage_2_shellcode_size;
-			DWORD64 ff25addr = stage_2_addr + stage_2_shellcode_size + stage_0_placeholder_size;
-			// stage_2_call_offset
-			DWORD callOffsetVal = (calladdr - (stage_2_call_offset + stage_2_addr + ff25offset_size)) & 0xffffffff;
-			// stage_2_ff25_offset
-			DWORD ff25OffsetVal = (ff25addr - (stage_2_ff25_offset + stage_2_addr + ff25offset_size)) & 0xffffffff;
-			*(DWORD*)(stage_2_shellcode + stage_2_call_offset) = callOffsetVal;
-			*(DWORD*)(stage_2_shellcode + stage_2_ff25_offset) = ff25OffsetVal;
+			// reconstrcut stage 2 shellcode
+/*
+mov qword ptr [rip+0x11223344], rsp
+and    rsp,0xfffffffffffffff0
+sub    rsp,0x50
+push rdi
+mov rdi,  qword ptr [rip+0x11223344]
+mov    QWORD PTR [rsp+0x20],rdi
+pop rdi
+call   QWORD PTR [rip+0x233a]
+add    rsp,0x50
+mov    rsp, qword ptr [rip+0x11223344]
+jmp    qword ptr [rip+0x11223344]
+*/
+			UCHAR stage_2_shellcode[stage_2_shellcode_size] = { 0x48, 0x89, 0x25, 0x44,
+				0x33, 0x22, 0x11, 0x48, 0x83, 0xE4, 0xF0, 0x48, 0x83, 0xEC, 0x50, 0x57,
+				0x48, 0x8B, 0x3D, 0x44, 0x33, 0x22, 0x11, 0x48, 0x89, 0x7C, 0x24, 0x20,
+				0x5F, 0xFF, 0x15, 0x3A, 0x23, 0x00, 0x00, 0x48, 0x83, 0xC4, 0x50, 0x48,
+				0x8B, 0x25, 0x44, 0x33, 0x22, 0x11, 0xFF, 0x25, 0x44, 0x33, 0x22, 0x11 };
+			int temparory_data_store_offset_1 = 0x3;
+			int temparory_data_store_offset_2 = 0x13;
+			int temparory_data_store_offset_3 = 0x2a;
+			
+			// I'll save rsp into stage_1_func_offset+0x300
+			// so I can calculate the offset of these two mov instruction
+			*(DWORD*)(stage_2_shellcode + temparory_data_store_offset_1) = (DWORD64)tramp_dll_base+stage_1_func_offset + 0x300 - stage_2_addr - 7;
+			*(DWORD*)(stage_2_shellcode + temparory_data_store_offset_2) = (DWORD64)tramp_dll_base+stage_1_func_offset + 0x300 - stage_2_addr - 0x17;
+			*(DWORD*)(stage_2_shellcode + temparory_data_store_offset_3) = (DWORD64)tramp_dll_base+stage_1_func_offset + 0x300 - stage_2_addr - 0x2e;
 
+			DWORD64 calladdr = stage_2_addr + stage_2_shellcode_size;
+
+			int call_offset = 0x1f;
+			*(DWORD*)(stage_2_shellcode + call_offset) = calladdr - stage_2_addr - 0x23;
+
+			DWORD64 ff25addr = stage_2_addr + stage_2_shellcode_size + stage_0_placeholder_size;
+			int jmp_offset = 0x30;
+			*(DWORD*)(stage_2_shellcode + jmp_offset) = ff25addr - stage_2_addr - 0x34;
+			 
 			if (!::WriteProcessMemory(hProcess, (LPVOID)(stage_2_addr), (void*)(stage_2_shellcode), stage_2_shellcode_size, NULL)) {
 				if (services)
 					LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
@@ -280,7 +379,8 @@ namespace HookCore {
 		UCHAR finalINs[ff25jmpsize] = { 0 };
 		*(WORD*)finalINs = 0x25ff;
 
-		*(DWORD*)(finalINs + 2) = (PLACEHOLDER_FUNCIONT_OFFSET + (DWORD64)tramp_dll_base - ((DWORD64)target_base + offset + READ_OUT_LEN_ORIASMCODE_LEN)) & 0xffffffff;
+		*(DWORD*)(finalINs + 2) = (PLACEHOLDER_FUNCIONT_OFFSET + (DWORD64)tramp_dll_base - 
+			((DWORD64)target_base + offset + READ_OUT_LEN_ORIASMCODE_LEN)) & 0xffffffff;
 		
 		if (!::WriteProcessMemory(hProcess, (LPVOID)((DWORD64)target_base + offset), (void*)(finalINs), ff25jmpsize, NULL)) {
 			if (services)

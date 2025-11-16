@@ -8,6 +8,9 @@
 #include "Trampoline.h"
 
 namespace HookCore {
+#define E9_JMP_INSTRUCTION_SIZE 0x5
+#define E9_JMP_INSTRUCTION_OPCODE_SIZE 0x1
+#define E9_JMP_INSTRUCTION_OPRAND_SIZE 0x4
 	static const intptr_t MAX_DELTA = 0x7FFFFFFF; // ±2GB
 
 // Align helpers
@@ -171,23 +174,57 @@ namespace HookCore {
 			if (services)
 				LOG_CORE(services, L"failed to call GetProcAddress to get trampoline_stage_1_num_001 function adress, error: 0x%x\n", GetLastError());
 			return false;
+		} 
+
+		tramp_stage_1_addr = (PVOID)((DWORD64)tramp_stage_1_addr - (DWORD64)tramp_dll_handle + (DWORD64)trampoline_dll_base);
+
+		// there is a pivot in export table, we need to get that jmp instruction oprand to calculate real function address
+		DWORD e9_jmp_instruction_oprand = 0;
+		if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE), (LPVOID)&e9_jmp_instruction_oprand, E9_JMP_INSTRUCTION_OPRAND_SIZE, &bytesout)) {
+			if (services)
+				LOG_CORE(services, L"failed to call WriteProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
+					tramp_stage_1_addr, trampoline_pit, GetLastError());
+			return false;
 		}
+		tramp_stage_1_addr = (PVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_SIZE + e9_jmp_instruction_oprand);
+
 		PVOID tramp_stage_2_addr = GetProcAddress(tramp_dll_handle, "trampoline_stage_2_num_001");
 		if (!tramp_stage_2_addr) {
 			if (services)
 				LOG_CORE(services, L"failed to call GetProcAddress to get trampoline_stage_2_num_001 function adress, error: 0x%x\n", GetLastError());
 			return false;
 		}
-		tramp_stage_1_addr = (PVOID)((DWORD64)tramp_stage_1_addr - (DWORD64)tramp_dll_handle + (DWORD64)trampoline_dll_base);
-		if (!::WriteProcessMemory(hProc, trampoline_pit, (LPVOID)&tramp_stage_1_addr, sizeof(PVOID), &bytesout)) {
+
+		tramp_stage_2_addr = (PVOID)((DWORD64)tramp_stage_2_addr - (DWORD64)tramp_dll_handle + (DWORD64)trampoline_dll_base);
+
+		// there is a pivot in export table, we need to get that jmp instruction oprand to calculate real function address
+		e9_jmp_instruction_oprand = 0;
+		if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)tramp_stage_2_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE), (LPVOID)&e9_jmp_instruction_oprand, E9_JMP_INSTRUCTION_OPRAND_SIZE, &bytesout)) {
 			if (services)
 				LOG_CORE(services, L"failed to call WriteProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
 					tramp_stage_1_addr, trampoline_pit, GetLastError());
 			return false;
 		}
+		tramp_stage_2_addr = (PVOID)((DWORD64)tramp_stage_2_addr + E9_JMP_INSTRUCTION_SIZE + e9_jmp_instruction_oprand);
+
+		// if (!::WriteProcessMemory(hProc, trampoline_pit, (LPVOID)&tramp_stage_1_addr, sizeof(PVOID), &bytesout)) {
+		// 	if (services)
+		// 		LOG_CORE(services, L"failed to call WriteProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
+		// 			tramp_stage_1_addr, trampoline_pit, GetLastError());
+		// 	return false;
+		// }
 		DWORD stage_1_func_offset = (DWORD)((DWORD64)tramp_stage_1_addr - (DWORD64)tramp_dll_handle);
 		DWORD stage_2_func_offset = (DWORD)((DWORD64)tramp_stage_2_addr - (DWORD64)tramp_dll_handle);
-		ConstructTrampoline_x64(services, hProc, (PVOID)address, module_base, trampoline_dll_base, stage_1_func_offset, stage_2_func_offset);
+		if (!ConstructTrampoline_x64(services, hProc, (PVOID)address, module_base, trampoline_dll_base, stage_1_func_offset, stage_2_func_offset)) {
+			if (services)
+				LOG_CORE(services, L"ConstructTrampoline_x64 failed\n");
+			return false;
+		}
+		if (!InstallHook(services, hProc, (PVOID)address, trampoline_pit, (PVOID)(stage_1_func_offset + (DWORD64)trampoline_dll_base + 0x3))) {
+			if (services)
+				LOG_CORE(services, L"InstallHook failed\n");
+			return false;
+		}
 
 		return true;
 	}

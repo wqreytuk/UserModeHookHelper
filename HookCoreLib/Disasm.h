@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <Windows.h>
 namespace HookCore {
 	enum class DecideResultType {
 		SUCCESS,                // preserveLen valid
@@ -14,9 +15,20 @@ namespace HookCore {
 		DecideResultType type;
 		size_t preserveLen;     // valid if type == SUCCESS
 		std::string message;    // human-readable reason
-		uint64_t rel_ins_dest;	// relative instruction destination
 	};
 
 	DecideResult DetermineCodeEdge_x64(const uint8_t* buffer, size_t bufSize, uint64_t codeAddr, size_t minNeeded = 6);
+	uint64_t ResolveRipRelativeTarget(
+		HANDLE hProcess,
+		uint64_t hookSiteBase,
+		const std::vector<uint8_t>& codeBytes
+	);
+
+	bool PatchLastInstruction(
+		BYTE* code,                   // IN/OUT
+		size_t codeSize,
+		UINT64 newBaseAddr,           // absolute address where code[] lives
+		UINT64 ff25StubAddr          // absolute address of ff25 stub
+	);
 }
 	 
