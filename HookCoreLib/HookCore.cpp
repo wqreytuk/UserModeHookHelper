@@ -48,13 +48,17 @@ namespace HookCore {
 	// This establishes required permissions & memory accessibility without altering code.
 	// Returns true on success, false otherwise. Real hook logic (trampoline/IAT/etc.) will
 	// replace this in future iterations.
-	bool ApplyHook(DWORD pid, ULONGLONG address, IHookServices* services) {
+	bool ApplyHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD64 hook_code_addr) {
 		PVOID trampoline_dll_base = 0;
 		std::wstring trampFullPath;
 		SIZE_T bytesout = 0;
 		PVOID module_base = 0;
 
 
+		if (services) {
+			MessageBoxW(NULL, L"Fatal Error! services is NULL!", L"Hook", MB_OK | MB_ICONINFORMATION);
+			return false;
+		}
 		if (address == 0) { if (services) services->LogCore(L"ApplyHook: address is 0 (invalid).\n"); return false; }
 		std::wstring owning = FindOwningModule(pid, address, &module_base);
 		if (owning.empty()) {
@@ -207,15 +211,11 @@ namespace HookCore {
 		}
 		tramp_stage_2_addr = (PVOID)((DWORD64)tramp_stage_2_addr + E9_JMP_INSTRUCTION_SIZE + e9_jmp_instruction_oprand);
 
-		// if (!::WriteProcessMemory(hProc, trampoline_pit, (LPVOID)&tramp_stage_1_addr, sizeof(PVOID), &bytesout)) {
-		// 	if (services)
-		// 		LOG_CORE(services, L"failed to call WriteProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
-		// 			tramp_stage_1_addr, trampoline_pit, GetLastError());
-		// 	return false;
-		// }
 		DWORD stage_1_func_offset = (DWORD)((DWORD64)tramp_stage_1_addr - (DWORD64)tramp_dll_handle);
 		DWORD stage_2_func_offset = (DWORD)((DWORD64)tramp_stage_2_addr - (DWORD64)tramp_dll_handle);
-		if (!ConstructTrampoline_x64(services, hProc, (PVOID)address, module_base, trampoline_dll_base, stage_1_func_offset, stage_2_func_offset)) {
+		DWORD original_asm_code_len = 0;
+		if (!ConstructTrampoline_x64(services, hProc, (PVOID)address, module_base, trampoline_dll_base, 
+			stage_1_func_offset, stage_2_func_offset, hook_code_addr, &original_asm_code_len)) {
 			if (services)
 				LOG_CORE(services, L"ConstructTrampoline_x64 failed\n");
 			return false;
@@ -223,6 +223,10 @@ namespace HookCore {
 		if (!InstallHook(services, hProc, (PVOID)address, trampoline_pit, (PVOID)(stage_1_func_offset + (DWORD64)trampoline_dll_base + 0x3))) {
 			if (services)
 				LOG_CORE(services, L"InstallHook failed\n");
+			// recover original asm code
+			if (!RemoveHook(services, hProc, (PVOID)address, trampoline_dll_base, stage_2_func_offset, original_asm_code_len)) {
+				LOG_CORE(services, L"remove hook failed\n");
+			}
 			return false;
 		}
 

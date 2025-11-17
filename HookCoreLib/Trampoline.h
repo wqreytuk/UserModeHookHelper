@@ -47,7 +47,8 @@ namespace HookCore {
 #define recover_word_value 0x63 
 
 	bool	InstallHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_pit, PVOID trampoline_addr);
-
+	bool RemoveHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_dll_base,
+		DWORD64 stage_2_func_offset, DWORD original_asm_code_len);
 	bool ConstructTrampoline_x64(IHookServices* services, HANDLE hProcess, PVOID hook_addr, PVOID target_base,
-		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset);
+		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset,DWORD64 hook_code_addr, DWORD* out_original_asm_len);
 }

@@ -6,8 +6,9 @@
 #include <cwchar>
 #include <cwctype>
 #include <CommCtrl.h> // for EM_SETCUEBANNER
+#include <afxdlgs.h> // CFileDialog
 #include "../HookCoreLib/HookCore.h"
-
+#include "../UMController/Helper.h"
 static std::wstring Hex64(ULONGLONG v) {
     wchar_t buf[32];
     _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%llX", v);
@@ -158,11 +159,14 @@ ULONGLONG HookProcDlg::ParseAddressText(const std::wstring& input, bool& ok) con
 }
 
 void HookProcDlg::OnBnClickedApplyHook() {
-    CString directStr; GetDlgItemText(IDC_HOOKUI_EDIT_DIRECT, directStr);
-    CString offsetStr; GetDlgItemText(IDC_HOOKUI_EDIT_OFFSET, offsetStr);
-    std::wstring direct = directStr.GetString();
-    std::wstring offset = offsetStr.GetString();
-
+	CString directStr; GetDlgItemText(IDC_HOOKUI_EDIT_DIRECT, directStr);
+	CString offsetStr; GetDlgItemText(IDC_HOOKUI_EDIT_OFFSET, offsetStr);
+	std::wstring direct = directStr.GetString();
+	std::wstring offset = offsetStr.GetString();
+	if (!m_services) {
+		MessageBox(L"Fatal error! m_services not initialized!", L"Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
     // Trim simple whitespace
     auto trimWS = [](std::wstring& s){ while(!s.empty() && iswspace(s.back())) s.pop_back(); size_t i=0; while(i<s.size() && iswspace(s[i])) i++; if(i) s = s.substr(i); };
     trimWS(direct); trimWS(offset);
@@ -183,7 +187,113 @@ void HookProcDlg::OnBnClickedApplyHook() {
     }
 
     if (m_services) LOG_UI(m_services, L"Attempting hook at 0x%llX for pid %u (%s)\n", addr, m_pid, m_name.c_str());
-    bool success = HookCore::ApplyHook(m_pid, addr, m_services);
+
+    // Ask user to select a DLL to be loaded inside the target process (file explorer)
+    CString filter = L"DLL Files (*.dll)|*.dll|All Files (*.*)|*.*||";
+    CFileDialog fd(TRUE, L"dll", NULL, OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST, filter, this);
+    if (fd.DoModal() != IDOK) {
+        // User cancelled selection; abort apply
+        if (m_services) LOG_UI(m_services, L"ApplyHook cancelled by user (no DLL selected)\n");
+        return;
+    }
+    CString selectedPath = fd.GetPathName();
+	CString hook_code_dll_name = selectedPath.Mid(selectedPath.ReverseFind('\\') + 1);
+	// first we load it into ourself to check if required export function exist
+	HMODULE hook_code_dll_module = LoadLibrary(selectedPath.GetString());
+	if (!hook_code_dll_module) {
+		if (m_services) {
+			LOG_UI(m_services, "faile to call LoadLibrary target %s, erorr : 0x%x\n", selectedPath.GetString(),
+				GetLastError());
+		}
+		return;
+	}
+	bool is64 = false;
+	
+	m_services->IsProcess64(m_pid, is64);
+	PVOID export_func_addr = 0;
+	if (is64)
+		export_func_addr = (PVOID)GetProcAddress(hook_code_dll_module, "HookCodeX64");
+	else
+		export_func_addr = (PVOID)GetProcAddress(hook_code_dll_module, "HookCodeWin32");
+	if (!export_func_addr) {
+		LOG_UI(m_services, L"failed to get required export function: %s\n", is64 ? "HookCodeX64" : "HookCodeWin32");
+		MessageBox(L"failed to get required export function from HookCode dll", L"Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
+	DWORD hook_code_offset = (DWORD64)export_func_addr - (DWORD64)hook_code_dll_module;
+	FreeLibrary(hook_code_dll_module);
+    // Copy the selected DLL to a local temp folder beside this module so the
+    // master DLL can reliably open it. Use a timestamped filename to avoid
+    // collisions. If the copy fails, fall back to the original selected path.
+    std::wstring pathToInject = selectedPath.GetString();
+    {
+        wchar_t modPathBuf[MAX_PATH];
+        DWORD modLen = GetModuleFileNameW(AfxGetInstanceHandle(), modPathBuf, _countof(modPathBuf));
+        std::wstring folder;
+        if (modLen == 0) {
+            folder = L".\\hookcode_dll_temp";
+        } else {
+            std::wstring modPath(modPathBuf);
+            size_t p = modPath.find_last_of(L"\\/");
+            if (p == std::wstring::npos) folder = L".\\hookcode_dll_temp";
+            else folder = modPath.substr(0, p) + L"\\hookcode_dll_temp";
+        }
+        // Ensure directory exists (CreateDirectoryW is fine if already exists)
+        if (!CreateDirectoryW(folder.c_str(), NULL)) {
+            DWORD err = GetLastError();
+            if (err != ERROR_ALREADY_EXISTS) {
+                LOG_UI(m_services, L"CreateDirectoryW failed for %s err=%u\n", folder.c_str(), err);
+            }
+        }
+        // Build timestamped filename
+        SYSTEMTIME st; GetLocalTime(&st);
+        wchar_t ts[64];
+        swprintf(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
+            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+        std::wstring dest = folder + L"\\" + ts + L"_" + std::wstring(hook_code_dll_name.GetString());
+        if (CopyFileW(selectedPath.GetString(), dest.c_str(), FALSE)) {
+            pathToInject = dest; // use copied file
+            LOG_UI(m_services, L"Copied hook DLL to %s\n", dest.c_str());
+        } else {
+            DWORD err = GetLastError();
+            LOG_UI(m_services, L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", selectedPath.GetString(), dest.c_str(), err);
+            // keep pathToInject as original selectedPath
+        }
+    }
+	DWORD64 hook_code_dll_base = 0;
+    // Signal master DLL (via IHookServices) to load the selected DLL inside target process
+    if (m_services) {
+        if (!m_services->InjectTrampoline(m_pid, pathToInject.c_str())) {
+            LOG_UI(m_services, L"InjectTrampoline failed for pid=%u path=%s\n", m_pid, pathToInject.c_str());
+            MessageBox(L"Failed to request master DLL to load selected DLL. Check logs.", L"Hook", MB_OK | MB_ICONERROR);
+            return;
+        }
+        LOG_UI(m_services, L"InjectTrampoline signaled pid=%u path=%s\n", m_pid, pathToInject.c_str());
+        // check if HookCode injected
+
+			// Poll up to 5 seconds (50 * 100ms) for trampoline module presence.
+		const int maxIterations = 50;
+		bool loaded = false;
+		for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
+			std::vector<HookCore::ModuleInfo> mods; HookCore::EnumerateModules(m_pid, mods);
+			for (auto &m : mods) {
+				if (_wcsicmp(m.name.c_str(), hook_code_dll_name.GetString()) == 0) {
+					hook_code_dll_base = m.base;
+					loaded = true;
+					break;
+				}
+			}
+			if (!loaded) Sleep(100);
+		}
+		if (!loaded) {
+			LOG_UI(m_services, L"faile to load hookcode dll: %s\n",selectedPath.GetString());
+			MessageBox(L"faile to load hookcode dll", L"Hook", MB_OK | MB_ICONERROR);
+			return;
+		}
+	}
+
+    // Proceed with the existing hook attempt (ApplyHook) after requesting trampoline load
+    bool success = HookCore::ApplyHook(m_pid, addr, m_services, hook_code_dll_base+hook_code_offset);
     if (success) {
         if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook succeeded at 0x%llX\n", addr);
         MessageBox(L"Hook applied (basic validation + R/W test).", L"Hook", MB_OK | MB_ICONINFORMATION);

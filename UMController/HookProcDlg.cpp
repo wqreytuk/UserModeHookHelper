@@ -40,6 +40,7 @@ BOOL HookProcDlg::OnInitDialog() {
     return TRUE;
 }
 
+
 void HookProcDlg::OnDestroy() {
     m_ModuleList.Detach();
     CDialogEx::OnDestroy();
@@ -228,6 +229,11 @@ void HookProcDlg::OnBnClickedApplyHook() {
             MessageBox(L"Refusing to hook inside master DLL. Select a target function from another module.", L"Hook", MB_ICONERROR);
             return;
         }
+    }
+    // TODO: Actual hook invocation (driver/IPC) not implemented here. For now, log details.
+    if (m_services) {
+        m_services->Log(L"Hook request: pid=%u addr=0x%llX owner=%s base=0x%llX size=0x%llX direct='%s' offset='%s'\n",
+            m_pid, finalAddr, owningFound?owningName.c_str():L"(unknown)", owningBase, owningSize, direct.c_str(), relOff.c_str());
     }
     // TODO: Actual hook invocation (driver/IPC) not implemented here. For now, log details.
     if (m_services) {

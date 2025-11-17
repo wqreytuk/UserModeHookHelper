@@ -17,7 +17,7 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	return TRUE;
 }
 
- 
+
 // NOTE: For brevity in this patch, functions 011..100 for both stages follow the identical body pattern.
 // If you require the literal expanded code for 011..100, I can append them in a subsequent patch.
 // ---- Explicit expansion for trampoline_stage_[1|2]_num_011 .. num_100 ----
