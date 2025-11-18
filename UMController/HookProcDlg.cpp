@@ -172,6 +172,16 @@ ULONGLONG HookProcDlg::ParseAddressText(const std::wstring& input, bool& ok) con
 }
 
 void HookProcDlg::OnBnClickedApplyHook() {
+    // If the target process no longer exists, close this modeless dialog to avoid acting on a dead PID.
+    HANDLE hProcCheck = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
+    if (!hProcCheck) {
+        MessageBox(L"Target process does not appear to be running. Closing dialog.", L"Hook", MB_ICONWARNING);
+        // Destroy the dialog window; parent will be notified in OnDestroy and will delete this object.
+        DestroyWindow();
+        return;
+    }
+    CloseHandle(hProcCheck);
+
     CString directStr; GetDlgItemText(IDC_EDIT_DIRECT, directStr);
     CString offsetStr; GetDlgItemText(IDC_EDIT_OFFSET, offsetStr);
     std::wstring direct = directStr.GetString();

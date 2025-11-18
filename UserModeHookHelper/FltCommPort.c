@@ -47,7 +47,9 @@ BroadcastWorkRoutine(
 	for (ULONG j = 0; j < w->Count; ++j) {
 		PCOMM_CONTEXT c = w->Array[j];
 		if (!c || c->m_ClientPort == NULL) continue;
-		NTSTATUS r = FltSendMessage(DriverCtx_GetFilter(), &c->m_ClientPort, w->Msg, w->MsgSize, NULL, 0, NULL);
+		LARGE_INTEGER timeout;
+		timeout.QuadPart = -10000000LL; // 1 second timeout
+		NTSTATUS r = FltSendMessage(DriverCtx_GetFilter(), &c->m_ClientPort, w->Msg, w->MsgSize, NULL, 0, &timeout);
 		if (!NT_SUCCESS(r)) {
 			Log(L"Deferred broadcast: FltSendMessage failed for client pid %d port %p st=0x%x\n",
 				c->m_UserProcessId, c->m_ClientPort, r);
@@ -291,7 +293,9 @@ NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG out
 	for (ULONG i = 0; i < count; ++i) {
 		PCOMM_CONTEXT ctx = arr[i];
 		if (!ctx || ctx->m_ClientPort == NULL) continue;
-		NTSTATUS st = FltSendMessage(DriverCtx_GetFilter(), &ctx->m_ClientPort, msg, msgSize, NULL, 0, NULL);
+		LARGE_INTEGER timeout;
+		timeout.QuadPart = -10000000LL; // 1 second timeout
+		NTSTATUS st = FltSendMessage(DriverCtx_GetFilter(), &ctx->m_ClientPort, msg, msgSize, NULL, 0, &timeout);
 		if (NT_SUCCESS(st)) {
 			notified++;
 		}
@@ -376,7 +380,9 @@ NTSTATUS Comm_BroadcastApcQueued(DWORD ProcessId, PULONG outNotifiedCount) {
 	for (ULONG i = 0; i < count; ++i) {
 		PCOMM_CONTEXT ctx = arr[i];
 		if (!ctx || ctx->m_ClientPort == NULL) continue;
-		NTSTATUS st = FltSendMessage(DriverCtx_GetFilter(), &ctx->m_ClientPort, msg, msgSize, NULL, 0, NULL);
+		LARGE_INTEGER timeout;
+		timeout.QuadPart = -10000000LL; // 1 second timeout
+		NTSTATUS st = FltSendMessage(DriverCtx_GetFilter(), &ctx->m_ClientPort, msg, msgSize, NULL, 0, &timeout);
 		if (NT_SUCCESS(st)) {
 			notified++;
 		}

@@ -38,7 +38,9 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 
 #define DECL_PAIR(num) \
 extern "C" __declspec(dllexport) VOID trampoline_stage_1_num_##num (INT param, int abcd, int a2bcd, int abc2d) { TRAMP_BODY(num,"1") } \
-extern "C" __declspec(dllexport) VOID trampoline_stage_2_num_##num (INT param, int abcd, int a2bcd, int abc2d) { TRAMP_BODY(num,"2") }
+unsigned long long g_num_##num = 0; \
+extern "C" __declspec(dllexport) VOID trampoline_stage_2_num_##num (INT param, int abcd, int a2bcd, int abc2d)\
+ { printf("0x%p\n", (void*)(ULONG_PTR)g_num_##num); TRAMP_BODY(num,"2") }
 
 DECL_PAIR(001)
 DECL_PAIR(002)

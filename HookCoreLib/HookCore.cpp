@@ -55,7 +55,7 @@ namespace HookCore {
 		PVOID module_base = 0;
 
 
-		if (services) {
+		if (!services) {
 			MessageBoxW(NULL, L"Fatal Error! services is NULL!", L"Hook", MB_OK | MB_ICONINFORMATION);
 			return false;
 		}
@@ -210,9 +210,13 @@ namespace HookCore {
 			return false;
 		}
 		tramp_stage_2_addr = (PVOID)((DWORD64)tramp_stage_2_addr + E9_JMP_INSTRUCTION_SIZE + e9_jmp_instruction_oprand);
+		
+		if (!FreeLibrary(tramp_dll_handle)) {
+			LOG_CORE(services, L"failed to free trampoline dll from UMController\n");
+		}
 
-		DWORD stage_1_func_offset = (DWORD)((DWORD64)tramp_stage_1_addr - (DWORD64)tramp_dll_handle);
-		DWORD stage_2_func_offset = (DWORD)((DWORD64)tramp_stage_2_addr - (DWORD64)tramp_dll_handle);
+		DWORD stage_1_func_offset = (DWORD)((DWORD64)tramp_stage_1_addr - (DWORD64)trampoline_dll_base);
+		DWORD stage_2_func_offset = (DWORD)((DWORD64)tramp_stage_2_addr - (DWORD64)trampoline_dll_base);
 		DWORD original_asm_code_len = 0;
 		if (!ConstructTrampoline_x64(services, hProc, (PVOID)address, module_base, trampoline_dll_base, 
 			stage_1_func_offset, stage_2_func_offset, hook_code_addr, &original_asm_code_len)) {
@@ -220,7 +224,8 @@ namespace HookCore {
 				LOG_CORE(services, L"ConstructTrampoline_x64 failed\n");
 			return false;
 		}
-		if (!InstallHook(services, hProc, (PVOID)address, trampoline_pit, (PVOID)(stage_1_func_offset + (DWORD64)trampoline_dll_base + 0x3))) {
+		if (!InstallHook(services, hProc, (PVOID)address, trampoline_pit,
+			(PVOID)(stage_1_func_offset + (DWORD64)trampoline_dll_base + 0x3+0x8))) {
 			if (services)
 				LOG_CORE(services, L"InstallHook failed\n");
 			// recover original asm code

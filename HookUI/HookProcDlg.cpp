@@ -159,6 +159,26 @@ ULONGLONG HookProcDlg::ParseAddressText(const std::wstring& input, bool& ok) con
 }
 
 void HookProcDlg::OnBnClickedApplyHook() {
+    // If the target process no longer exists, close this modeless dialog to avoid acting on a dead PID.
+    bool procFound = false;
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 pe = { sizeof(pe) };
+        if (Process32First(hSnap, &pe)) {
+            do {
+                if ((DWORD)pe.th32ProcessID == m_pid) { procFound = true; break; }
+            } while (Process32Next(hSnap, &pe));
+        }
+        CloseHandle(hSnap);
+    }
+    if (!procFound) {
+        MessageBox(L"Target process does not appear to be running. Closing dialog.", L"Hook", MB_ICONWARNING);
+        // Destroy the dialog window; parent will be notified in OnDestroy and will delete this object.
+        DestroyWindow();
+        return;
+    }
+
+
 	CString directStr; GetDlgItemText(IDC_HOOKUI_EDIT_DIRECT, directStr);
 	CString offsetStr; GetDlgItemText(IDC_HOOKUI_EDIT_OFFSET, offsetStr);
 	std::wstring direct = directStr.GetString();
@@ -216,7 +236,10 @@ void HookProcDlg::OnBnClickedApplyHook() {
 	else
 		export_func_addr = (PVOID)GetProcAddress(hook_code_dll_module, "HookCodeWin32");
 	if (!export_func_addr) {
-		LOG_UI(m_services, L"failed to get required export function: %s\n", is64 ? "HookCodeX64" : "HookCodeWin32");
+		if (is64) 
+			LOG_UI(m_services, L"failed to get required export function: HookCodeX64\n");
+		else
+			LOG_UI(m_services, L"failed to get required export function: HookCodeWin32\n");
 		MessageBox(L"failed to get required export function from HookCode dll", L"Hook", MB_OK | MB_ICONERROR);
 		return;
 	}
@@ -226,6 +249,7 @@ void HookProcDlg::OnBnClickedApplyHook() {
     // master DLL can reliably open it. Use a timestamped filename to avoid
     // collisions. If the copy fails, fall back to the original selected path.
     std::wstring pathToInject = selectedPath.GetString();
+	wchar_t* temp_hook_code_dll_name = 0;
     {
         wchar_t modPathBuf[MAX_PATH];
         DWORD modLen = GetModuleFileNameW(AfxGetInstanceHandle(), modPathBuf, _countof(modPathBuf));
@@ -250,6 +274,11 @@ void HookProcDlg::OnBnClickedApplyHook() {
         wchar_t ts[64];
         swprintf(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+		std::wstring new_dll_name = L"";
+		new_dll_name = new_dll_name + ts + L"_" + std::wstring(hook_code_dll_name.GetString());
+		temp_hook_code_dll_name = (wchar_t*)malloc(2 * (new_dll_name.length() + 1));
+		ZeroMemory(temp_hook_code_dll_name, 2 * (new_dll_name.length() + 1));
+		memcpy(temp_hook_code_dll_name, new_dll_name.c_str(), 2 * new_dll_name.length());
         std::wstring dest = folder + L"\\" + ts + L"_" + std::wstring(hook_code_dll_name.GetString());
         if (CopyFileW(selectedPath.GetString(), dest.c_str(), FALSE)) {
             pathToInject = dest; // use copied file
@@ -277,7 +306,7 @@ void HookProcDlg::OnBnClickedApplyHook() {
 		for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
 			std::vector<HookCore::ModuleInfo> mods; HookCore::EnumerateModules(m_pid, mods);
 			for (auto &m : mods) {
-				if (_wcsicmp(m.name.c_str(), hook_code_dll_name.GetString()) == 0) {
+				if (_wcsicmp(m.name.c_str(), temp_hook_code_dll_name) == 0) {
 					hook_code_dll_base = m.base;
 					loaded = true;
 					break;
@@ -296,10 +325,10 @@ void HookProcDlg::OnBnClickedApplyHook() {
     bool success = HookCore::ApplyHook(m_pid, addr, m_services, hook_code_dll_base+hook_code_offset);
     if (success) {
         if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook succeeded at 0x%llX\n", addr);
-        MessageBox(L"Hook applied (basic validation + R/W test).", L"Hook", MB_OK | MB_ICONINFORMATION);
+        MessageBox(L"Hook succeed", L"Hook", MB_OK | MB_ICONINFORMATION);
     } else {
         if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook failed at 0x%llX\n", addr);
-        MessageBox(L"Hook failed (address invalid or memory inaccessible).", L"Hook", MB_OK | MB_ICONERROR);
+        MessageBox(L"Hook failed", L"Hook", MB_OK | MB_ICONERROR);
     }
 }
 

@@ -76,6 +76,9 @@
     <Lib>
       <AdditionalDependencies>$(SolutionDir)/lib/capstone.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Lib>
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+    </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <Lib>
@@ -86,6 +89,9 @@
     <Lib>
       <AdditionalDependencies>$(SolutionDir)/lib/capstone.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Lib>
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+    </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Lib>

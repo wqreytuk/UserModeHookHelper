@@ -24,6 +24,11 @@ namespace HookCore {
 		const std::vector<uint8_t>& codeBytes
 	);
 
+	// Search forward from startAddr in the remote process for the first LEA
+	// instruction and return the resolved effective address when the LEA uses
+	// RIP-relative addressing (e.g., lea rax, [rip+disp]). Returns 0 on failure
+	// or if the LEA cannot be resolved to an absolute address.
+	uint64_t ResolveLeaInstruction(HANDLE hProcess, uint64_t startAddr, size_t maxRead = 8192);
 	bool PatchLastInstruction(
 		BYTE* code,                   // IN/OUT
 		size_t codeSize,

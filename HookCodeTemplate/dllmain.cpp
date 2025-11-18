@@ -10,14 +10,15 @@ REGHANDLE g_ProviderHandle;
 void Log(_In_ PCWSTR Format, ...) {
 	WCHAR Buffer[1024];
 	va_list args;
-
 	va_start(args, Format);
 	_vsnwprintf_s(Buffer, RTL_NUMBER_OF(Buffer) - 1, Format, args);
 	va_end(args);
+	Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0';
 
-	Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0'; // ensure null-termination
-
-	EventWriteString(g_ProviderHandle, 0, 0, Buffer);
+	WCHAR Prefixed[1100];
+	_snwprintf_s(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[HookCode]  %s", Buffer);
+	Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
+	EventWriteString(g_ProviderHandle, 0, 0, Prefixed);
 }
 
 extern "C" __declspec(dllexport) VOID HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8, PVOID r9, PVOID rsp) {
@@ -26,10 +27,10 @@ extern "C" __declspec(dllexport) VOID HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8
 	PVOID r13 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x10);
 	PVOID r12 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x18);
 	PVOID r11 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x20);
-	PVOID r10 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x28); 
+	PVOID r10 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x28);
 	PVOID rbp = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x40);
 	PVOID rdi = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x48);
-	PVOID rsi = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x50); 
+	PVOID rsi = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x50);
 	PVOID rbx = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x68);
 	PVOID rax = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x70);
 
@@ -53,25 +54,20 @@ VOID EntryCode() {
 		&g_ProviderHandle);
 }
 
-VOID LeaveCode() {
-	EventUnregister(g_ProviderHandle);
-	g_ProviderHandle = 0;
-}
-BOOL APIENTRY DllMain( HMODULE hModule,
-                       DWORD  ul_reason_for_call,
-                       LPVOID lpReserved
-                     )
+BOOL APIENTRY DllMain(HMODULE hModule,
+	DWORD  ul_reason_for_call,
+	LPVOID lpReserved
+)
 {
-    switch (ul_reason_for_call)
-    {
-    case DLL_PROCESS_ATTACH:
+	switch (ul_reason_for_call)
+	{
+	case DLL_PROCESS_ATTACH:
 		EntryCode();
-    case DLL_THREAD_ATTACH:
-    case DLL_THREAD_DETACH:
-    case DLL_PROCESS_DETACH:
-		LeaveCode();
-        break;
-    }
-    return TRUE;
+	case DLL_THREAD_ATTACH:
+	case DLL_THREAD_DETACH:
+	case DLL_PROCESS_DETACH:
+		break;
+	}
+	return TRUE;
 }
 
