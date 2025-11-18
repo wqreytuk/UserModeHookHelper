@@ -1,6 +1,8 @@
 {
     "files.associations": {
         "memory": "cpp",
-        "xiosbase": "cpp"
+        "xiosbase": "cpp",
+        "vector": "cpp",
+        "tuple": "cpp"
     }
 }

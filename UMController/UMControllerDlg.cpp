@@ -256,6 +256,15 @@ public:
 		// Use Helper which itself queries the kernel via Filter when available.
 		return Helper::IsProcess64(targetPid, outIs64);
 	}
+	bool SaveProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& entries) override {
+		return RegistryStore::WriteProcHookList(entries);
+	}
+	bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) override {
+		return RegistryStore::RemoveProcHookEntry(pid, filetimeHi, filetimeLo, hookId);
+	}
+	bool LoadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& outEntries) override {
+		return RegistryStore::ReadProcHookList(outEntries);
+	}
 };
 static HookServicesAdapter g_HookServices; // singleton adapter instance
 

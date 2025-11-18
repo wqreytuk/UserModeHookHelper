@@ -48,7 +48,7 @@ namespace HookCore {
 	// This establishes required permissions & memory accessibility without altering code.
 	// Returns true on success, false otherwise. Real hook logic (trampoline/IAT/etc.) will
 	// replace this in future iterations.
-	bool ApplyHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD64 hook_code_addr,DWORD *out_ori_asm_code_len) {
+	bool ApplyHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD64 hook_code_addr, int hook_id, DWORD *out_ori_asm_code_len,PVOID* out_trampoline_pit) {
 		PVOID trampoline_dll_base = 0;
 		std::wstring trampFullPath;
 		SIZE_T bytesout = 0;
@@ -177,12 +177,15 @@ namespace HookCore {
 				LOG_CORE(services, L"failed to call LoadLibraryW with %s, error: 0x%x\n", trampFullPath.c_str(), GetLastError());
 			return false;
 		}
-		PVOID tramp_stage_1_addr = GetProcAddress(tramp_dll_handle, "trampoline_stage_1_num_001");
+		// Resolve export by hook-specific name (trampoline_stage_1_num_##)
+		char stage_1_func_name[64] = {0};
+		sprintf_s(stage_1_func_name, "trampoline_stage_1_num_%03d", hook_id);
+		PVOID tramp_stage_1_addr = GetProcAddress(tramp_dll_handle, stage_1_func_name);
 		if (!tramp_stage_1_addr) {
 			if (services)
-				LOG_CORE(services, L"failed to call GetProcAddress to get trampoline_stage_1_num_001 function adress, error: 0x%x\n", GetLastError());
+				LOG_CORE(services, L"failed to call GetProcAddress to get %S function adress, error: 0x%x\n", stage_1_func_name, GetLastError());
 			return false;
-		} 
+		}
 
 		tramp_stage_1_addr = (PVOID)((DWORD64)tramp_stage_1_addr - (DWORD64)tramp_dll_handle + (DWORD64)trampoline_dll_base);
 
@@ -196,10 +199,13 @@ namespace HookCore {
 		}
 		tramp_stage_1_addr = (PVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_SIZE + e9_jmp_instruction_oprand);
 
-		PVOID tramp_stage_2_addr = GetProcAddress(tramp_dll_handle, "trampoline_stage_2_num_001");
+		// Resolve stage 2 export using the same hook-specific naming
+		char stage_2_func_name[64] = {0};
+		sprintf_s(stage_2_func_name, "trampoline_stage_2_num_%03d", hook_id);
+		PVOID tramp_stage_2_addr = GetProcAddress(tramp_dll_handle, stage_2_func_name);
 		if (!tramp_stage_2_addr) {
 			if (services)
-				LOG_CORE(services, L"failed to call GetProcAddress to get trampoline_stage_2_num_001 function adress, error: 0x%x\n", GetLastError());
+				LOG_CORE(services, L"failed to call GetProcAddress to get %S function adress, error: 0x%x\n", stage_2_func_name, GetLastError());
 			return false;
 		}
 
@@ -238,10 +244,11 @@ namespace HookCore {
 			}
 			return false;
 		}
+		*out_trampoline_pit = trampoline_pit;
 		*out_ori_asm_code_len = original_asm_code_len;
 		return true;
 	}
-	bool RemoveHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD hook_id, DWORD ori_asm_code_len) {
+	bool RemoveHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD hook_id, DWORD ori_asm_code_len,PVOID trampoline_pit) { 
 		PVOID trampoline_dll_base = 0;
 		std::wstring trampFullPath;
 		SIZE_T bytesout = 0;
@@ -327,6 +334,11 @@ namespace HookCore {
 				services->LogCore(L"failed to open target process, error: 0x%x\n", GetLastError());
 			return false;
 		} 
+		// deallocate trampoline allocted when ApplyHook
+		if (!VirtualFreeEx(hProc, trampoline_pit, 0, MEM_RELEASE)) {
+			LOG_CORE(services, L"failed to call VirtualFreeEx to free trampoline pit, error: 0x%x\n", GetLastError());
+			return false;
+		}
 		HMODULE tramp_dll_handle = LoadLibraryW(trampFullPath.c_str());
 		if (!tramp_dll_handle) {
 			if (services)

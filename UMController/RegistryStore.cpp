@@ -9,6 +9,7 @@
 
 static const wchar_t* VALUE_NAME = L"HookPaths";
 static const wchar_t* COMPOSITE_VALUE_NAME = L"NtProcCache"; // new composite key cache
+static const wchar_t* PROCHOOK_VALUE_NAME = L"ProcHookList"; // per-process hook list
 
 bool RegistryStore::ReadHookPaths(std::vector<std::wstring>& outPaths) {
     outPaths.clear();
@@ -199,4 +200,97 @@ bool RegistryStore::WriteCompositeProcCache(const std::vector<std::tuple<DWORD, 
         return false;
     }
     return true;
+}
+
+// Format: PID:HIGH:LOW:HOOKID:ORI_LEN:TRAMP_PIT:ADDR=MODULE  (ADDR/TRAMP_PIT hex 64-bit, HOOKID/ORI_LEN hex)
+bool RegistryStore::ReadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& outEntries) {
+    outEntries.clear();
+    HKEY hKey = NULL;
+    LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_READ, &hKey);
+    if (r != ERROR_SUCCESS) return true; // treat missing as empty
+    DWORD type=0, dataSize=0;
+    r = RegQueryValueExW(hKey, PROCHOOK_VALUE_NAME, NULL, &type, NULL, &dataSize);
+    if (r != ERROR_SUCCESS) { RegCloseKey(hKey); if (r == ERROR_FILE_NOT_FOUND) return true; return false; }
+    if (type != REG_MULTI_SZ) { RegCloseKey(hKey); return false; }
+    if (dataSize == 0) { RegCloseKey(hKey); return true; }
+    std::vector<wchar_t> buf(dataSize/sizeof(wchar_t));
+    r = RegQueryValueExW(hKey, PROCHOOK_VALUE_NAME, NULL, NULL, reinterpret_cast<LPBYTE>(buf.data()), &dataSize);
+    RegCloseKey(hKey);
+    if (r != ERROR_SUCCESS) return false;
+    size_t idx=0, wcCount=dataSize/sizeof(wchar_t);
+    while (idx < wcCount) {
+        if (buf[idx] == L'\0') { ++idx; continue; }
+        std::wstring line(&buf[idx]);
+        idx += line.size()+1;
+        size_t eq = line.find(L'='); if (eq == std::wstring::npos) continue;
+        std::wstring key = line.substr(0, eq);
+        std::wstring module = line.substr(eq+1);
+        // key: PID:HIGH:LOW:HOOKID:ORI_LEN:TRAMP_PIT:ADDR
+        std::vector<std::wstring> parts;
+        size_t pos = 0; while (true) {
+            size_t p = key.find(L':', pos);
+            if (p == std::wstring::npos) { parts.push_back(key.substr(pos)); break; }
+            parts.push_back(key.substr(pos, p-pos)); pos = p+1;
+        }
+        if (parts.size() != 7) continue;
+        DWORD pid=0, hi=0, lo=0; int hookid=0; DWORD ori_len=0; unsigned long long tramp_pit=0; unsigned long long addr=0;
+        swscanf_s(parts[0].c_str(), L"%lx", &pid);
+        swscanf_s(parts[1].c_str(), L"%lx", &hi);
+        swscanf_s(parts[2].c_str(), L"%lx", &lo);
+        swscanf_s(parts[3].c_str(), L"%x", &hookid);
+        swscanf_s(parts[4].c_str(), L"%x", &ori_len);
+        // parse 64-bit hex for trampoline pit and address
+        swscanf_s(parts[5].c_str(), L"%llx", &tramp_pit);
+        swscanf_s(parts[6].c_str(), L"%llx", &addr);
+        outEntries.emplace_back(pid, hi, lo, hookid, ori_len, tramp_pit, addr, module);
+    }
+    return true;
+}
+
+bool RegistryStore::WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& entries) {
+    std::vector<wchar_t> buf;
+    for (auto &t : entries) {
+        DWORD pid = std::get<0>(t);
+        DWORD hi = std::get<1>(t);
+        DWORD lo = std::get<2>(t);
+        int hookid = std::get<3>(t);
+        DWORD ori_len = std::get<4>(t);
+        unsigned long long tramp_pit = std::get<5>(t);
+        unsigned long long addr = std::get<6>(t);
+        const std::wstring &module = std::get<7>(t);
+        if (module.empty()) continue;
+        wchar_t header[128];
+        _snwprintf_s(header, _TRUNCATE, L"%08lX:%08lX:%08lX:%08X:%08X:%016llX:%016llX=", pid, hi, lo, (unsigned int)hookid, (unsigned int)ori_len, tramp_pit, addr);
+        std::wstring line = header;
+        line.append(module);
+        buf.insert(buf.end(), line.c_str(), line.c_str() + line.size());
+        buf.push_back(L'\0');
+    }
+    if (buf.empty() || buf.back() != L'\0') buf.push_back(L'\0');
+    buf.push_back(L'\0');
+    HKEY hKey = NULL; DWORD disp=0;
+    LONG r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &disp);
+    if (r != ERROR_SUCCESS) return false;
+    LONG rr = RegSetValueExW(hKey, PROCHOOK_VALUE_NAME, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size()*sizeof(wchar_t)));
+    RegCloseKey(hKey);
+    return rr == ERROR_SUCCESS;
+}
+
+bool RegistryStore::RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) {
+    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>> entries;
+    if (!ReadProcHookList(entries)) return false;
+    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>> out;
+    bool removed = false;
+    for (auto &t : entries) {
+        DWORD p = std::get<0>(t);
+        DWORD hi = std::get<1>(t);
+        DWORD lo = std::get<2>(t);
+        int hid = std::get<3>(t);
+        if (!removed && p == pid && hi == filetimeHi && lo == filetimeLo && hid == hookId) {
+            removed = true; continue;
+        }
+        out.push_back(t);
+    }
+    if (!removed) return true; // nothing to do
+    return WriteProcHookList(out);
 }

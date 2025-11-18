@@ -28,4 +28,12 @@ namespace RegistryStore {
     //    12A4:01D9F2AB:7B3C1E40=\Device\HarddiskVolume3\Windows\System32\notepad.exe
     bool ReadCompositeProcCache(std::vector<std::tuple<DWORD, DWORD, DWORD, std::wstring>>& outEntries);
     bool WriteCompositeProcCache(const std::vector<std::tuple<DWORD, DWORD, DWORD, std::wstring>>& entries);
+    // Persisted per-process hook entries. Value name: ProcHookList (REG_MULTI_SZ)
+    // Each line formatted as:
+    //   PID:HIGH:LOW:HOOKID:ORI_LEN:TRAMP_PIT:ADDR=MODULE
+    // Where ADDR and TRAMP_PIT are unsigned 64-bit hex and HOOKID/ORI_LEN are 32-bit hex.
+    bool ReadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& outEntries);
+    bool WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& entries);
+    // Remove a single persisted ProcHookList entry matching PID, FILETIME hi/lo and hook id.
+    bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId);
 }
