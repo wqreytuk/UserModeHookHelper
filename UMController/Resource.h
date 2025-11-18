@@ -40,7 +40,6 @@
 #define IDC_STATIC_STARTUP_PCT     1018
 #define IDC_STATIC_HINT           1019
 
-#define IDC_LIST_HOOKS            1021
 
 // About dialog hyperlink control
 #define IDC_SYSLINK_SITE          1020

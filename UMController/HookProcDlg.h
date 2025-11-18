@@ -43,13 +43,11 @@ private:
     DWORD m_pid;
     std::wstring m_name;
     CListCtrl m_ModuleList;
-    CListCtrl m_HookList;
     // Sorting state for module list
     int m_sortColumn = 0;
     bool m_sortAscending = true;
     static int CALLBACK ModuleCompare(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort);
     int m_lastSelectedIndex = -1; // track last module selection to restore visual state
-    void PopulateHookList();
-    int AddHookEntry(const std::wstring& hookId, ULONGLONG address, const std::wstring& moduleName);
+    
     IHookServices* m_services = nullptr; // logging / future kernel ops abstraction
 };

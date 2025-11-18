@@ -20,6 +20,9 @@ const UINT HookProcDlg::kMsgHookDlgDestroyed = WM_APP + 0x701;
 BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_HOOKUI_BTN_APPLY, &HookProcDlg::OnBnClickedApplyHook)
     ON_WM_SIZE()
+    ON_WM_LBUTTONDOWN()
+    ON_WM_LBUTTONUP()
+    ON_WM_MOUSEMOVE()
     ON_WM_GETMINMAXINFO()
     ON_NOTIFY(LVN_COLUMNCLICK, IDC_HOOKUI_LIST_MODULES, &HookProcDlg::OnColumnClickModules)
     ON_NOTIFY(LVN_ITEMCHANGED, IDC_HOOKUI_LIST_MODULES, &HookProcDlg::OnModuleItemChanged)
@@ -47,20 +50,85 @@ BOOL HookProcDlg::OnInitDialog() {
     lvStyle |= LVS_SHOWSELALWAYS; ::SetWindowLong(m_ModuleList.GetSafeHwnd(), GWL_STYLE, lvStyle);
     ::SetWindowPos(m_ModuleList.GetSafeHwnd(), nullptr, 0,0,0,0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
     PopulateModuleList();
-    if (CWnd* wDirectEdit = GetDlgItem(IDC_HOOKUI_EDIT_DIRECT)) {
-        ::SendMessage(wDirectEdit->GetSafeHwnd(), EM_SETCUEBANNER, 0, (LPARAM)L"(Preview DLL version)");
-    }
+    // Hook list initialization
+    m_HookList.Attach(GetDlgItem(IDC_HOOKUI_LIST_HOOKS)->m_hWnd);
+    m_HookList.InsertColumn(0, L"Hook ID", LVCFMT_LEFT, 80);
+    m_HookList.InsertColumn(1, L"Address", LVCFMT_LEFT, 100);
+    m_HookList.InsertColumn(2, L"Module", LVCFMT_LEFT, 180);
+    m_HookList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+    PopulateHookList();
+    // apply initial splitter
+    CRect rc; GetClientRect(&rc); UpdateLayoutForSplitter(rc.Width(), rc.Height());
+    // preview banner removed for cleaner UI
     return TRUE;
 }
 
 void HookProcDlg::OnDestroy() {
     FreeModuleRows();
     m_ModuleList.DeleteAllItems();
+    m_HookList.DeleteAllItems();
     m_ModuleList.Detach();
     CDialogEx::OnDestroy();
     if (CWnd* parent = GetParent()) {
         ::PostMessage(parent->GetSafeHwnd(), HookProcDlg::kMsgHookDlgDestroyed, (WPARAM)this, 0);
     }
+}
+
+void HookProcDlg::UpdateLayoutForSplitter(int cx, int cy) {
+    const int margin = 7;
+    int leftWidth = m_splitPos; if (leftWidth < 120) leftWidth = 120; if (leftWidth > cx - 160) leftWidth = cx - 160;
+    int listTop = margin + 11;
+    int listHeight = cy - listTop - 20; if (listHeight < 80) listHeight = 80;
+    m_ModuleList.MoveWindow(margin, listTop, leftWidth, listHeight);
+    int panelX = margin + leftWidth + margin;
+    auto moveCtrl = [&](int id, int x, int y, int w, int h) { CWnd* c = GetDlgItem(id); if (c) c->MoveWindow(x, y, w, h); };
+    moveCtrl(IDC_HOOKUI_STATIC_OFFSET, panelX, 18, 70, 14);
+    moveCtrl(IDC_HOOKUI_EDIT_OFFSET, panelX, 30, 140, 18);
+    moveCtrl(IDC_HOOKUI_STATIC_DIRECT, panelX, 55, 140, 14);
+    moveCtrl(IDC_HOOKUI_EDIT_DIRECT, panelX, 67, 140, 18);
+    int applyY = 100; int btnW = 65; moveCtrl(IDC_HOOKUI_BTN_APPLY, panelX, applyY, btnW, 22); moveCtrl(IDCANCEL, panelX + btnW + 5, applyY, btnW, 22);
+    int hooksY = applyY + 24;
+    int hooksW = cx - panelX - margin; int hooksH = listTop + listHeight - hooksY; if (hooksH < 40) hooksH = 40;
+    moveCtrl(IDC_HOOKUI_LIST_HOOKS, panelX, hooksY, hooksW, hooksH);
+}
+
+void HookProcDlg::OnLButtonDown(UINT nFlags, CPoint point) {
+    CRect rc; GetClientRect(&rc);
+    int rightPanelLeft = m_splitPos + 14; CRect splRect(rightPanelLeft - m_splitterWidth, 0, rightPanelLeft + m_splitterWidth, rc.Height());
+    if (splRect.PtInRect(point)) { m_draggingSplitter = true; SetCapture(); }
+    CDialogEx::OnLButtonDown(nFlags, point);
+}
+
+void HookProcDlg::OnLButtonUp(UINT nFlags, CPoint point) {
+    if (m_draggingSplitter) { m_draggingSplitter = false; ReleaseCapture(); }
+    CDialogEx::OnLButtonUp(nFlags, point);
+}
+
+void HookProcDlg::OnMouseMove(UINT nFlags, CPoint point) {
+    if (m_draggingSplitter) {
+        int newLeft = point.x - 7; m_splitPos = newLeft; CRect rc; GetClientRect(&rc); UpdateLayoutForSplitter(rc.Width(), rc.Height());
+    } else {
+        int rightPanelLeft = m_splitPos + 14; CRect splRect(rightPanelLeft - m_splitterWidth, 0, rightPanelLeft + m_splitterWidth, 10000);
+        if (splRect.PtInRect(point)) SetCursor(::LoadCursor(NULL, IDC_SIZEWE));
+    }
+    CDialogEx::OnMouseMove(nFlags, point);
+}
+
+void HookProcDlg::PopulateHookList() {
+    m_HookList.DeleteAllItems();
+    // TODO: read persisted hooks for this pid or wire live update.
+}
+
+int HookProcDlg::AddHookEntry(ULONGLONG address, const std::wstring& moduleName) {
+    int idx = m_HookList.GetItemCount();
+    int id = m_nextHookId++;
+    CString idC; idC.Format(L"%d", id);
+    CString addrC; addrC.Format(L"0x%llX", address);
+    int i = m_HookList.InsertItem(idx, idC);
+    m_HookList.SetItemText(i, 1, addrC);
+    m_HookList.SetItemText(i, 2, moduleName.c_str());
+    m_HookList.SetItemData(i, (DWORD_PTR)id);
+    return i;
 }
 
 void HookProcDlg::PopulateModuleList() {
@@ -326,6 +394,15 @@ void HookProcDlg::OnBnClickedApplyHook() {
     if (success) {
         if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook succeeded at 0x%llX\n", addr);
         MessageBox(L"Hook succeed", L"Hook", MB_OK | MB_ICONINFORMATION);
+        // Add entry to hook list UI: resolve owning module and show module+offset as hook id
+        std::wstring moduleName = L"(unknown)";
+        ULONGLONG moduleBase = 0;
+        std::vector<HookCore::ModuleInfo> mods; HookCore::EnumerateModules(m_pid, mods);
+        for (auto &m : mods) {
+            if (addr >= m.base && addr < m.base + m.size) { moduleName = m.name; moduleBase = m.base; break; }
+        }
+        // Add numeric hook entry (auto-incrementing ID)
+        AddHookEntry(addr, moduleName);
     } else {
         if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook failed at 0x%llX\n", addr);
         MessageBox(L"Hook failed", L"Hook", MB_OK | MB_ICONERROR);
@@ -392,6 +469,18 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
             wClose->MoveWindow(panelX + btnW + 5, y, btnW, btnH);
         }
         y += btnH + interY;
+    }
+    // Position hook list on right side below buttons and stretch to bottom
+    CWnd* wHookList = GetDlgItem(IDC_HOOKUI_LIST_HOOKS);
+    if (wHookList && wHookList->GetSafeHwnd()) {
+        int hooksX = panelX;
+        int hooksY = y;
+        int hooksW = rightPanelW - margin;
+        int hooksH = cy - hooksY - margin;
+        if (hooksH < 40) hooksH = 40;
+        if (hdwp) hdwp = DeferWindowPos(hdwp, wHookList->GetSafeHwnd(), nullptr, hooksX, hooksY, hooksW, hooksH, SWP_NOZORDER|SWP_NOACTIVATE);
+        else wHookList->MoveWindow(hooksX, hooksY, hooksW, hooksH);
+        y += hooksH + interY;
     }
     CWnd* wHint = GetDlgItem(IDC_HOOKUI_STATIC_HINT);
     if (wHint) {

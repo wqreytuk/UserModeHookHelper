@@ -30,12 +30,6 @@ BOOL HookProcDlg::OnInitDialog() {
     m_ModuleList.InsertColumn(2, L"Name", LVCFMT_LEFT, 140);
     m_ModuleList.InsertColumn(3, L"Path", LVCFMT_LEFT, 300);
     m_ModuleList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
-    // Attach hook list control (shows currently applied hooks for this process)
-    m_HookList.Attach(GetDlgItem(IDC_LIST_HOOKS)->m_hWnd);
-    m_HookList.InsertColumn(0, L"Hook ID", LVCFMT_LEFT, 60);
-    m_HookList.InsertColumn(1, L"Address", LVCFMT_LEFT, 80);
-    m_HookList.InsertColumn(2, L"Module", LVCFMT_LEFT, 120);
-    m_HookList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
     // Keep selection visible when focus moves to offset/edit controls (fix: selection disappears while typing)
     LONG lvStyle = ::GetWindowLong(m_ModuleList.GetSafeHwnd(), GWL_STYLE);
     lvStyle |= LVS_SHOWSELALWAYS;
@@ -43,13 +37,13 @@ BOOL HookProcDlg::OnInitDialog() {
     // Force style refresh so LVS_SHOWSELALWAYS takes effect immediately
     ::SetWindowPos(m_ModuleList.GetSafeHwnd(), nullptr, 0,0,0,0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
     PopulateModuleList();
-    PopulateHookList();
+    // Ensure initial layout
+    CRect rc; GetClientRect(&rc); OnSize(0, rc.Width(), rc.Height());
     return TRUE;
 }
 
 
 void HookProcDlg::OnDestroy() {
-    m_HookList.Detach();
     m_ModuleList.Detach();
     CDialogEx::OnDestroy();
     // Notify parent that dialog is destroyed so it can clear pointer (wParam = this)
@@ -281,8 +275,10 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
     }
     int listHeight = cy - labelBottom - margin - 60;
     if (listHeight < 60) listHeight = 60;
-    m_ModuleList.MoveWindow(margin, labelBottom, listWidth, listHeight);
-    // Reposition right-side controls relative to new width
+        // apply splitter-adjusted layout (handles positioning of both panes)
+        UpdateLayoutForSplitter(cx, cy);
+        // Do not perform further manual layout here; UpdateLayoutForSplitter owns positioning.
+        return;
     auto moveCtrl = [&](int id, int x, int y, int w, int h) {
         CWnd* c = GetDlgItem(id); if (c) c->MoveWindow(x, y, w, h);
     };
@@ -297,6 +293,9 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
     int closeX = applyX + buttonWidth + buttonGap;
     moveCtrl(IDC_BTN_APPLY_HOOK, applyX, applyY, buttonWidth, 20);
     moveCtrl(IDCANCEL, closeX, applyY, buttonWidth, 20);
+    // Hook list sizing handled in UpdateLayoutForSplitter(); ensure hint uses module list rect for alignment
+    CWnd* modList = GetDlgItem(IDC_LIST_MODULES);
+    CRect rcMod; if (modList && modList->GetSafeHwnd()) { modList->GetWindowRect(&rcMod); ScreenToClient(&rcMod); }
     // Force redraw to mitigate stale invalid region causing "overlap" until hover.
     if (CWnd* applyBtn = GetDlgItem(IDC_BTN_APPLY_HOOK)) applyBtn->Invalidate();
     if (CWnd* closeBtn = GetDlgItem(IDCANCEL)) closeBtn->Invalidate();
@@ -306,14 +305,10 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
     if (hint && hint->GetSafeHwnd()) {
         CRect rcHint; hint->GetWindowRect(&rcHint); ScreenToClient(&rcHint);
         int hintH = rcHint.Height();
-        // Calculate desired Y just below list plus small gap
-        int hintY = labelBottom + listHeight + 6;
-        // If would overflow, clamp to bottom margin
+        int hintY = rcMod.bottom + 6; // place just below module list
         if (hintY + hintH + margin > cy) hintY = cy - hintH - margin;
-        // Center horizontally within client
         int hintW = rcHint.Width();
-        int hintX = (cx - hintW) / 2;
-        if (hintX < margin) hintX = margin;
+        int hintX = (cx - hintW) / 2; if (hintX < margin) hintX = margin;
         hint->MoveWindow(hintX, hintY, hintW, hintH);
     }
     // Adjust columns: expand Path column to remaining width
@@ -448,17 +443,38 @@ void HookProcDlg::OnCustomDrawModules(NMHDR* pNMHDR, LRESULT* pResult) {
 }
 
 void HookProcDlg::PopulateHookList() {
-    m_HookList.DeleteAllItems();
-    // TODO: read persisted HookSites for this PID and populate entries.
-    // For now, display nothing — hook metadata persistence integration pending.
+    // Hook list is managed by HookUI. UMController no longer displays hook entries here.
 }
 
-int HookProcDlg::AddHookEntry(const std::wstring& hookId, ULONGLONG address, const std::wstring& moduleName) {
-    int idx = m_HookList.GetItemCount();
-    CString idC(hookId.c_str());
-    CString addrC; addrC.Format(L"0x%llX", address);
-    int i = m_HookList.InsertItem(idx, idC);
-    m_HookList.SetItemText(i, 1, addrC);
-    m_HookList.SetItemText(i, 2, moduleName.c_str());
-    return i;
+// AddHookEntry removed from UMController; hook list UI is now managed in HookUI only.
+
+void HookProcDlg::UpdateLayoutForSplitter(int cx, int cy) {
+    // Simplified layout: module list on left, controls on right. No splitter.
+    const int margin = 8;
+    int leftWidth = cx / 2; if (leftWidth < 120) leftWidth = 120;
+    int listTop = margin + 16;
+    int listHeight = cy - listTop - margin - 60; if (listHeight < 60) listHeight = 60;
+    m_ModuleList.MoveWindow(margin, listTop, leftWidth, listHeight);
+    // Position right-side controls
+    int panelLeft = margin + leftWidth + margin;
+    auto moveCtrl = [&](int id, int x, int y, int w, int h) { CWnd* c = GetDlgItem(id); if (c) c->MoveWindow(x, y, w, h); };
+    moveCtrl(IDC_STATIC_OFFSET, panelLeft, 18, 70, 14);
+    moveCtrl(IDC_EDIT_OFFSET, panelLeft, 30, 140, 18);
+    moveCtrl(IDC_STATIC_DIRECT, panelLeft, 55, 140, 14);
+    moveCtrl(IDC_EDIT_DIRECT, panelLeft, 67, 140, 18);
+    int applyX = panelLeft; int applyY = 100; int buttonWidth = 80;
+    moveCtrl(IDC_BTN_APPLY_HOOK, applyX, applyY, buttonWidth, 24);
+    moveCtrl(IDCANCEL, applyX + buttonWidth + 8, applyY, buttonWidth, 24);
+}
+
+void HookProcDlg::OnLButtonDown(UINT nFlags, CPoint point) {
+    CDialogEx::OnLButtonDown(nFlags, point);
+}
+
+void HookProcDlg::OnLButtonUp(UINT nFlags, CPoint point) {
+    CDialogEx::OnLButtonUp(nFlags, point);
+}
+
+void HookProcDlg::OnMouseMove(UINT nFlags, CPoint point) {
+    CDialogEx::OnMouseMove(nFlags, point);
 }
