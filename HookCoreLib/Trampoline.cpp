@@ -295,53 +295,19 @@ add rsp,0x50
 mov rsp, qword ptr [rip+0x11223344]
 jmp qword ptr [rip+0x11223344]
 */
-			UCHAR stage_2_shellcode[stage_2_shellcode_size] = { 0x48, 0x89, 0x25, 0x44,
-				0x33, 0x22, 0x11, 0x48, 0x83, 0xE4, 0xF0, 0x48, 0x83, 0xEC, 0x50, 0x57,
-				0x48, 0x8B, 0x3D, 0x44, 0x33, 0x22, 0x11, 0x48, 0x89, 0x7C, 0x24, 0x20,
-				0x5F, 0xFF, 0x15, 0x3A, 0x23, 0x00, 0x00, 0x48, 0x83, 0xC4, 0x50, 0x48,
-				0x8B, 0x25, 0x44, 0x33, 0x22, 0x11, 0xFF, 0x25, 0x44, 0x33, 0x22, 0x11 };
-			int temparory_data_store_offset_1 = 0x3;
-			int temparory_data_store_offset_2 = 0x13;
-			int temparory_data_store_offset_3 = 0x2a;
-			*(UCHAR*)(stage_2_shellcode + 0x17 + 4) = 0x28;
-			// I'll save rsp into stage_1_func_offset+0x300
-			// so I can calculate the offset of these two mov instruction
-			DWORD64 ins_addr=ResolveLeaInstruction(hProcess, stage_2_func_offset_real + (DWORD64)tramp_dll_base);
-			if (!ins_addr) {
-				LOG_CORE(services, L"failed to resolve global variable addr\n");
-				return false;
-			}
-			DWORD _ = 0;
-			if (!::VirtualProtectEx(hProcess, (LPVOID)(stage_2_func_offset_real + (DWORD64)tramp_dll_base),
-				TRAMPOLINE_PLACEHOLDER_FUNCTION_SIZE, PAGE_EXECUTE_READWRITE, &_)) {
-				if (services)
-					LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
-				return false;
-			}
-			DWORD global_var_offset = 0;
-			if (!::ReadProcessMemory(hProcess, (LPVOID)(ins_addr - 0x7 + 3), (void*)(&global_var_offset), sizeof(DWORD), NULL)) {
-				LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
-				return false;
-			}
-			DWORD64 global_var_addr = global_var_offset + ins_addr;
-			if (!::VirtualProtectEx(hProcess, (LPVOID)(stage_2_func_offset_real + (DWORD64)tramp_dll_base),
-				TRAMPOLINE_PLACEHOLDER_FUNCTION_SIZE, _, &_)) {
-				if (services)
-					LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
-				return false;
-			}
-			*(DWORD*)(stage_2_shellcode + temparory_data_store_offset_1) = global_var_addr - stage_2_addr - 7;
-			*(DWORD*)(stage_2_shellcode + temparory_data_store_offset_2) = global_var_addr - stage_2_addr - 0x17;
-			*(DWORD*)(stage_2_shellcode + temparory_data_store_offset_3) = global_var_addr - stage_2_addr - 0x2e;
+			UCHAR stage_2_shellcode[stage_2_shellcode_size] = { 0x48, 0x89, 0xE3, 0x48, 0x83, 0xE4, 0xF0, 0x48, 0x83, 0xEC, 0x50, 0x48, 0x89, 0x5C, 0x24,
+				0x20, 0xFF, 0x15, 0x3A, 0x23, 0x00, 0x00, 0x48, 0x83, 0xC4, 0x50, 0x48, 0x89, 0xDC, 0xFF, 0x25, 0x44, 0x33, 0x22, 0x11 };
+			
+
 
 			DWORD64 calladdr = stage_2_addr + stage_2_shellcode_size;
 
-			int call_offset = 0x1f;
-			*(DWORD*)(stage_2_shellcode + call_offset) = calladdr - stage_2_addr - 0x23;
+			int call_offset = 0x12;
+			*(DWORD*)(stage_2_shellcode + call_offset) = calladdr - stage_2_addr - 0x16;
 
 			DWORD64 ff25addr = stage_2_addr + stage_2_shellcode_size + stage_0_placeholder_size;
-			int jmp_offset = 0x30;
-			*(DWORD*)(stage_2_shellcode + jmp_offset) = ff25addr - stage_2_addr - 0x34;
+			int jmp_offset = 0x1f;
+			*(DWORD*)(stage_2_shellcode + jmp_offset) = ff25addr - stage_2_addr - 0x23;
 			 
 			if (!::WriteProcessMemory(hProcess, (LPVOID)(stage_2_addr), (void*)(stage_2_shellcode), stage_2_shellcode_size, NULL)) {
 				if (services)

@@ -30,6 +30,12 @@ BOOL HookProcDlg::OnInitDialog() {
     m_ModuleList.InsertColumn(2, L"Name", LVCFMT_LEFT, 140);
     m_ModuleList.InsertColumn(3, L"Path", LVCFMT_LEFT, 300);
     m_ModuleList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+    // Attach hook list control (shows currently applied hooks for this process)
+    m_HookList.Attach(GetDlgItem(IDC_LIST_HOOKS)->m_hWnd);
+    m_HookList.InsertColumn(0, L"Hook ID", LVCFMT_LEFT, 60);
+    m_HookList.InsertColumn(1, L"Address", LVCFMT_LEFT, 80);
+    m_HookList.InsertColumn(2, L"Module", LVCFMT_LEFT, 120);
+    m_HookList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
     // Keep selection visible when focus moves to offset/edit controls (fix: selection disappears while typing)
     LONG lvStyle = ::GetWindowLong(m_ModuleList.GetSafeHwnd(), GWL_STYLE);
     lvStyle |= LVS_SHOWSELALWAYS;
@@ -37,11 +43,13 @@ BOOL HookProcDlg::OnInitDialog() {
     // Force style refresh so LVS_SHOWSELALWAYS takes effect immediately
     ::SetWindowPos(m_ModuleList.GetSafeHwnd(), nullptr, 0,0,0,0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
     PopulateModuleList();
+    PopulateHookList();
     return TRUE;
 }
 
 
 void HookProcDlg::OnDestroy() {
+    m_HookList.Detach();
     m_ModuleList.Detach();
     CDialogEx::OnDestroy();
     // Notify parent that dialog is destroyed so it can clear pointer (wParam = this)
@@ -437,4 +445,20 @@ void HookProcDlg::OnCustomDrawModules(NMHDR* pNMHDR, LRESULT* pResult) {
         }
     }
     *pResult = CDRF_DODEFAULT;
+}
+
+void HookProcDlg::PopulateHookList() {
+    m_HookList.DeleteAllItems();
+    // TODO: read persisted HookSites for this PID and populate entries.
+    // For now, display nothing — hook metadata persistence integration pending.
+}
+
+int HookProcDlg::AddHookEntry(const std::wstring& hookId, ULONGLONG address, const std::wstring& moduleName) {
+    int idx = m_HookList.GetItemCount();
+    CString idC(hookId.c_str());
+    CString addrC; addrC.Format(L"0x%llX", address);
+    int i = m_HookList.InsertItem(idx, idC);
+    m_HookList.SetItemText(i, 1, addrC);
+    m_HookList.SetItemText(i, 2, moduleName.c_str());
+    return i;
 }

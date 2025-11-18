@@ -19,7 +19,7 @@ namespace HookCore {
 // #define PLACEHOLDER_SECOND_FUNCIONT_OFFSET PLACEHOLDER_SECOND_FUNCIONT_OFFSET2+stage_0_xoreaxeaxret_size
 #define stage_0_placeholder_size 8
 // #define stage_1_shellcode_size 0x56+READ_OUT_LEN_ORIASMCODE_LEN-6
-#define stage_2_shellcode_size 0x34
+#define stage_2_shellcode_size 0x23
 #define stage_1_oriAsmCodeOffset 0x4a
 #define ff25jmpsize 6
 #define stage_1_next_ins_offset 0x23
