@@ -65,6 +65,7 @@ BOOL HookProcDlg::OnInitDialog() {
 
 void HookProcDlg::OnDestroy() {
     FreeModuleRows();
+    FreeHookRows();
     m_ModuleList.DeleteAllItems();
     m_HookList.DeleteAllItems();
     m_ModuleList.Detach();
@@ -119,7 +120,8 @@ void HookProcDlg::PopulateHookList() {
     // TODO: read persisted hooks for this pid or wire live update.
 }
 
-int HookProcDlg::AddHookEntry(ULONGLONG address, const std::wstring& moduleName) {
+int HookProcDlg::AddHookEntry(ULONGLONG address, const std::wstring& moduleName,DWORD ori_asm_code_len) {
+	
     int idx = m_HookList.GetItemCount();
     int id = m_nextHookId++;
     CString idC; idC.Format(L"%d", id);
@@ -127,7 +129,9 @@ int HookProcDlg::AddHookEntry(ULONGLONG address, const std::wstring& moduleName)
     int i = m_HookList.InsertItem(idx, idC);
     m_HookList.SetItemText(i, 1, addrC);
     m_HookList.SetItemText(i, 2, moduleName.c_str());
-    m_HookList.SetItemData(i, (DWORD_PTR)id);
+    // Allocate a HookRow and attach to the list item so we can later locate by address
+	HookRow* hr = new HookRow{ id, address, moduleName, ori_asm_code_len };
+    m_HookList.SetItemData(i, (DWORD_PTR)hr);
     return i;
 }
 
@@ -195,6 +199,15 @@ void HookProcDlg::FreeModuleRows(){
     }
 }
 
+void HookProcDlg::FreeHookRows() {
+    int count = m_HookList.GetItemCount();
+    for (int i = 0; i < count; ++i) {
+        HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
+        if (hr) delete hr;
+        m_HookList.SetItemData(i, 0);
+    }
+}
+
 void HookProcDlg::OnModuleItemChanged(NMHDR* pNMHDR, LRESULT* pResult){ if(pResult) *pResult=0; }
 void HookProcDlg::OnEnSetFocusOffset(){ }
 void HookProcDlg::OnEnSetFocusDirect(){ }
@@ -229,6 +242,7 @@ ULONGLONG HookProcDlg::ParseAddressText(const std::wstring& input, bool& ok) con
 void HookProcDlg::OnBnClickedApplyHook() {
     // If the target process no longer exists, close this modeless dialog to avoid acting on a dead PID.
     bool procFound = false;
+	bool rehook = false;
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnap != INVALID_HANDLE_VALUE) {
         PROCESSENTRY32 pe = { sizeof(pe) };
@@ -275,6 +289,8 @@ void HookProcDlg::OnBnClickedApplyHook() {
     }
 
     if (m_services) LOG_UI(m_services, L"Attempting hook at 0x%llX for pid %u (%s)\n", addr, m_pid, m_name.c_str());
+
+
 
     // Ask user to select a DLL to be loaded inside the target process (file explorer)
     CString filter = L"DLL Files (*.dll)|*.dll|All Files (*.*)|*.*||";
@@ -389,24 +405,45 @@ void HookProcDlg::OnBnClickedApplyHook() {
 		}
 	}
 
+	// check if user is rehook before apply hook
+	for (int i = 0; i < m_HookList.GetItemCount(); ++i) {
+		HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
+		if (!hr) {
+			LOG_UI(m_services, L"weird, hr can not be NULL during iteration\n");
+			continue;
+		}
+		if (hr->address == addr) {
+			rehook = true;
+			LOG_UI(m_services, L"trying hook address that has already been hooked, recover to original code first\n");
+			if (!HookCore::RemoveHook(m_pid, addr, m_services, hr->id, hr->ori_asm_code_len)) {
+				LOG_UI(m_services, L"failed to remove hook first before rehooking the same address\n");
+				MessageBox(L"Failed to remove hook first before rehooking the same address", L"Hook", MB_OK | MB_ICONERROR);
+				return;
+			}
+		}
+	}
+
     // Proceed with the existing hook attempt (ApplyHook) after requesting trampoline load
-    bool success = HookCore::ApplyHook(m_pid, addr, m_services, hook_code_dll_base+hook_code_offset);
-    if (success) {
-        if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook succeeded at 0x%llX\n", addr);
-        MessageBox(L"Hook succeed", L"Hook", MB_OK | MB_ICONINFORMATION);
-        // Add entry to hook list UI: resolve owning module and show module+offset as hook id
-        std::wstring moduleName = L"(unknown)";
-        ULONGLONG moduleBase = 0;
-        std::vector<HookCore::ModuleInfo> mods; HookCore::EnumerateModules(m_pid, mods);
-        for (auto &m : mods) {
-            if (addr >= m.base && addr < m.base + m.size) { moduleName = m.name; moduleBase = m.base; break; }
-        }
-        // Add numeric hook entry (auto-incrementing ID)
-        AddHookEntry(addr, moduleName);
-    } else {
-        if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook failed at 0x%llX\n", addr);
-        MessageBox(L"Hook failed", L"Hook", MB_OK | MB_ICONERROR);
-    }
+	DWORD ori_asm_code_len = 0;
+    bool success = HookCore::ApplyHook(m_pid, addr, m_services, hook_code_dll_base+hook_code_offset,&ori_asm_code_len);
+	if (success) {
+		if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook succeeded at 0x%llX\n", addr);
+		MessageBox(L"Hook succeed", L"Hook", MB_OK | MB_ICONINFORMATION);
+		// Add entry to hook list UI: resolve owning module and show module+offset as hook id
+		std::wstring moduleName = L"(unknown)";
+		ULONGLONG moduleBase = 0;
+		std::vector<HookCore::ModuleInfo> mods; HookCore::EnumerateModules(m_pid, mods);
+		for (auto &m : mods) {
+			if (addr >= m.base && addr < m.base + m.size) { moduleName = m.name; moduleBase = m.base; break; }
+		}
+		// Add numeric hook entry (auto-incrementing ID), only new hook addr will be added
+		if (!rehook)
+			AddHookEntry(addr, moduleName, ori_asm_code_len);
+	}
+	else {
+		if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook failed at 0x%llX\n", addr);
+		MessageBox(L"Hook failed", L"Hook", MB_OK | MB_ICONERROR);
+	}
 }
 
 void HookProcDlg::OnSize(UINT nType, int cx, int cy) {

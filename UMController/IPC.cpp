@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 // IPC implementation for UMController — uses native ntdll APIs only.
 #include "IPC.h"
 #include <windows.h>

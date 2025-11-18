@@ -6,6 +6,7 @@ namespace HookCore {
 	// both stage 1 and 2 function is this size
 #define TRAMPOLINE_PLACEHOLDER_FUNCTION_SIZE 0x36B
 #define OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 0x200
+#define OFFSET_FOR_ORIGINAL_ASM_CODE_SAVE 0x330
 
 #define CCIPC_HOOK_POINT 0x1658c 
 #define PLACEHOLDER_FUNCIONT_OFFSET2 0x59f0
@@ -47,7 +48,7 @@ namespace HookCore {
 #define recover_word_value 0x63 
 
 	bool	InstallHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_pit, PVOID trampoline_addr);
-	bool RemoveHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_dll_base,
+	bool RemoveHookInternal(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_dll_base,
 		DWORD64 stage_2_func_offset, DWORD original_asm_code_len);
 	bool ConstructTrampoline_x64(IHookServices* services, HANDLE hProcess, PVOID hook_addr, PVOID target_base,
 		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset,DWORD64 hook_code_addr, DWORD* out_original_asm_len);

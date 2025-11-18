@@ -36,6 +36,7 @@ private:
     bool GetSelectedModule(std::wstring& name, ULONGLONG& base) const;
     ULONGLONG ParseAddressText(const std::wstring& text, bool& ok) const;
     void FreeModuleRows();
+    void FreeHookRows();
     struct ModuleRow { ULONGLONG base; ULONGLONG size; std::wstring name; std::wstring path; };
     DWORD m_pid; std::wstring m_name; IHookServices* m_services=nullptr; CListCtrl m_ModuleList;
     CListCtrl m_HookList;
@@ -45,6 +46,7 @@ private:
     void UpdateLayoutForSplitter(int cx, int cy);
     int m_sortColumn=0; bool m_sortAscending=true; static int CALLBACK ModuleCompare(LPARAM, LPARAM, LPARAM);
     void PopulateHookList();
-    int AddHookEntry(ULONGLONG address, const std::wstring& moduleName);
+	struct HookRow { int id; ULONGLONG address; std::wstring module;DWORD ori_asm_code_len; };
+    int AddHookEntry(ULONGLONG address, const std::wstring& moduleName, DWORD ori_asm_code_len);
     int m_nextHookId = 1; // auto-incrementing hook id starting at 1
 };

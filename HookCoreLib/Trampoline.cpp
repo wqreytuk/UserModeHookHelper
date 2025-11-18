@@ -3,7 +3,7 @@
 #include "Disasm.h"
 namespace HookCore {
 	UCHAR xor_eax_eax_ret[stage_0_xoreaxeaxret_size] = { 0x31,0xc0,0xc3 };
-	bool RemoveHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_dll_base,
+	bool RemoveHookInternal(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_dll_base,
 		DWORD64 stage_2_func_offset,DWORD original_asm_code_len) {
 		if (!services) {
 			MessageBoxW(NULL, L"Fatal Error! services is NULL!", L"Hook", MB_OK | MB_ICONINFORMATION);
@@ -17,7 +17,7 @@ namespace HookCore {
 			return false;
 		}
 		UCHAR* original_asm_code = (UCHAR*)malloc(original_asm_code_len);
-		if (!::ReadProcessMemory(hProc, (LPVOID)(stage_2_func_offset + 0x200 + (DWORD64)trampoline_dll_base),
+		if (!::ReadProcessMemory(hProc, (LPVOID)(stage_2_func_offset + OFFSET_FOR_ORIGINAL_ASM_CODE_SAVE + (DWORD64)trampoline_dll_base),
 			(void*)(original_asm_code), original_asm_code_len, NULL)) {
 			LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
 			return false;
@@ -169,14 +169,14 @@ namespace HookCore {
 			}
 
 			// since we may patch saved original asm code, we need to save the real original asm code at another place
-			// I'll chose 0x200 of stage_2_func_offset
+			// I'll chose 0x330 of stage_2_func_offset
 			if (!::VirtualProtectEx(hProcess, (LPVOID)(stage_2_func_offset_real + (DWORD64)tramp_dll_base),
 				TRAMPOLINE_PLACEHOLDER_FUNCTION_SIZE, PAGE_EXECUTE_READWRITE, &old)) {
 				LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
 				return false;
 			}
 			*out_original_asm_len = r.preserveLen;
-			if (!::WriteProcessMemory(hProcess, (LPVOID)(stage_2_func_offset_real + 0x200 + (DWORD64)tramp_dll_base),
+			if (!::WriteProcessMemory(hProcess, (LPVOID)(stage_2_func_offset_real + OFFSET_FOR_ORIGINAL_ASM_CODE_SAVE + (DWORD64)tramp_dll_base),
 				(void*)(original_asm_code), r.preserveLen, NULL)) {
 				LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
 				return false;
