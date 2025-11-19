@@ -134,6 +134,18 @@ void CUMControllerDlg::OnToggleGlobalHookMode() {
 			DrawMenuBar();
 		}
 	}
+
+	// If enabled, start a background scanner to check master DLL presence for all processes
+	if (m_globalHookMode) {
+		std::thread([this]() {
+			// Snapshot current PIDs
+			auto all = PM_GetAll();
+			std::vector<DWORD> pids;
+			for (auto &e : all) pids.push_back(e.pid);
+			// Start resolver for all known pids; ProcessResolver will mark master DLL state for entries
+			ProcessResolver::StartLoaderResolver(this, pids, &m_Filter);
+		}).detach();
+	}
 }
 
 LRESULT CUMControllerDlg::OnApplyGlobalHookMenu(WPARAM wParam, LPARAM lParam) {
@@ -227,8 +239,24 @@ int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam
 		else res = 0;
 		break;
 	case 2: // InHookList: Yes before No when ascending
-		if (a.bInHookList == b.bInHookList) res = 0;
-		else if (a.bInHookList) res = -1;
+		// If both have same InHookList state, and they are IN the hook list,
+		// order by master DLL loaded (loaded first), then by architecture
+		// (x86 before x64). If both are NOT in hook list, treat as equal.
+		if (a.bInHookList == b.bInHookList) {
+			if (!a.bInHookList) {
+				res = 0; // both not in hook list
+			} else {
+				// both in hook list: prefer master DLL loaded
+				if (a.masterDllLoaded != b.masterDllLoaded) {
+					res = a.masterDllLoaded ? -1 : 1; // loaded comes first
+				} else if (a.is64 != b.is64) {
+					// prefer x86 (is64 == false) before x64
+					res = a.is64 ? 1 : -1;
+				} else {
+					res = 0;
+				}
+			}
+		} else if (a.bInHookList) res = -1;
 		else res = 1;
 		break;
 	case 3: // NT Path (case-insensitive)

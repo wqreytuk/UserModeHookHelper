@@ -23,18 +23,23 @@ void ProcessResolver::StartLoaderResolver(CUMControllerDlg* dlg, const std::vect
 				continue;
 			}
 			bool inHook = false;
-			// Prefer the in-process hook-hash cache if available to avoid
-			// expensive per-path IPC. Compute the NT-path hash and consult
-			// ProcessManager's cache; otherwise fall back to Filter IPC.
-			if (PM_HasHookHashCache()) {
-				const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
-				size_t bytesLen = ntPath.size() * sizeof(wchar_t);
-				unsigned long long h = Helper::GetNtPathHash(bytes, bytesLen);
-				inHook = PM_IsHashInHookSet(h);
-				// app.GetETW().Log(L"StartLoaderResolver: pid=%u checked via CACHE => %s\n", pid, inHook ? L"IN_HOOKLIST" : L"NOT_IN_HOOKLIST");
+			// If Global Hook Mode is enabled, consider all processes as 'inHook' for
+			// purposes of checking master DLL presence. However, actual additions to
+			// the persisted hook list remain controlled by HookPaths/user actions.
+			bool globalMode = false;
+			if (dlg) globalMode = dlg->IsGlobalHookModeEnabled();
+			if (globalMode) {
+				inHook = true;
 			} else {
-				inHook = filter->FLTCOMM_CheckHookList(ntPath);
-				// app.GetETW().Log(L"StartLoaderResolver: pid=%u checked via IPC => %s\n", pid, inHook ? L"IN_HOOKLIST" : L"NOT_IN_HOOKLIST");
+				// existing behavior: consult cache or filter IPC
+				if (PM_HasHookHashCache()) {
+					const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+					size_t bytesLen = ntPath.size() * sizeof(wchar_t);
+					unsigned long long h = Helper::GetNtPathHash(bytes, bytesLen);
+					inHook = PM_IsHashInHookSet(h);
+				} else {
+					inHook = filter->FLTCOMM_CheckHookList(ntPath);
+				}
 			}
 			std::wstring cmdline;
 			Helper::GetProcessCommandLineByPID(pid, cmdline);
@@ -46,6 +51,8 @@ void ProcessResolver::StartLoaderResolver(CUMControllerDlg* dlg, const std::vect
 				const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 				Helper::IsModuleLoaded(pid, dllName, dllLoaded);
 			}
+			// Update cached module/arch state so UI and sorting can rely on it.
+			PM_UpdateEntryModuleState(pid, is64, dllLoaded);
 			// Update only fields; do not persist module state cache globally.
 			PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
 			::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_LOAD);
@@ -63,7 +70,15 @@ void ProcessResolver::StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filt
 		// Single-resolution path: per-path IPC here is acceptable because
 		// these are single lookups (notifications) and won't cause noticeable
 		// latency. Use the existing per-path filter check.
-	bool inHook = filter->FLTCOMM_CheckHookList(ntPath);
+		bool inHook = false;
+		// If global hook mode is enabled, treat new incoming processes as 'inHook'
+		// so we perform arch + master-DLL checks; persistence remains controlled
+		// by HookPaths/user actions.
+		if (dlg && dlg->IsGlobalHookModeEnabled()) {
+			inHook = true;
+		} else {
+			inHook = filter->FLTCOMM_CheckHookList(ntPath);
+		}
 	// app.GetETW().Log(L"StartSingleResolver: pid=%u checked via IPC => %s\n", pid, inHook ? L"IN_HOOKLIST" : L"NOT_IN_HOOKLIST");
 		std::wstring cmdline;
 		Helper::GetProcessCommandLineByPID(pid, cmdline);
@@ -74,6 +89,8 @@ void ProcessResolver::StartSingleResolver(CUMControllerDlg* dlg, DWORD pid, Filt
 			const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 			Helper::IsModuleLoaded(pid, dllName, dllLoaded);
 		}
+		// Update cached module/arch state so UI and sorting can rely on it.
+		PM_UpdateEntryModuleState(pid, is64, dllLoaded);
 		PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
 		::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
 	}).detach();
@@ -85,9 +102,9 @@ void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
 		const int INTERVAL_MS = 1000;
 		int waited = 0;
 		bool dllLoaded = false;
+		bool is64 = false;
 		// Original simpler polling: just watch for master DLL load regardless of hook state.
 		while (waited < MAX_MS) {
-			bool is64 = false;
 			Helper::IsProcess64(pid, is64);
 			const wchar_t* targetName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 			Helper::IsModuleLoaded(pid, targetName, dllLoaded);
@@ -95,6 +112,8 @@ void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS));
 			waited += INTERVAL_MS;
 		}
+		// Ensure cached module state updated before posting update so UI gets fresh flags
+		PM_UpdateEntryModuleState(pid, is64, dllLoaded);
 		::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_NOTIFY);
 		return;
 	}).detach();

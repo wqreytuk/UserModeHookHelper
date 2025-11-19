@@ -55,6 +55,9 @@ public:
 	void LoadProcessList();
 	void FilterProcessList(const std::wstring& filter);
 
+	// Query whether Global Hook Mode is enabled (persisted toggle)
+	bool IsGlobalHookModeEnabled() const { return m_globalHookMode; }
+
 
 	afx_msg void OnEnChangeEditSearch();
 	afx_msg void OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult);
