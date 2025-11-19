@@ -17,6 +17,7 @@ static NTSTATUS Handle_GetImagePathByPid(PUMHH_COMMAND_MESSAGE msg, ULONG InputB
 static NTSTATUS Handle_GetHookSection(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
 // NOTE: Do NOT declare or call user-mode-only path conversion helpers from
 // kernel code here. NT-path resolution is performed in user-mode. The driver
@@ -246,12 +247,27 @@ Comm_MessageNotify(
 	case CMD_GET_HOOK_SECTION:
 		status = Handle_GetHookSection(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
+	case CMD_SET_GLOBAL_HOOK_MODE:
+		status = Handle_SetGlobalHookMode(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
 	default:
 		break;
 	}
 	 
 	if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
 	return status;
+}
+
+static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
+	UNREFERENCED_PARAMETER(OutputBuffer);
+	UNREFERENCED_PARAMETER(OutputBufferSize);
+	UNREFERENCED_PARAMETER(ReturnOutputBufferLength);
+	if (InputBufferSize < (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(BOOLEAN))) return STATUS_INVALID_PARAMETER;
+	BOOLEAN enabled = 0;
+	RtlCopyMemory(&enabled, msg->m_Data, sizeof(BOOLEAN));
+	DriverCtx_SetGlobalHookMode(enabled);
+	Log(L"Driver: SetGlobalHookMode = %d\n", (int)enabled);
+	return STATUS_SUCCESS;
 }
 
 NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG outNotifiedCount, PUNICODE_STRING imageName) {

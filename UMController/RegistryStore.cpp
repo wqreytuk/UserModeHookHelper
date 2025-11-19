@@ -297,3 +297,50 @@ bool RegistryStore::RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filet
     if (!removed) return true; // nothing to do
     return WriteProcHookList(out);
 }
+
+bool RegistryStore::ReadBoolSetting(const wchar_t* name, bool defaultValue, bool& outValue) {
+    outValue = defaultValue;
+    HKEY hKey = NULL;
+        // Try 64-bit view first so we match driver behavior on x64 systems
+        LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_READ | KEY_WOW64_64KEY, &hKey);
+        if (r == ERROR_SUCCESS) {
+            DWORD type = 0; DWORD data = 0; DWORD dataSize = sizeof(data);
+            LONG q = RegQueryValueExW(hKey, name, NULL, &type, reinterpret_cast<LPBYTE>(&data), &dataSize);
+            RegCloseKey(hKey);
+            if (q == ERROR_SUCCESS) {
+                if (type == REG_DWORD) outValue = (data != 0);
+                return true;
+            }
+            // fall through to try default view if value isn't present in 64-bit view
+        }
+
+        // Fallback: try default view (useful if value was previously written by 32-bit process)
+        hKey = NULL;
+        r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_READ, &hKey);
+        if (r != ERROR_SUCCESS) return true; // treat missing as default
+        DWORD type = 0; DWORD data = 0; DWORD dataSize = sizeof(data);
+        r = RegQueryValueExW(hKey, name, NULL, &type, reinterpret_cast<LPBYTE>(&data), &dataSize);
+        RegCloseKey(hKey);
+        if (r != ERROR_SUCCESS) return true;
+        if (type == REG_DWORD) outValue = (data != 0);
+        return true;
+}
+
+bool RegistryStore::WriteBoolSetting(const wchar_t* name, bool value) {
+    HKEY hKey = NULL; DWORD disp=0;
+    // Create/open in 64-bit view so driver can read it
+    LONG r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_WOW64_64KEY, NULL, &hKey, &disp);
+    if (r != ERROR_SUCCESS) return false;
+    DWORD data = value ? 1 : 0;
+    LONG rr = RegSetValueExW(hKey, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&data), sizeof(data));
+    RegCloseKey(hKey);
+    return rr == ERROR_SUCCESS;
+}
+
+bool RegistryStore::ReadGlobalHookMode(bool& outEnabled) {
+    return ReadBoolSetting(L"EnableGlobalHookMode", false, outEnabled);
+}
+
+bool RegistryStore::WriteGlobalHookMode(bool enabled) {
+    return WriteBoolSetting(L"EnableGlobalHookMode", enabled);
+}

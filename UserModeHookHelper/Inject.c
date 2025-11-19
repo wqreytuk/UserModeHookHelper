@@ -12,6 +12,12 @@
 #define LdrLoadDllRoutineName "LdrLoadDll"
 
 NTKERNELAPI
+BOOLEAN
+NTAPI
+PsIsProtectedProcess(
+	_In_ PEPROCESS Process
+);
+NTKERNELAPI
 PCHAR
 NTAPI
 PsGetProcessImageFileName(
@@ -617,7 +623,15 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 {
     if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
     ULONGLONG hash = ComputeNtPathHash(ImageName);
-    if (hash != 0 && HookList_ContainsHash(hash)) {
+	if (DriverCtx_GetGlobalHookMode()) {
+		// if global hook mode is enable, we'll hook all process except protected process
+		if (PsIsProtectedProcess(Process)) {
+			Log(L"Proteced process injection is not supported\n");
+			return;
+		}
+		PendingInject_Add_Internal(Process);
+	}
+    else if (hash != 0 && HookList_ContainsHash(hash)) {
         PendingInject_Add_Internal(Process);
         Log(L"Process queued for injection (from broadcast)\n");
     }

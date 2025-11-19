@@ -36,4 +36,10 @@ namespace RegistryStore {
     bool WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& entries);
     // Remove a single persisted ProcHookList entry matching PID, FILETIME hi/lo and hook id.
     bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId);
+    // Simple boolean setting helpers stored under REG_PERSIST_SUBKEY
+    bool ReadBoolSetting(const wchar_t* name, bool defaultValue, bool& outValue);
+    bool WriteBoolSetting(const wchar_t* name, bool value);
+    // Convenience accessors
+    bool ReadGlobalHookMode(bool& outEnabled);
+    bool WriteGlobalHookMode(bool enabled);
 }

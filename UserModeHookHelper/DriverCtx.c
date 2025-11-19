@@ -3,6 +3,7 @@
 static PFLT_FILTER s_Filter = NULL;
 static PFLT_PORT s_ServerPort = NULL;
 static PWSTR s_UserDir = NULL;
+static BOOLEAN s_GlobalHookMode = FALSE;
 
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter) {
     s_Filter = Filter;
@@ -44,4 +45,12 @@ VOID DriverCtx_ClearUserDir(VOID) {
         ExFreePoolWithTag(s_UserDir, tag_ctx);
         s_UserDir = NULL;
     }
+}
+
+VOID DriverCtx_SetGlobalHookMode(BOOLEAN Enabled) {
+    s_GlobalHookMode = Enabled ? TRUE : FALSE;
+}
+
+BOOLEAN DriverCtx_GetGlobalHookMode(VOID) {
+    return s_GlobalHookMode;
 }

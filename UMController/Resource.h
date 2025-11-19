@@ -22,6 +22,8 @@
 // Clear ETW log via Tools menu
 #define ID_MENU_CLEAR_ETW       40006
 #define ID_MENU_OPEN_ETW_LOG     40007
+// Extra menu command
+#define ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE 40020
 // Menu resource for dialog Tools menu
 #define IDR_TOOLS_MENU         129
 #define IDD_REMOVE_HOOK_DLG    140

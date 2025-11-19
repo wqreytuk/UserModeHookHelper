@@ -38,4 +38,8 @@ NTSTATUS DriverCtx_SetUserDir(PCWSTR dir, SIZE_T bytes);
 PWSTR DriverCtx_GetUserDir(VOID);
 VOID DriverCtx_ClearUserDir(VOID);
 
+// Global hook mode state stored in DriverCtx (avoid raw globals)
+VOID DriverCtx_SetGlobalHookMode(BOOLEAN Enabled);
+BOOLEAN DriverCtx_GetGlobalHookMode(VOID);
+
 #endif

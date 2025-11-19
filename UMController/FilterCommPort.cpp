@@ -89,18 +89,54 @@ Filter::Filter() {
 				DWORD bytesOut = 0;
 				DWORD outbuffer = 0;
 				HRESULT hr2 = FilterSendMessage(m_Port, msg, (DWORD)msgSize, &outbuffer, sizeof(outbuffer), &bytesOut);
-				if ((hr2 != S_OK)||(outbuffer != 0)) {	
+				if ((hr2 != S_OK)||(outbuffer != 0)) {
 					LOG_CTRL_ETW(L"FilterSendMessage(CMD_SET_USER_DIR) failed: 0x%08x\n", hr2);
+				} else {
+					// Also persist the user-dir into HKLM registry so the driver can read it on load.
+					HKEY hKey = NULL;
+					// create/open the 64-bit view so driver (64-bit) reads the same value
+					LSTATUS lr = RegCreateKeyExW(HKEY_LOCAL_MACHINE,
+						REG_PERSIST_SUBKEY,
+						0,
+						NULL,
+						REG_OPTION_NON_VOLATILE,
+						KEY_WRITE | KEY_WOW64_64KEY,
+						NULL,
+						&hKey,
+						NULL);
+					if (lr == ERROR_SUCCESS && hKey != NULL) {
+						lr = RegSetValueExW(hKey, L"UserDir", 0, REG_SZ, (const BYTE*)buf, (DWORD)bytes);
+						if (lr != ERROR_SUCCESS) {
+							LOG_CTRL_ETW(L"RegSetValueExW(UserDir) failed: %u\n", lr);
+						}
+						RegCloseKey(hKey);
+					} else {
+						LOG_CTRL_ETW(L"RegCreateKeyExW for persist subkey failed: %d\n", lr);
+					}
 				}
 				free(msg);
 			}
 		}
 	}
-
 	// Listener is started explicitly via StartListener
 	m_StopListener = false;
 	m_WorkExitEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 	m_ListenerEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+}
+
+
+// Notify the kernel to set global hook mode on/off
+bool Filter::FLTCOMM_SetGlobalHookMode(bool enabled) {
+    PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(BOOLEAN));
+    if (!msg) return false;
+    memset(msg, 0, sizeof(UMHH_COMMAND_MESSAGE) + sizeof(BOOLEAN));
+    msg->m_Cmd = CMD_SET_GLOBAL_HOOK_MODE;
+    BOOLEAN val = enabled ? 1 : 0;
+    memcpy(msg->m_Data, &val, sizeof(BOOLEAN));
+    DWORD bytesOut = 0;
+    HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(BOOLEAN)), NULL, 0, &bytesOut);
+    free(msg);
+    return hr == S_OK;
 }
 
 

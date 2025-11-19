@@ -65,6 +65,8 @@ public:
     afx_msg LRESULT OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnSize(UINT nType, int cx, int cy);
 	// Removed obsolete OnTimer; enumeration-only mode no longer uses it.
+	afx_msg void OnToggleGlobalHookMode();
+	afx_msg LRESULT OnApplyGlobalHookMenu(WPARAM wParam, LPARAM lParam);
     
 private:
 	Filter m_Filter;
@@ -116,6 +118,8 @@ private:
 	std::vector<std::tuple<DWORD,DWORD,DWORD,std::wstring>> m_PersistSnapshotEntries; // for writing back
 	bool m_BackgroundPersistStarted = false; // background thread launched
 	bool m_CachePersisted = false; // composite cache written this session
+	// persisted toggle
+	bool m_globalHookMode = false;
 	void FinishStartupIfDone(); // persistence only (no UI)
 	void CompleteStartupUI(); // UI enable/hide after enumeration completes
 	LRESULT OnPostEnumCleanup(WPARAM, LPARAM);

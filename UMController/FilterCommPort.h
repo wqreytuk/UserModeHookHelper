@@ -52,7 +52,7 @@ public:
 	// Request kernel to determine if a PID is a WoW64 (32-bit) process. Returns
 	// true on success and sets outIsWow64 accordingly.
 	bool FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64);
-
+	bool Filter::FLTCOMM_SetGlobalHookMode(bool enabled);
 private:
 	HANDLE m_Port = INVALID_HANDLE_VALUE;
 	// listener state for async messages

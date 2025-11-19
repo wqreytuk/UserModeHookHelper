@@ -115,7 +115,7 @@ void HookActions::HandleAddHook(CUMControllerDlg* dlg, Filter* filter, CListCtrl
     }
 
     // Log success and post UI updates for matching PIDs instead of a popup
-    app.GetETW().Log(L"Process added to hook list: pid=%u path=%s\n", pid, ntPath.c_str());
+	LOG_CTRL_ETW(L"Process added to hook list: pid=%u path=%s\n", pid, ntPath.c_str());
     for (DWORD mpid : matches) {
         ::PostMessage(app.GetHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)mpid, (LPARAM)UPDATE_SOURCE_NOTIFY);
     }
@@ -125,7 +125,7 @@ void HookActions::HandleRemoveHook(CUMControllerDlg* dlg, Filter* filter, CListC
     UNREFERENCED_PARAMETER(dlg);
     std::wstring ntPath;
     if (!Helper::ResolveProcessNtImagePath(pid, *filter, ntPath)) {
-        app.GetETW().Log(L"OnRemoveHook: failed to resolve NT path for pid %u\n", pid);
+		LOG_CTRL_ETW(L"OnRemoveHook: failed to resolve NT path for pid %u\n", pid);
         MessageBox(NULL, L"Failed to resolve process image path. The process may have exited.", L"Remove Hook", MB_OK | MB_ICONERROR);
         return;
     }

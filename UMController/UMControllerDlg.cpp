@@ -116,6 +116,57 @@ void CUMControllerDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_LIST_PROC, m_ProcListCtrl);
 }
 
+void CUMControllerDlg::OnToggleGlobalHookMode() {
+	m_globalHookMode = !m_globalHookMode;
+	// persist
+	if (!RegistryStore::WriteGlobalHookMode(m_globalHookMode)) {
+		LOG_CTRL_ETW(L"Failed to persist GlobalHookMode=%d\n", (int)m_globalHookMode);
+	}
+	// Notify driver via filter IPC
+	if (!m_Filter.FLTCOMM_SetGlobalHookMode(m_globalHookMode)) {
+		LOG_CTRL_ETW(L"Failed to send GlobalHookMode to driver\n");
+	}
+	// update menu check and redraw menu bar
+	if (GetMenu()) {
+		HMENU h = GetMenu()->m_hMenu;
+		if (h) {
+			CheckMenuItem(h, ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, MF_BYCOMMAND | (m_globalHookMode ? MF_CHECKED : MF_UNCHECKED));
+			DrawMenuBar();
+		}
+	}
+}
+
+LRESULT CUMControllerDlg::OnApplyGlobalHookMenu(WPARAM wParam, LPARAM lParam) {
+	UNREFERENCED_PARAMETER(wParam);
+	UNREFERENCED_PARAMETER(lParam);
+	int attempt = (int)wParam;
+	if (GetMenu()) {
+		HMENU h = GetMenu()->m_hMenu;
+		if (h) {
+			CheckMenuItem(h, ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, MF_BYCOMMAND | (m_globalHookMode ? MF_CHECKED : MF_UNCHECKED));
+			DrawMenuBar();
+			LOG_CTRL_ETW(L"Delayed menu enforcement applied: enabled=%d attempt=%d\n", (int)m_globalHookMode, attempt);
+			return 0;
+		}
+	}
+	// Menu not ready; retry a few times with backoff
+	if (attempt < 5) {
+		int next = attempt + 1;
+		int delay = 300 * next; // increasing delay
+		HWND hwnd = this->GetSafeHwnd();
+		if (hwnd) {
+			std::thread([hwnd, next, delay]() {
+				std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+				::PostMessage(hwnd, WM_APP + 0x100, next, 0);
+			}).detach();
+			LOG_CTRL_ETW(L"Delayed menu enforcement: menu not ready, scheduling retry %d\n", next);
+			return 0;
+		}
+	}
+	LOG_CTRL_ETW(L"Delayed menu enforcement failed after retries: menu not available\n");
+	return 0;
+}
+
 // Column click handler declaration
 void CUMControllerDlg::OnLvnColumnclickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 {
@@ -218,6 +269,8 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	// Hook dialog destruction message now supplied by DLL (numeric constant)
 	ON_MESSAGE(WM_APP + 0x701, &CUMControllerDlg::OnHookDlgDestroyed)
 	ON_MESSAGE(WM_APP_POST_ENUM_CLEANUP, &CUMControllerDlg::OnPostEnumCleanup)
+	ON_MESSAGE(WM_APP + 0x100, &CUMControllerDlg::OnApplyGlobalHookMenu)
+	ON_COMMAND(ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, &CUMControllerDlg::OnToggleGlobalHookMode)
 	ON_COMMAND(IDM_ABOUTBOX, &CUMControllerDlg::OnHelpAbout)
 END_MESSAGE_MAP()
 // Adapter implementing IHookServices for current process (bridges to ETW tracer)
@@ -368,6 +421,15 @@ BOOL CUMControllerDlg::OnInitDialog()
 	m_StartupProgress.ShowWindow(SW_SHOW);
 	if (m_StartupPct.GetSafeHwnd()) m_StartupPct.SetWindowTextW(L"0%");
 	m_StartupInProgress = true;
+
+	// Load persisted Global Hook Mode setting and update menu check
+	bool enabled = false;
+	if (RegistryStore::ReadGlobalHookMode(enabled)) {
+		m_globalHookMode = enabled;
+		LOG_CTRL_ETW(L"Registry: ReadGlobalHookMode returned true, enabled=%d\n", (int)enabled);
+	} else {
+		LOG_CTRL_ETW(L"Registry: ReadGlobalHookMode returned false, leaving default enabled=%d\n", (int)enabled);
+	}
 	// Enumeration-only progress: no timeout or per-PID resolution tracking.
 	// Load existing composite process cache (PID:CREATIONTIME=NT path) for quick lookup before resolution.
 	try {
@@ -403,6 +465,31 @@ BOOL CUMControllerDlg::OnInitDialog()
 		m_ProcListCtrl.EnableWindow(FALSE);
 		if (GetMenu()) EnableMenuItem(GetMenu()->m_hMenu, 0, MF_BYPOSITION | MF_GRAYED);
 		if (CWnd* search = GetDlgItem(IDC_EDIT_SEARCH)) search->EnableWindow(FALSE);
+	}
+
+	// Apply menu checked state for the enabled/disabled Global Hook Mode
+	if (GetMenu()) {
+		HMENU h = GetMenu()->m_hMenu;
+		if (h) {
+			UINT prev = CheckMenuItem(h, ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, MF_BYCOMMAND | (m_globalHookMode ? MF_CHECKED : MF_UNCHECKED));
+			LOG_CTRL_ETW(L"Applied menu check: id=%d enabled=%d prev=0x%08x\n", ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, (int)m_globalHookMode, prev);
+			DrawMenuBar();
+		} else {
+			LOG_CTRL_ETW(L"GetMenu()->m_hMenu was NULL when applying GlobalHookMode check\n");
+		}
+	} else {
+		LOG_CTRL_ETW(L"GetMenu() returned NULL when applying GlobalHookMode check\n");
+	}
+
+	// Post a delayed enforcement to reapply menu check in case other init code
+	// modifies the menu after OnInitDialog. This avoids races where the menu
+	// is rebuilt after we initially set the check.
+	{
+		auto hwnd = this->GetSafeHwnd();
+		std::thread([hwnd]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			if (hwnd)::PostMessage(hwnd, WM_APP + 0x100, 0, 0);
+		}).detach();
 	}
 
 	// Register process notify callback so UI updates on create/exit.
@@ -505,6 +592,15 @@ BOOL CUMControllerDlg::OnInitDialog()
 	// Load and set the main menu (Tools + Log)
 	if (m_Menu.LoadMenu(IDR_MAIN_MENU)) {
 		SetMenu(&m_Menu);
+		// Menu was just created; ensure Global Hook Mode check matches persisted state
+		if (GetMenu()) {
+			HMENU h = GetMenu()->m_hMenu;
+			if (h) {
+				CheckMenuItem(h, ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, MF_BYCOMMAND | (m_globalHookMode ? MF_CHECKED : MF_UNCHECKED));
+				DrawMenuBar();
+				LOG_CTRL_ETW(L"SetMenu: applied GlobalHookMode check immediately: enabled=%d\n", (int)m_globalHookMode);
+			}
+		}
 	}
 
 	LOG_CTRL_ETW(L"dialog init succeed\n");
