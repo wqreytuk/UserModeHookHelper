@@ -1260,6 +1260,65 @@ void CUMControllerDlg::FinishStartupIfDone() {
 		RegistryStore::WriteCompositeProcCache(dedup);
 	}
 	m_CachePersisted = true;
+
+	// Schedule purge of stale ProcHookList entries on a background thread
+	try {
+		std::thread([this]() {
+			// Delay to avoid impacting startup responsiveness and reduce race with late-starting processes
+			std::this_thread::sleep_for(std::chrono::seconds(5));
+			try {
+				std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>> persistedHooks;
+				if (!RegistryStore::ReadProcHookList(persistedHooks)) return;
+				// Build a set of known keys (pid, hi, lo) from our snapshot entries
+				std::unordered_set<unsigned long long> knownKeys;
+				for (auto &t : m_PersistSnapshotEntries) {
+					DWORD pid = std::get<0>(t);
+					DWORD hi = std::get<1>(t);
+					DWORD lo = std::get<2>(t);
+					unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+					knownKeys.insert(key);
+				}
+				// Also include live processes' create times
+				HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+				if (snap != INVALID_HANDLE_VALUE) {
+					PROCESSENTRY32 pe = { sizeof(pe) };
+					if (Process32First(snap, &pe)) {
+						do {
+							DWORD pid = pe.th32ProcessID;
+							if (pid == 0 || pid == 4) continue;
+							HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+							if (!h) continue;
+							FILETIME createTime{0,0}, exitTime, kernelTime, userTime;
+							if (GetProcessTimes(h, &createTime, &exitTime, &kernelTime, &userTime)) {
+								DWORD hi = createTime.dwHighDateTime;
+								DWORD lo = createTime.dwLowDateTime;
+								unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+								knownKeys.insert(key);
+							}
+							CloseHandle(h);
+						} while (Process32Next(snap, &pe));
+					}
+					CloseHandle(snap);
+				}
+				// Iterate persisted hooks and remove entries whose PID:HI:LO not in knownKeys
+				for (auto &h : persistedHooks) {
+					DWORD pid = std::get<0>(h);
+					DWORD hi = std::get<1>(h);
+					DWORD lo = std::get<2>(h);
+					unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+					if (knownKeys.find(key) == knownKeys.end()) {
+						LOG_CTRL_ETW(L"Purging stale ProcHookList entry for pid=%u hi=%08X lo=%08X\n", pid, hi, lo);
+						RegistryStore::RemoveProcHookEntry(pid, hi, lo, std::get<3>(h));
+					}
+				}
+			} catch (...) {
+				LOG_CTRL_ETW(L"Background purge: failed to purge stale ProcHookList entries\n");
+			}
+		}).detach();
+		LOG_CTRL_ETW(L"Scheduled background purge of ProcHookList entries\n");
+	} catch (...) {
+		LOG_CTRL_ETW(L"FinishStartupIfDone: failed to schedule background purge\n");
+	}
 }
 
 void CUMControllerDlg::CompleteStartupUI() {
