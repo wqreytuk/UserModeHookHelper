@@ -123,6 +123,16 @@ private:
 	bool m_CachePersisted = false; // composite cache written this session
 	// persisted toggle
 	bool m_globalHookMode = false;
+
+	// Plugin system
+	CMenu m_PluginsSubMenu; // submenu showing discovered plugins
+	std::unordered_map<int, std::wstring> m_PluginMap; // cmd id -> dll full path
+	std::unordered_map<int, HMODULE> m_PluginHandles; // loaded plugin handles
+	void ScanAndPopulatePlugins();
+	void UnloadAllPlugins();
+	afx_msg void OnPluginCommand(UINT nID);
+	afx_msg void OnPluginRefresh();
+	afx_msg void OnPluginUnloadAll();
 	void FinishStartupIfDone(); // persistence only (no UI)
 	void CompleteStartupUI(); // UI enable/hide after enumeration completes
 	LRESULT OnPostEnumCleanup(WPARAM, LPARAM);

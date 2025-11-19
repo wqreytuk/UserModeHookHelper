@@ -311,6 +311,9 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_MESSAGE(WM_APP + 0x100, &CUMControllerDlg::OnApplyGlobalHookMenu)
 	ON_COMMAND(ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, &CUMControllerDlg::OnToggleGlobalHookMode)
 	ON_COMMAND(IDM_ABOUTBOX, &CUMControllerDlg::OnHelpAbout)
+	ON_COMMAND_RANGE(ID_MENU_PLUGINS_BASE, ID_MENU_PLUGINS_BASE + 255, &CUMControllerDlg::OnPluginCommand)
+	ON_COMMAND(ID_MENU_PLUGIN_REFRESH, &CUMControllerDlg::OnPluginRefresh)
+	ON_COMMAND(ID_MENU_PLUGIN_UNLOAD_ALL, &CUMControllerDlg::OnPluginUnloadAll)
 END_MESSAGE_MAP()
 // Adapter implementing IHookServices for current process (bridges to ETW tracer)
 class HookServicesAdapter : public IHookServices {
@@ -333,15 +336,15 @@ public:
 	}
 	bool InjectTrampoline(DWORD targetPid, const wchar_t* fullDllPath) override {
 		if (targetPid == 0 || !fullDllPath || *fullDllPath == L'\0') {
-			app.GetETW().Log(L"[HookCore]   InjectTrampoline: invalid args pid=%u path=%s\n", targetPid, fullDllPath ? fullDllPath : L"(null)");
+			app.GetETW().Log(L"[UMCtrl]     InjectTrampoline: invalid args pid=%u path=%s\n", targetPid, fullDllPath ? fullDllPath : L"(null)");
 			return false;
 		}
 		// Reuse existing IPC file signaling API.
 		if (!IPC_SendInject(targetPid, fullDllPath)) {
-			app.GetETW().Log(L"[HookCore]   InjectTrampoline: IPC_SendInject failed pid=%u path=%s (err=%lu)\n", targetPid, fullDllPath, GetLastError());
+			app.GetETW().Log(L"[UMCtrl]     InjectTrampoline: IPC_SendInject failed pid=%u path=%s (err=%lu)\n", targetPid, fullDllPath, GetLastError());
 			return false;
 		}
-		app.GetETW().Log(L"[HookCore]   InjectTrampoline: signal sent pid=%u path=%s\n", targetPid, fullDllPath);
+		app.GetETW().Log(L"[UMCtrl]     InjectTrampoline: signal sent pid=%u path=%s\n", targetPid, fullDllPath);
 		return true;
 	}
 	bool IsProcess64(DWORD targetPid, bool& outIs64) override {
@@ -378,6 +381,121 @@ public:
 	}
 };
 static HookServicesAdapter g_HookServices; // singleton adapter instance
+
+// Plugin export prototype: receives HWND and IHookServices pointer
+typedef void (__cdecl *PFN_PluginMain)(HWND hwnd, IHookServices* services);
+
+void CUMControllerDlg::ScanAndPopulatePlugins() {
+	// Clear previous mapping & loaded handles
+	m_PluginMap.clear();
+	// Ensure Plugins submenu exists in menu bar
+	if (!m_Menu.GetSafeHmenu()) return;
+	// Find or create Plugins top-level menu
+	CMenu* pMain = &m_Menu;
+	HMENU hMain = pMain->m_hMenu;
+	if (!hMain) return;
+	// Create a popup submenu for plugins
+	m_PluginsSubMenu.DestroyMenu();
+	m_PluginsSubMenu.CreatePopupMenu();
+
+	// Use the controller executable directory as the authoritative UserDir
+	std::wstring exe = Helper::GetCurrentModulePath(L"");
+	size_t pos = exe.find_last_of(L"/\\");
+	std::wstring dir = (pos==std::wstring::npos) ? exe : exe.substr(0,pos);
+	std::wstring pluginsPath = dir + L"\\plugins";
+
+	// Enumerate DLL files in pluginsPath
+	WIN32_FIND_DATAW fd;
+	std::wstring pattern = pluginsPath + L"\\*.dll";
+	HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+	int cmdBase = ID_MENU_PLUGINS_BASE;
+	int idx = 0;
+	if (hFind != INVALID_HANDLE_VALUE) {
+		do {
+			if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+				std::wstring filename = fd.cFileName;
+				std::wstring full = pluginsPath + L"\\" + filename;
+				// menu id allocation
+							int cmd = cmdBase + idx;
+							m_PluginMap[cmd] = full;
+							m_PluginsSubMenu.AppendMenu(MF_STRING, (UINT_PTR)cmd, (LPCTSTR)filename.c_str());
+				idx++;
+				if (idx >= 255) break; // limit range
+			}
+		} while (FindNextFileW(hFind, &fd));
+		FindClose(hFind);
+	}
+
+	// Add separators and control commands
+	m_PluginsSubMenu.AppendMenu(MF_SEPARATOR, (UINT_PTR)0, (LPCTSTR)NULL);
+	m_PluginsSubMenu.AppendMenu(MF_STRING, (UINT_PTR)ID_MENU_PLUGIN_REFRESH, (LPCTSTR)L"Refresh Plugins");
+	m_PluginsSubMenu.AppendMenu(MF_STRING, (UINT_PTR)ID_MENU_PLUGIN_UNLOAD_ALL, (LPCTSTR)L"Unload All Plugins");
+
+	// Attach Plugins submenu to main menu as a top-level item.
+	// Prefer inserting before the Help menu so Help remains rightmost.
+	int menuPos = GetMenuItemCount(hMain); // default: end
+	for (int i = 0; i < menuPos; ++i) {
+		HMENU sub = GetSubMenu(hMain, i);
+		if (!sub) continue;
+		int subCount = GetMenuItemCount(sub);
+		for (int j = 0; j < subCount; ++j) {
+			UINT mid = GetMenuItemID(sub, j);
+			if (mid == IDM_ABOUTBOX) { // found Help popup
+				menuPos = i;
+				break;
+			}
+		}
+		if (menuPos == i) break;
+	}
+	pMain->InsertMenu(menuPos, MF_BYPOSITION | MF_POPUP, (UINT_PTR)m_PluginsSubMenu.m_hMenu, (LPCTSTR)L"Plugins");
+	DrawMenuBar();
+}
+
+void CUMControllerDlg::OnPluginCommand(UINT nID) {
+	auto it = m_PluginMap.find(nID);
+	if (it == m_PluginMap.end()) return;
+	const std::wstring& dllPath = it->second;
+	// Load if not already loaded
+	HMODULE h = NULL;
+	auto itH = m_PluginHandles.find(nID);
+	if (itH != m_PluginHandles.end()) h = itH->second;
+	if (!h) {
+		h = LoadLibraryW(dllPath.c_str());
+		if (!h) {
+			MessageBoxW(L"Failed to load plugin DLL.", L"Plugin Error", MB_ICONERROR);
+			return;
+		}
+		m_PluginHandles[nID] = h;
+	}
+	// Resolve export PluginMain and call it
+	PFN_PluginMain pfn = (PFN_PluginMain)GetProcAddress(h, "PluginMain");
+	if (!pfn) {
+		MessageBoxW(L"Plugin does not export PluginMain.", L"Plugin Error", MB_ICONERROR);
+		return;
+	}
+	// Call plugin main with HWND and services pointer so plugin can call back
+	pfn(this->GetSafeHwnd(), &g_HookServices);
+}
+
+void CUMControllerDlg::UnloadAllPlugins() {
+	for (auto &kv : m_PluginHandles) {
+		if (kv.second) FreeLibrary(kv.second);
+	}
+	m_PluginHandles.clear();
+}
+
+void CUMControllerDlg::OnPluginRefresh() {
+	// Unload then rescan
+	UnloadAllPlugins();
+	// Remove old submenu and recreate
+	if (m_PluginsSubMenu.GetSafeHmenu()) m_PluginsSubMenu.DestroyMenu();
+	ScanAndPopulatePlugins();
+}
+
+void CUMControllerDlg::OnPluginUnloadAll() {
+	UnloadAllPlugins();
+	MessageBoxW(L"All plugins unloaded.", L"Plugins", MB_OK | MB_ICONINFORMATION);
+}
 
 
 // CUMControllerDlg message handlers
@@ -641,6 +759,9 @@ BOOL CUMControllerDlg::OnInitDialog()
 			}
 		}
 	}
+
+	// Populate Plugins menu from UserDir\plugins
+	ScanAndPopulatePlugins();
 
 	LOG_CTRL_ETW(L"dialog init succeed\n");
 

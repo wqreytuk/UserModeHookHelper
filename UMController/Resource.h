@@ -24,6 +24,12 @@
 #define ID_MENU_OPEN_ETW_LOG     40007
 // Extra menu command
 #define ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE 40020
+// Plugin menu base (reserve a small range for plugin items)
+#define ID_MENU_PLUGINS_BASE   41000
+#define ID_MENU_PLUGINS        41001
+// Plugin control commands
+#define ID_MENU_PLUGIN_REFRESH 41050
+#define ID_MENU_PLUGIN_UNLOAD_ALL 41051
 // Menu resource for dialog Tools menu
 #define IDR_TOOLS_MENU         129
 #define IDD_REMOVE_HOOK_DLG    140
