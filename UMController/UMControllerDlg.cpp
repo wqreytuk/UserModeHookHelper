@@ -1,4 +1,4 @@
-
+﻿
 // UMControllerDlg.cpp : implementation file
 //
 
@@ -143,6 +143,17 @@ void CUMControllerDlg::OnToggleGlobalHookMode() {
 			std::vector<DWORD> pids;
 			for (auto &e : all) pids.push_back(e.pid);
 			// Start resolver for all known pids; ProcessResolver will mark master DLL state for entries
+			ProcessResolver::StartLoaderResolver(this, pids, &m_Filter);
+		}).detach();
+	}
+	else {
+		// GlobalHookMode was just disabled — refresh hook/module state using
+		// the original per-path IPC/cache logic so UI and sorting return to
+		// authoritative behavior.
+		std::thread([this]() {
+			auto all = PM_GetAll();
+			std::vector<DWORD> pids;
+			for (auto &e : all) pids.push_back(e.pid);
 			ProcessResolver::StartLoaderResolver(this, pids, &m_Filter);
 		}).detach();
 	}
