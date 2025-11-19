@@ -8,6 +8,8 @@
 #include <Windows.h>
 #endif
 
+#include "HookRow.h"
+
 // Unified IHookServices interface shared by UMController, HookUI, and HookCoreLib.
 // Provides two logging channels: general (Log) and hook-core diagnostics (LogCore).
 struct IHookServices {
@@ -24,12 +26,13 @@ struct IHookServices {
     // checks when available so callers in HookUI can rely on authoritative
     // information.
     virtual bool IsProcess64(DWORD targetPid, bool& outIs64) = 0;
-    // Persist per-process hook list entries. The entries format matches
-    // RegistryStore::WriteProcHookList semantic: tuple<PID, FILETIME_HI, FILETIME_LO, HOOKID, ORI_LEN, TRAMP_PIT, ADDR, MODULE>
-    virtual bool SaveProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& entries) = 0;
+    // Persist per-process hook list entries. Uses a shared `HookRow` vector
+    // where each HookRow contains the persisted fields; the controller will
+    // augment entries with PID+FILETIME when writing to registry.
+    virtual bool SaveProcHookList(DWORD pid, DWORD hi, DWORD lo, const std::vector<HookRow>& entries) = 0;
     // Remove a single persisted ProcHookList entry matching PID+FILETIME+HOOKID
     virtual bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) = 0;
-    // Load persisted ProcHookList entries into 'outEntries'
-    virtual bool LoadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& outEntries) = 0;
+    // Load persisted ProcHookList entries into 'outEntries' (HookRow instances)
+    virtual bool LoadProcHookList(std::vector<HookRow>& outEntries) = 0;
     virtual ~IHookServices() {}
 };

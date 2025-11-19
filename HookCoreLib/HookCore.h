@@ -22,7 +22,13 @@ namespace HookCore {
 	// Placeholder for future hook application (returns false until implemented).
 	// Apply a minimal validation hook. 'services' may be nullptr; if provided, core will emit
 	// diagnostic messages via services->LogCore().
-	bool ApplyHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD64 hook_code_addr, int hookId, DWORD *out_ori_asm_code_len,PVOID* out_trampoline_pit);
+	bool ApplyHook(DWORD pid, ULONGLONG address, IHookServices* services,
+		DWORD64 hook_code_addr, int hook_id, DWORD *out_ori_asm_code_len,
+		PVOID* out_trampoline_pit, PVOID* out_ori_asm_code_addr);
 	bool RemoveHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD hook_id, DWORD ori_asm_code_len, PVOID trampoline_pit);
 	LPVOID AllocNearRemote(HANDLE hProcess, ULONGLONG target, SIZE_T size);
+	bool DisableHook(DWORD pid, ULONGLONG hook_address, IHookServices* services,
+		PVOID ori_asm_code_addr, DWORD ori_asm_code_len);
+	bool EnableHook(DWORD pid, ULONGLONG hook_address, IHookServices* services, PVOID trampoline_pit);
+	
 }

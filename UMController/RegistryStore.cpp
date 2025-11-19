@@ -202,8 +202,9 @@ bool RegistryStore::WriteCompositeProcCache(const std::vector<std::tuple<DWORD, 
     return true;
 }
 
-// Format: PID:HIGH:LOW:HOOKID:ORI_LEN:TRAMP_PIT:ADDR=MODULE  (ADDR/TRAMP_PIT hex 64-bit, HOOKID/ORI_LEN hex)
-bool RegistryStore::ReadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& outEntries) {
+// Format: PID:HIGH:LOW:HOOKID:ORI_LEN:ORI_ADDR:TRAMP_PIT:ADDR=MODULE
+// (ADDR/ORI_ADDR/TRAMP_PIT hex 64-bit, HOOKID/ORI_LEN hex)
+bool RegistryStore::ReadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& outEntries) {
     outEntries.clear();
     HKEY hKey = NULL;
     LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_READ, &hKey);
@@ -232,22 +233,23 @@ bool RegistryStore::ReadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD,
             if (p == std::wstring::npos) { parts.push_back(key.substr(pos)); break; }
             parts.push_back(key.substr(pos, p-pos)); pos = p+1;
         }
-        if (parts.size() != 7) continue;
-        DWORD pid=0, hi=0, lo=0; int hookid=0; DWORD ori_len=0; unsigned long long tramp_pit=0; unsigned long long addr=0;
+        if (parts.size() != 8) continue;
+        DWORD pid=0, hi=0, lo=0; int hookid=0; DWORD ori_len=0; unsigned long long ori_addr=0; unsigned long long tramp_pit=0; unsigned long long addr=0;
         swscanf_s(parts[0].c_str(), L"%lx", &pid);
         swscanf_s(parts[1].c_str(), L"%lx", &hi);
         swscanf_s(parts[2].c_str(), L"%lx", &lo);
         swscanf_s(parts[3].c_str(), L"%x", &hookid);
         swscanf_s(parts[4].c_str(), L"%x", &ori_len);
-        // parse 64-bit hex for trampoline pit and address
-        swscanf_s(parts[5].c_str(), L"%llx", &tramp_pit);
-        swscanf_s(parts[6].c_str(), L"%llx", &addr);
-        outEntries.emplace_back(pid, hi, lo, hookid, ori_len, tramp_pit, addr, module);
+        // parse 64-bit hex for original code address, trampoline pit and address
+        swscanf_s(parts[5].c_str(), L"%llx", &ori_addr);
+        swscanf_s(parts[6].c_str(), L"%llx", &tramp_pit);
+        swscanf_s(parts[7].c_str(), L"%llx", &addr);
+        outEntries.emplace_back(pid, hi, lo, hookid, ori_len, ori_addr, tramp_pit, addr, module);
     }
     return true;
 }
 
-bool RegistryStore::WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& entries) {
+bool RegistryStore::WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& entries) {
     std::vector<wchar_t> buf;
     for (auto &t : entries) {
         DWORD pid = std::get<0>(t);
@@ -255,12 +257,13 @@ bool RegistryStore::WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD,
         DWORD lo = std::get<2>(t);
         int hookid = std::get<3>(t);
         DWORD ori_len = std::get<4>(t);
-        unsigned long long tramp_pit = std::get<5>(t);
-        unsigned long long addr = std::get<6>(t);
-        const std::wstring &module = std::get<7>(t);
+        unsigned long long ori_addr = std::get<5>(t);
+        unsigned long long tramp_pit = std::get<6>(t);
+        unsigned long long addr = std::get<7>(t);
+        const std::wstring &module = std::get<8>(t);
         if (module.empty()) continue;
-        wchar_t header[128];
-        _snwprintf_s(header, _TRUNCATE, L"%08lX:%08lX:%08lX:%08X:%08X:%016llX:%016llX=", pid, hi, lo, (unsigned int)hookid, (unsigned int)ori_len, tramp_pit, addr);
+        wchar_t header[192];
+        _snwprintf_s(header, _TRUNCATE, L"%08lX:%08lX:%08lX:%08X:%08X:%016llX:%016llX:%016llX=", pid, hi, lo, (unsigned int)hookid, (unsigned int)ori_len, ori_addr, tramp_pit, addr);
         std::wstring line = header;
         line.append(module);
         buf.insert(buf.end(), line.c_str(), line.c_str() + line.size());
@@ -277,9 +280,9 @@ bool RegistryStore::WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD,
 }
 
 bool RegistryStore::RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) {
-    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>> entries;
+    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> entries;
     if (!ReadProcHookList(entries)) return false;
-    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>> out;
+    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> out;
     bool removed = false;
     for (auto &t : entries) {
         DWORD p = std::get<0>(t);

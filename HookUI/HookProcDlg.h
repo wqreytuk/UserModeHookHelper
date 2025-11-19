@@ -9,6 +9,7 @@
 #include <afxcmn.h>        // common controls (CListCtrl)
 #include "HookInterfaces.h"
 #include "HookUIResource.h"
+#include "../Shared/HookRow.h"
 
 class HookProcDlg : public CDialogEx {
 public:
@@ -30,6 +31,10 @@ protected:
     afx_msg void OnEnSetFocusOffset();
     afx_msg void OnEnSetFocusDirect();
     afx_msg void OnCustomDrawModules(NMHDR* pNMHDR, LRESULT* pResult);
+    afx_msg void OnContextMenu(CWnd* pWnd, CPoint point);
+    afx_msg void OnHookMenuDisable();
+    afx_msg void OnHookMenuEnable();
+    afx_msg void OnHookMenuRemove();
     DECLARE_MESSAGE_MAP()
 private:
     void PopulateModuleList();
@@ -46,7 +51,6 @@ private:
     void UpdateLayoutForSplitter(int cx, int cy);
     int m_sortColumn=0; bool m_sortAscending=true; static int CALLBACK ModuleCompare(LPARAM, LPARAM, LPARAM);
     void PopulateHookList();
-    struct HookRow { int id; ULONGLONG address; std::wstring module; DWORD ori_asm_code_len; unsigned long long trampoline_pit; };
-    int AddHookEntry(ULONGLONG address, const std::wstring& moduleName, DWORD ori_asm_code_len, unsigned long long trampoline_pit, int id = -1);
+    int AddHookEntry(const HookRow& row);
     int m_nextHookId = 1; // auto-incrementing hook id starting at 1
 };

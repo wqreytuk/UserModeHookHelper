@@ -2,6 +2,7 @@
 
 #include "HookProcDlg.h"
 #include "../Shared/LogMacros.h"
+#include "../Shared/HookRow.h"
 #include <tlhelp32.h>
 #include <cwchar>
 #include <cwctype>
@@ -10,6 +11,7 @@
 #include "../HookCoreLib/HookCore.h"
 #include "../UMController/Helper.h"
 #include "../UMController/RegistryStore.h"
+#include "../Shared/HookRow.h"
 static std::wstring Hex64(ULONGLONG v) {
     wchar_t buf[32];
     _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%llX", v);
@@ -21,6 +23,7 @@ const UINT HookProcDlg::kMsgHookDlgDestroyed = WM_APP + 0x701;
 BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_HOOKUI_BTN_APPLY, &HookProcDlg::OnBnClickedApplyHook)
     ON_WM_SIZE()
+    ON_WM_CONTEXTMENU()
     ON_WM_LBUTTONDOWN()
     ON_WM_LBUTTONUP()
     ON_WM_MOUSEMOVE()
@@ -72,29 +75,25 @@ BOOL HookProcDlg::OnInitDialog() {
     // If createTime is zero, we still attempt load with hi/lo = 0
     DWORD hi = createTime.dwHighDateTime;
     DWORD lo = createTime.dwLowDateTime;
-    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>> persisted;
+    std::vector<HookRow> persisted;
     if (m_services && m_services->LoadProcHookList(persisted)) {
-        for (auto &t : persisted) {
-            DWORD pid = std::get<0>(t);
-            DWORD phi = std::get<1>(t);
-            DWORD plo = std::get<2>(t);
-            if (pid != m_pid) continue;
-            if (phi != hi || plo != lo) continue;
-            int hookid = std::get<3>(t);
-            DWORD ori_len = std::get<4>(t);
-            unsigned long long tramp_pit = std::get<5>(t);
-            unsigned long long addr = std::get<6>(t);
-            std::wstring module = std::get<7>(t);
+        for (auto &pr : persisted) {
+            // controller returns HookRow populated; we still need to verify PID+FILETIME
+            // For backward-compatibility the controller should only return rows for this PID+FILETIME.
+            // We'll accept any returned HookRow and add those matching m_pid.
+            // Note: If the controller uses a combined key, it may choose to return only matching rows.
             // restore row preserving hook id
-            HookRow* hr = new HookRow{ hookid, addr, module, ori_len, tramp_pit };
-            CString idC; idC.Format(L"%d", hookid);
-            CString addrC; addrC.Format(L"0x%llX", addr);
+            if (pr.id == -1) continue; // skip invalid
+            HookRow* hr = new HookRow(pr);
+            // If caller didn't populate ori_asm_code_addr, it will be zero.
+            CString idC; idC.Format(L"%d", hr->id);
+            CString addrC; addrC.Format(L"0x%llX", hr->address);
             int idx = m_HookList.GetItemCount();
             int i = m_HookList.InsertItem(idx, idC);
             m_HookList.SetItemText(i, 1, addrC);
-            m_HookList.SetItemText(i, 2, module.c_str());
+            m_HookList.SetItemText(i, 2, hr->module.c_str());
             m_HookList.SetItemData(i, (DWORD_PTR)hr);
-            if (hookid >= m_nextHookId) m_nextHookId = hookid + 1;
+            if (hr->id >= m_nextHookId) m_nextHookId = hr->id + 1;
         }
     }
     // apply initial splitter
@@ -160,33 +159,39 @@ void HookProcDlg::PopulateHookList() {
     // TODO: read persisted hooks for this pid or wire live update.
 }
 
-int HookProcDlg::AddHookEntry(ULONGLONG address, const std::wstring& moduleName,DWORD ori_asm_code_len, unsigned long long trampoline_pit,int id){
+int HookProcDlg::AddHookEntry(const HookRow& row) {
     int idx = m_HookList.GetItemCount();
-    int useId = id;
+    int useId = row.id;
     if (useId == -1) useId = m_nextHookId++;
     CString idC; idC.Format(L"%d", useId);
-    CString addrC; addrC.Format(L"0x%llX", address);
+    CString addrC; addrC.Format(L"0x%llX", row.address);
     CString useIdC; useIdC.Format(L"%d", useId);
     int i = m_HookList.InsertItem(idx, useIdC);
     m_HookList.SetItemText(i, 1, addrC);
-    m_HookList.SetItemText(i, 2, moduleName.c_str());
-    // Allocate a HookRow and attach to the list item so we can later locate by address
-    HookRow* hr = new HookRow{ useId, address, moduleName, ori_asm_code_len, trampoline_pit };
+    m_HookList.SetItemText(i, 2, row.module.c_str());
+    // Allocate a HookRow copy and attach to the list item so we can later locate by address
+    HookRow* hr = new HookRow(row);
+    hr->id = useId;
     m_HookList.SetItemData(i, (DWORD_PTR)hr);
     // Persist updated list for this PID using RegistryStore
     // Build entries vector and write
     FILETIME createTime{0,0}; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
     if (h) { FILETIME et,k,u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) { } CloseHandle(h); }
     DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
-    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>> out;
+    std::vector<HookRow*> rows;
     int count = m_HookList.GetItemCount();
     for (int j = 0; j < count; ++j) {
         HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(j));
         if (!r) continue;
-        out.emplace_back(m_pid, hi, lo, r->id, r->ori_asm_code_len, r->trampoline_pit, r->address, r->module);
+        rows.push_back(r);
         if (r->id >= m_nextHookId) m_nextHookId = r->id + 1;
     }
-    if (m_services) m_services->SaveProcHookList(out);
+    if (m_services) {
+        // Convert vector<HookRow*> to vector<HookRow> for service
+        std::vector<HookRow> outRows; outRows.reserve(rows.size());
+        for (auto pr : rows) if (pr) outRows.push_back(*pr);
+        m_services->SaveProcHookList(m_pid,hi,lo,outRows);
+    }
     return i;
 }
 
@@ -260,6 +265,155 @@ void HookProcDlg::FreeHookRows() {
         HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
         if (hr) delete hr;
         m_HookList.SetItemData(i, 0);
+    }
+}
+
+void HookProcDlg::OnContextMenu(CWnd* pWnd, CPoint point) {
+    // Translate screen point to client and hit-test the hook list
+    if (!m_HookList.GetSafeHwnd()) return;
+    CPoint clientPoint = point;
+    m_HookList.ScreenToClient(&clientPoint);
+    LVHITTESTINFO ht = {0}; ht.pt = clientPoint;
+    int item = m_HookList.HitTest(&ht);
+    if (item == -1) return; // click not on an item
+
+    CMenu menu; menu.CreatePopupMenu();
+    const UINT CMD_DISABLE = 0x8001;
+    const UINT CMD_ENABLE = 0x8002;
+    const UINT CMD_REMOVE = 0x8003;
+    menu.AppendMenuW(MF_STRING, CMD_DISABLE, L"Disable");
+    menu.AppendMenuW(MF_STRING, CMD_ENABLE, L"Enable");
+    menu.AppendMenuW(MF_STRING, CMD_REMOVE, L"Remove");
+
+    // Determine whether the row is currently disabled (we mark it by prefixing module with "[DISABLED] ")
+    bool isDisabled = false;
+    HookRow* testHr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(item));
+    if (testHr) {
+        if (testHr->module.rfind(L"[DISABLED] ", 0) == 0) isDisabled = true;
+    }
+
+    // Only enable the relevant action: if disabled -> Enable is active; else Disable is active.
+    menu.EnableMenuItem(CMD_DISABLE, MF_BYCOMMAND | (isDisabled ? MF_GRAYED : MF_ENABLED));
+    menu.EnableMenuItem(CMD_ENABLE, MF_BYCOMMAND | (isDisabled ? MF_ENABLED : MF_GRAYED));
+
+    // Store selected item index in window userdata so handlers can find it
+    SetWindowLongPtr(m_hWnd, GWLP_USERDATA, (LONG_PTR)item);
+
+    // Display the menu and dispatch command to our handlers
+    int cmd = menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, this);
+    if (cmd == 0) return;
+
+    switch (cmd) {
+    case 0x8001: OnHookMenuDisable(); break;
+    case 0x8002: OnHookMenuEnable(); break;
+    case 0x8003: OnHookMenuRemove(); break;
+    }
+}
+
+// Handlers: left as stubs for user implementation
+void HookProcDlg::OnHookMenuDisable() {
+    int item = (int)GetWindowLongPtr(m_hWnd, GWLP_USERDATA);
+    if (item < 0 || item >= m_HookList.GetItemCount()) return;
+    HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(item));
+    if (!hr) return;
+    // UI-only: mark disabled (prepend [DISABLED] to module text)
+    std::wstring mod = hr->module;
+    if (mod.find(L"[DISABLED]") == std::wstring::npos) {
+        mod = std::wstring(L"[DISABLED] ") + mod;
+        hr->module = mod;
+        m_HookList.SetItemText(item, 2, mod.c_str());
+    }
+	
+   
+	if (!HookCore::DisableHook(m_pid, hr->address, m_services, (PVOID)hr->ori_asm_code_addr, hr->ori_asm_code_len)) {
+		LOG_UI(m_services, L"failed to call HookCore::DisableHook\n");
+		MessageBoxW(L"failed to call HookCore::DisableHook\n", L"Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// Persist change
+	FILETIME createTime{ 0,0 }; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
+	if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
+	DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
+	std::vector<HookRow*> rows;
+	int count = m_HookList.GetItemCount();
+	for (int j = 0; j < count; ++j) {
+		HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(j));
+		if (!r) continue;
+		rows.push_back(r);
+		if (r->id >= m_nextHookId) m_nextHookId = r->id + 1;
+	}
+	if (m_services) {
+		// Convert vector<HookRow*> to vector<HookRow> for service
+		std::vector<HookRow> outRows; outRows.reserve(rows.size());
+		for (auto pr : rows) if (pr) outRows.push_back(*pr);
+		m_services->SaveProcHookList(m_pid,hi,lo,outRows);
+	}
+}
+
+void HookProcDlg::OnHookMenuEnable() {
+    int item = (int)GetWindowLongPtr(m_hWnd, GWLP_USERDATA);
+    if (item < 0 || item >= m_HookList.GetItemCount()) return;
+    HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(item));
+    if (!hr) return;
+    // UI-only: remove [DISABLED] marker if present
+    std::wstring mod = hr->module;
+    size_t pos = mod.find(L"[DISABLED] ");
+    if (pos != std::wstring::npos) {
+        mod = mod.substr(pos + wcslen(L"[DISABLED] "));
+        hr->module = mod;
+        m_HookList.SetItemText(item, 2, mod.c_str());
+    }
+
+	HookCore::EnableHook(m_pid, hr->address, m_services, (PVOID)hr->trampoline_pit);
+
+	// Persist change
+	FILETIME createTime{ 0,0 }; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
+	if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
+	DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
+	std::vector<HookRow*> rows;
+	int count = m_HookList.GetItemCount();
+	for (int j = 0; j < count; ++j) {
+		HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(j));
+		if (!r) continue;
+		rows.push_back(r);
+		if (r->id >= m_nextHookId) m_nextHookId = r->id + 1;
+	}
+	if (m_services) {
+		// Convert vector<HookRow*> to vector<HookRow> for service
+		std::vector<HookRow> outRows; outRows.reserve(rows.size());
+		for (auto pr : rows) if (pr) outRows.push_back(*pr);
+		m_services->SaveProcHookList(m_pid,hi,lo,outRows);
+	}
+}
+
+void HookProcDlg::OnHookMenuRemove() {
+	m_nextHookId--;
+    int item = (int)GetWindowLongPtr(m_hWnd, GWLP_USERDATA);
+    if (item < 0 || item >= m_HookList.GetItemCount()) return;
+    HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(item));
+    if (!hr) return;
+	if (!HookCore::RemoveHook(m_pid, hr->address, m_services, hr->id, hr->ori_asm_code_len, (PVOID)hr->trampoline_pit)) {
+		if (m_services)
+			LOG_UI(m_services, L"failed to call HookCore::RemoveHook\n");
+		MessageBoxW(L"failed to call HookCore::RemoveHook\n", L"Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// UI-only: remove the item and free memory
+	m_HookList.DeleteItem(item);
+	delete hr;
+
+    // Persist change
+    FILETIME createTime{0,0}; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
+    if (h) { FILETIME et,k,u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
+    DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
+    std::vector<HookRow*> rows;
+    for (int i = 0; i < m_HookList.GetItemCount(); ++i) rows.push_back(reinterpret_cast<HookRow*>(m_HookList.GetItemData(i)));
+    if (m_services) {
+        std::vector<HookRow> out; out.reserve(rows.size());
+        for (auto r : rows) if (r) out.push_back(*r);
+		m_services->SaveProcHookList(m_pid, hi, lo, out);
     }
 }
 
@@ -492,9 +646,10 @@ void HookProcDlg::OnBnClickedApplyHook() {
     // Proceed with the existing hook attempt (ApplyHook) after requesting trampoline load
     DWORD ori_asm_code_len = 0;
 	PVOID trampoline_pit = 0;
+	PVOID ori_asm_code_addr = 0;
     int assignedHookId = m_nextHookId; // reserve id that will be used for this new hook
     bool success = HookCore::ApplyHook(m_pid, addr, m_services, hook_code_dll_base+hook_code_offset, assignedHookId, &ori_asm_code_len,
-		&trampoline_pit);
+		&trampoline_pit,&ori_asm_code_addr);
 	if (success) {
 		if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook succeeded at 0x%llX\n", addr);
 		MessageBox(L"Hook succeed", L"Hook", MB_OK | MB_ICONINFORMATION);
@@ -506,8 +661,12 @@ void HookProcDlg::OnBnClickedApplyHook() {
 			if (addr >= m.base && addr < m.base + m.size) { moduleName = m.name; moduleBase = m.base; break; }
 		}
         // Add numeric hook entry (auto-incrementing ID), only new hook addr will be added
-		if (!rehook)
-			AddHookEntry(addr, moduleName, ori_asm_code_len, (DWORD64)trampoline_pit, assignedHookId);
+        if (!rehook) {
+            HookRow r; r.id = assignedHookId; r.address = addr; r.module = moduleName; 
+			r.ori_asm_code_len = ori_asm_code_len; r.trampoline_pit = (unsigned long long)trampoline_pit;
+			r.ori_asm_code_addr =(DWORD64) ori_asm_code_addr;
+            AddHookEntry(r);
+        }
 	}
 	else {
 		if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook failed at 0x%llX\n", addr);

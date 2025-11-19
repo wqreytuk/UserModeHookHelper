@@ -256,14 +256,33 @@ public:
 		// Use Helper which itself queries the kernel via Filter when available.
 		return Helper::IsProcess64(targetPid, outIs64);
 	}
-	bool SaveProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& entries) override {
-		return RegistryStore::WriteProcHookList(entries);
+	bool SaveProcHookList(DWORD pid, DWORD hi, DWORD lo, const std::vector<HookRow>& entries) override {
+		// Convert HookRow vector to registry tuple shape. Use filetime hi/lo = 0
+		std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> out;
+		out.reserve(entries.size());
+		for (const auto &r : entries) {
+			out.emplace_back(pid, hi, lo, r.id, r.ori_asm_code_len, r.ori_asm_code_addr, r.trampoline_pit, r.address, r.module);
+		}
+		return RegistryStore::WriteProcHookList(out);
 	}
 	bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) override {
 		return RegistryStore::RemoveProcHookEntry(pid, filetimeHi, filetimeLo, hookId);
 	}
-	bool LoadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& outEntries) override {
-		return RegistryStore::ReadProcHookList(outEntries);
+	bool LoadProcHookList(std::vector<HookRow>& outEntries) override {
+		std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> tmp;
+		if (!RegistryStore::ReadProcHookList(tmp)) return false;
+		outEntries.clear(); outEntries.reserve(tmp.size());
+		for (auto &t : tmp) {
+			HookRow r;
+			r.id = std::get<3>(t);
+			r.ori_asm_code_len = std::get<4>(t);
+			r.ori_asm_code_addr = std::get<5>(t);
+			r.trampoline_pit = std::get<6>(t);
+			r.address = std::get<7>(t);
+			r.module = std::get<8>(t);
+			outEntries.push_back(r);
+		}
+		return true;
 	}
 };
 static HookServicesAdapter g_HookServices; // singleton adapter instance
@@ -1267,7 +1286,7 @@ void CUMControllerDlg::FinishStartupIfDone() {
 			// Delay to avoid impacting startup responsiveness and reduce race with late-starting processes
 			std::this_thread::sleep_for(std::chrono::seconds(5));
 			try {
-				std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>> persistedHooks;
+				std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> persistedHooks;
 				if (!RegistryStore::ReadProcHookList(persistedHooks)) return;
 				// Build a set of known keys (pid, hi, lo) from our snapshot entries
 				std::unordered_set<unsigned long long> knownKeys;

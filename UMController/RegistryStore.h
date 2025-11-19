@@ -32,8 +32,8 @@ namespace RegistryStore {
     // Each line formatted as:
     //   PID:HIGH:LOW:HOOKID:ORI_LEN:TRAMP_PIT:ADDR=MODULE
     // Where ADDR and TRAMP_PIT are unsigned 64-bit hex and HOOKID/ORI_LEN are 32-bit hex.
-    bool ReadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& outEntries);
-    bool WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, std::wstring>>& entries);
+    bool ReadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& outEntries);
+    bool WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& entries);
     // Remove a single persisted ProcHookList entry matching PID, FILETIME hi/lo and hook id.
     bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId);
 }

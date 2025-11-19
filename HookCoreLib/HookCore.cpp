@@ -48,7 +48,9 @@ namespace HookCore {
 	// This establishes required permissions & memory accessibility without altering code.
 	// Returns true on success, false otherwise. Real hook logic (trampoline/IAT/etc.) will
 	// replace this in future iterations.
-	bool ApplyHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD64 hook_code_addr, int hook_id, DWORD *out_ori_asm_code_len,PVOID* out_trampoline_pit) {
+	bool ApplyHook(DWORD pid, ULONGLONG address, IHookServices* services,
+		DWORD64 hook_code_addr, int hook_id, DWORD *out_ori_asm_code_len,
+		PVOID* out_trampoline_pit,PVOID* out_ori_asm_code_addr){
 		PVOID trampoline_dll_base = 0;
 		std::wstring trampFullPath;
 		SIZE_T bytesout = 0;
@@ -228,6 +230,7 @@ namespace HookCore {
 		DWORD stage_1_func_offset = (DWORD)((DWORD64)tramp_stage_1_addr - (DWORD64)trampoline_dll_base);
 		DWORD stage_2_func_offset = (DWORD)((DWORD64)tramp_stage_2_addr - (DWORD64)trampoline_dll_base);
 		DWORD original_asm_code_len = 0;
+		*out_ori_asm_code_addr = (PVOID)(stage_2_func_offset + (DWORD64)trampoline_dll_base + OFFSET_FOR_ORIGINAL_ASM_CODE_SAVE);
 		if (!ConstructTrampoline_x64(services, hProc, (PVOID)address, module_base, trampoline_dll_base, 
 			stage_1_func_offset, stage_2_func_offset, hook_code_addr, &original_asm_code_len)) {
 			if (services)
@@ -399,10 +402,93 @@ namespace HookCore {
 		}
 		return true;
 	}
+	
+
+	// to disable hook, I need the address where the original asm code is saved
+	// so I can read it out and write back to hook address
+	bool DisableHook(DWORD pid, ULONGLONG hook_address, IHookServices* services,
+		PVOID ori_asm_code_addr, DWORD ori_asm_code_len) {
+		if (!services) {
+			MessageBoxW(NULL, L"Fatal Error! services is NULL!", L"Hook", MB_OK | MB_ICONERROR);
+			return false;
+		}
+
+		// try open process with suitable access
+		HANDLE hProc = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		if (!hProc) {
+			LOG_CORE(services, L"failed to open target process, error: 0x%x\n", GetLastError());
+			return false;
+		}
+		DWORD old_protect = 0;
+
+		// read out
+		if (!::VirtualProtectEx(hProc, (LPVOID)(ori_asm_code_addr), ori_asm_code_len, PAGE_EXECUTE_READWRITE, &old_protect)) {
+			if (services)
+				LOG_CORE(services, L"DisableHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+		UCHAR* ori_asm_code = (UCHAR*)malloc(ori_asm_code_len);
+		if (!::ReadProcessMemory(hProc, (LPVOID)(ori_asm_code_addr), (void*)(ori_asm_code), ori_asm_code_len, NULL)) {
+			LOG_CORE(services, L"DisableHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+		if (!::VirtualProtectEx(hProc, (LPVOID)(ori_asm_code_addr), ori_asm_code_len, old_protect, &old_protect)) {
+			LOG_CORE(services, L"DisableHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+
+		// write back
+		if (!::VirtualProtectEx(hProc, (LPVOID)(hook_address), ori_asm_code_len, PAGE_EXECUTE_READWRITE, &old_protect)) {
+			if (services)
+				LOG_CORE(services, L"DisableHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+		if (!::WriteProcessMemory(hProc, (LPVOID)(hook_address), (void*)(ori_asm_code), ori_asm_code_len, NULL)) {
+			LOG_CORE(services, L"DisableHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+		if (!::VirtualProtectEx(hProc, (LPVOID)(hook_address), ori_asm_code_len, old_protect, &old_protect)) {
+			LOG_CORE(services, L"DisableHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+
+		return true;
+	}
+	bool EnableHook(DWORD pid, ULONGLONG hook_address, IHookServices* services, PVOID trampoline_pit) {
+		if (!services) {
+			MessageBoxW(NULL, L"Fatal Error! services is NULL!", L"Hook", MB_OK | MB_ICONERROR);
+			return false;
+		}
+
+		// try open process with suitable access
+		HANDLE hProc = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
+		if (!hProc) {
+			LOG_CORE(services, L"failed to open target process, error: 0x%x\n", GetLastError());
+			return false;
+		}
+		DWORD old_protect = 0;
+
+		// read out
+		if (!::VirtualProtectEx(hProc, (LPVOID)(hook_address), 6, PAGE_EXECUTE_READWRITE, &old_protect)) {
+			if (services)
+				LOG_CORE(services, L"EnableHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+		UCHAR hook_code[6] = { 0xff,0x25,0,0,0,0 };
+		*(DWORD*)(hook_code + 2) = (DWORD64)trampoline_pit - hook_address - 6;
+		if (!::WriteProcessMemory(hProc, (LPVOID)(hook_address), (void*)(hook_code), 6, NULL)) {
+			LOG_CORE(services, L"EnableHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+		if (!::VirtualProtectEx(hProc, (LPVOID)(hook_address), 6, old_protect, &old_protect)) {
+			LOG_CORE(services, L"EnableHook line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+			return false;
+		}
+		return true;
+	}
 	// Decide minimal safe preserve length for FF25 (requires minNeeded bytes).
 	// buffer: bytes buffer (must contain at least enough bytes), bufSize its size,
-	// codeAddr: base address used for disassembly (affects resolved immediates).
-
+	// codeAddr: base address used for disassembly (affects resolved immediates) 
 	LPVOID AllocNearRemote(HANDLE hProcess, ULONGLONG target, SIZE_T size) {
 		if (!hProcess || !target || size == 0) return nullptr;
 
