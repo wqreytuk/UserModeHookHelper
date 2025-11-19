@@ -64,9 +64,12 @@ namespace HookCore {
 
 		size_t lastOffset = 0;
 		cs_insn* last = nullptr;
-
+		// rip will be updated by cs_disasm_iter to point to the address AFTER the
+		// decoded instruction. After the loop finishes, rip holds the next RIP
+		// (i.e. end address of the last instruction). Use that and the last
+		// instruction size to compute the start address deterministically. If
+		// something unexpected happens, fall back to ins->address.
 		while (cs_disasm_iter(handle, (const uint8_t**)&p, &remaining, &rip, ins)) {
-			lastOffset = ins->address - newBaseAddr;
 			last = ins;
 		}
 		if (!last) {
@@ -82,39 +85,56 @@ namespace HookCore {
 			return false;
 		}
 
-		BYTE* patchPtr = code + lastOffset;
+		// compute instruction boundaries defensively
 		size_t insLen = last->size;
-		UINT64 insAddr = last->address;
-		UINT64 nextRip = insAddr + insLen;
-
-		// rel32 from nextRip → ff25StubAddr
-		INT64 rel = (INT64)ff25StubAddr - (INT64)nextRip;
-		if (rel < INT_MIN || rel > INT_MAX) {
-			cs_free(ins, 1);
-			cs_close(&handle);
-			return false; // rel32 can't encode
+		UINT64 inferred_nextRip = rip; // rip after loop should be next IP
+		UINT64 insAddr = 0;
+		if (inferred_nextRip >= insLen) {
+			insAddr = inferred_nextRip - (UINT64)insLen;
 		}
+		else {
+			insAddr = last->address; // fallback
+		}
+		lastOffset = (size_t)(insAddr - newBaseAddr);
+		BYTE* patchPtr = code + lastOffset;
+		// We'll compute the rel32 relative to the size of the instruction
+		// actually written (branchSize), not the original instruction length.
+		// branchSize will be determined per-patch below.
 
 		// ---------- PATCH LOGIC ----------
 		if (type == PT_CALL) {
 			// CALL rel32 → E8 rel32
 			BYTE buf[5];
 			buf[0] = 0xE8;
-			*(INT32*)&buf[1] = (INT32)rel;
+			int branchSize = 5;
+			if ((INT64)ff25StubAddr - (INT64)(insAddr + (UINT64)branchSize) < (INT64)INT_MIN ||
+				(INT64)ff25StubAddr - (INT64)(insAddr + (UINT64)branchSize) > (INT64)INT_MAX) {
+				cs_free(ins, 1);
+				cs_close(&handle);
+				return false; // rel32 can't encode
+			}
+			*(INT32*)&buf[1] = (INT32)((INT64)ff25StubAddr - (INT64)(insAddr + (UINT64)branchSize));
 
-			if (5 > insLen) return false;
-			memcpy(patchPtr, buf, 5);
-			for (size_t i = 5; i < insLen; i++) patchPtr[i] = 0x90;
+			if (branchSize > (int)insLen) return false;
+			memcpy(patchPtr, buf, branchSize);
+			for (size_t i = branchSize; i < insLen; i++) patchPtr[i] = 0x90;
 		}
 		else if (type == PT_JMP) {
 			// JMP rel32 → E9 rel32
 			BYTE buf[5];
 			buf[0] = 0xE9;
-			*(INT32*)&buf[1] = (INT32)rel;
+			int branchSize = 5;
+			if ((INT64)ff25StubAddr - (INT64)(insAddr + (UINT64)branchSize) < (INT64)INT_MIN ||
+				(INT64)ff25StubAddr - (INT64)(insAddr + (UINT64)branchSize) > (INT64)INT_MAX) {
+				cs_free(ins, 1);
+				cs_close(&handle);
+				return false; // rel32 can't encode
+			}
+			*(INT32*)&buf[1] = (INT32)((INT64)ff25StubAddr - (INT64)(insAddr + (UINT64)branchSize));
 
-			if (5 > insLen) return false;
-			memcpy(patchPtr, buf, 5);
-			for (size_t i = 5; i < insLen; i++) patchPtr[i] = 0x90;
+			if (branchSize > (int)insLen) return false;
+			memcpy(patchPtr, buf, branchSize);
+			for (size_t i = branchSize; i < insLen; i++) patchPtr[i] = 0x90;
 		}
 		else if (type == PT_JCC) {
 
@@ -133,11 +153,18 @@ namespace HookCore {
 				BYTE buf[6];
 				buf[0] = 0x0F;
 				buf[1] = jcc;
-				*(INT32*)&buf[2] = (INT32)rel;
+				int branchSize = 6;
+				if ((INT64)ff25StubAddr - (INT64)(insAddr + (UINT64)branchSize) < (INT64)INT_MIN ||
+					(INT64)ff25StubAddr - (INT64)(insAddr + (UINT64)branchSize) > (INT64)INT_MAX) {
+					cs_free(ins, 1);
+					cs_close(&handle);
+					return false; // rel32 can't encode
+				}
+				*(INT32*)&buf[2] = (INT32)((INT64)ff25StubAddr - (INT64)(insAddr + (UINT64)branchSize));
 
-				if (6 > insLen) return false;
-				memcpy(patchPtr, buf, 6);
-				for (size_t i = 6; i < insLen; i++) patchPtr[i] = 0x90;
+				if (branchSize > (int)insLen) return false;
+				memcpy(patchPtr, buf, branchSize);
+				for (size_t i = branchSize; i < insLen; i++) patchPtr[i] = 0x90;
 			}
 			else {
 				return false;

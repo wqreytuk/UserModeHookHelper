@@ -290,8 +290,19 @@ void HookProcDlg::OnCustomDrawModules(NMHDR* pNMHDR, LRESULT* pResult){
 
 ULONGLONG HookProcDlg::ParseAddressText(const std::wstring& input, bool& ok) const {
     ok = false; if (input.empty()) return 0ULL; std::wstring t = input; for (auto &c : t) c = towlower(c);
-    if (t.rfind(L"0x",0)==0) t = t.substr(2); for (wchar_t c: t){ if(!(iswdigit(c)||(c>='a'&&c<='f'))) return 0ULL; }
-    wchar_t* end=nullptr; ULONGLONG v = wcstoull(t.c_str(), &end, 16); if(end && *end==0){ ok=true; return v;} return 0ULL;
+    // allow optional 0x prefix
+    if (t.rfind(L"0x",0)==0) t = t.substr(2);
+    // allow backtick separators for readability (e.g. 7ff8`e8320088) - strip them
+    std::wstring stripped; stripped.reserve(t.size());
+    for (wchar_t c : t) {
+        if (c == L'`') continue;
+        stripped.push_back(c);
+    }
+    // validate remaining characters are hex digits
+    for (wchar_t c: stripped) {
+        if (!(iswdigit(c) || (c >= L'a' && c <= L'f'))) return 0ULL;
+    }
+    wchar_t* end=nullptr; ULONGLONG v = wcstoull(stripped.c_str(), &end, 16); if(end && *end==0){ ok=true; return v;} return 0ULL;
 }
 
 void HookProcDlg::OnBnClickedApplyHook() {

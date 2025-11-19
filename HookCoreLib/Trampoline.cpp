@@ -57,8 +57,8 @@ namespace HookCore {
 			return false;
 		}
 		UCHAR ff25[ff25jmpsize] = { 0xff,0x25,0,0,0,0 };
-		DWORD64 _ = (DWORD64)trampoline_pit - (DWORD64)hook_addr - ff25jmpsize;
-		LOG_CORE(services, L"hooksite ff25 operand: 0x%x\n", _);
+		// DWORD64 _ = (DWORD64)trampoline_pit - (DWORD64)hook_addr - ff25jmpsize;
+		// LOG_CORE(services, L"hooksite ff25 operand: 0x%x\n", _);
 		*(DWORD*)(ff25 + 2) = (DWORD64)trampoline_pit - (DWORD64)hook_addr - ff25jmpsize;
 
 		if (!::WriteProcessMemory(hProc, trampoline_pit,
@@ -199,19 +199,20 @@ namespace HookCore {
 			// we ned to handle a case which is call or jmp instruction to be the last instruction
 			// we have totaly 0x36B in stage 1 placeholder function, so we can just construct new jmp code at offset 0x200
 			std::vector<uint8_t> v(original_asm_code, original_asm_code + r.preserveLen);
-			DWORD64 rip_rel_target_addr = ResolveRipRelativeTarget(hProcess, stage_1_func_offset + (DWORD64)tramp_dll_base, v);
+			// DWORD64 rip_rel_target_addr = ResolveRipRelativeTarget(hProcess, stage_1_func_offset + (DWORD64)tramp_dll_base, v); 
+			DWORD64 rip_rel_target_addr = ResolveRipRelativeTarget(hProcess, (DWORD64)hook_addr, v);
 			if (rip_rel_target_addr) {
 				// zero indicates that there is no control flow instruction in original instruction, there is no need to construct trampoline code
 				// otherwise, we need to modify original asm code and write a ff25 instruction and a pit at 0x200 of stage_1_func_offset
 				BYTE ff25StubAddr[6] = { 0xff,0x25,0,0,0,0 };
-				if (!::WriteProcessMemory(hProcess, (LPVOID)(OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 + stage_1_func_offset + (DWORD64)tramp_dll_base), (void*)(ff25StubAddr),
-					6, NULL)) {
+				if (!::WriteProcessMemory(hProcess, (LPVOID)(OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 + stage_1_func_offset + (DWORD64)tramp_dll_base),
+					(void*)(ff25StubAddr), 6, NULL)) {
 					if (services)
 						LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
 					return false;
 				}
-				if (!::WriteProcessMemory(hProcess, (LPVOID)(OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 + stage_1_func_offset + (DWORD64)tramp_dll_base + ff25jmpsize), (void*)(&rip_rel_target_addr),
-					8, NULL)) {
+				if (!::WriteProcessMemory(hProcess, (LPVOID)(OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 + stage_1_func_offset + (DWORD64)tramp_dll_base + ff25jmpsize),
+					(void*)(&rip_rel_target_addr), 8, NULL)) {
 					if (services)
 						LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
 					return false;
@@ -219,7 +220,7 @@ namespace HookCore {
 				if (!PatchLastInstruction(
 					original_asm_code,
 					r.preserveLen,
-					stage_1_oriAsmCodeOffset + stage_1_func_offset + (DWORD64)tramp_dll_base,
+					stage_1_oriAsmCodeOffset + stage_0_placeholder_size + stage_0_xoreaxeaxret_size+stage_1_func_offset + (DWORD64)tramp_dll_base,
 					OFFSET_FOR_TRAMPOLINE_REL_INS_STAGE_1 + stage_1_func_offset + (DWORD64)tramp_dll_base)) {
 					if (services)
 						LOG_CORE(services, L"failed to patch the last instruction");
