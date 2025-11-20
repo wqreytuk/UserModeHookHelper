@@ -122,6 +122,10 @@ void CUMControllerDlg::OnToggleGlobalHookMode() {
 	if (!RegistryStore::WriteGlobalHookMode(m_globalHookMode)) {
 		LOG_CTRL_ETW(L"Failed to persist GlobalHookMode=%d\n", (int)m_globalHookMode);
 	}
+	// Ensure boot-start driver is configured/started/stopped to match the new mode.
+	if (!Helper::ConfigureBootStartService(m_globalHookMode)) {
+		LOG_CTRL_ETW(L"ConfigureBootStartService failed for enabled=%d\n", (int)m_globalHookMode);
+	}
 	// Notify driver via filter IPC
 	if (!m_Filter.FLTCOMM_SetGlobalHookMode(m_globalHookMode)) {
 		LOG_CTRL_ETW(L"Failed to send GlobalHookMode to driver\n");

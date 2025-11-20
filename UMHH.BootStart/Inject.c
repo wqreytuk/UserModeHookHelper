@@ -604,6 +604,9 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
     if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
     ULONGLONG hash = ComputeNtPathHash(ImageName);
 	if (DriverCtx_GetGlobalHookMode()) {
+		// when global hook mode is enabled, injection will be taken care by UMHH.BootStart.sys
+		// there is no need for us to perform injection
+		return;
 		// if global hook mode is enable, we'll hook all process except protected process
 		if (PsIsProtectedProcess(Process)) {
 			Log(L"Proteced process injection is not supported\n");
