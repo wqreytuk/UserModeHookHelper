@@ -139,6 +139,18 @@ bool Filter::FLTCOMM_SetGlobalHookMode(bool enabled) {
     return hr == S_OK;
 }
 
+bool Filter::FLTCOMM_ForceInject(DWORD pid) {
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD));
+	if (!msg) return false;
+	memset(msg, 0, sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD));
+	msg->m_Cmd = CMD_FORCE_INJECT;
+	memcpy(msg->m_Data, &pid, sizeof(DWORD));
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD)), NULL, 0, &bytesOut);
+	free(msg);
+	return hr == S_OK;
+}
+
 
 void Filter::RunListenerLoop() {
 	if (m_StopListener) return;
@@ -319,7 +331,7 @@ void Filter::StartListener() {
 }
 
 
-boolean Filter::FLTCOMM_CheckHookList(const std::wstring& ntPath) {
+bool Filter::FLTCOMM_CheckHookList(const std::wstring& ntPath) {
 	// Compute 64-bit FNV-1a hash over NT path bytes (UTF-16LE) and send the
 	// 8-byte hash to the kernel. This preserves the original design that
 	// compares a compact identifier in kernel space.

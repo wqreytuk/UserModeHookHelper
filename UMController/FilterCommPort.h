@@ -17,7 +17,7 @@ public:
 	void StartListener();
 	// Check whether the NT image path is in the kernel hook list. The path is
 	// passed as an NT-style wide string.
-	boolean FLTCOMM_CheckHookList(const std::wstring& ntPath);
+	bool FLTCOMM_CheckHookList(const std::wstring& ntPath);
 	// Ask kernel for image path (NT or DOS) of the given PID. Returns true
 	// and fills outPath on success.
 	bool FLTCOMM_GetImagePathByPid(DWORD pid, std::wstring& outPath);
@@ -52,7 +52,9 @@ public:
 	// Request kernel to determine if a PID is a WoW64 (32-bit) process. Returns
 	// true on success and sets outIsWow64 accordingly.
 	bool FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64);
-	bool Filter::FLTCOMM_SetGlobalHookMode(bool enabled);
+	bool FLTCOMM_SetGlobalHookMode(bool enabled);
+	// Ask kernel to log a simple hello-world message for diagnostics.
+	bool FLTCOMM_ForceInject(DWORD pid);
 private:
 	HANDLE m_Port = INVALID_HANDLE_VALUE;
 	// listener state for async messages

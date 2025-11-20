@@ -5,10 +5,29 @@
 #include "DriverCtx.h"
 #include "StrLib.h"
 #include "UKShared.h"
-#include "FltCommPort.h"
 #include "tag.h"
 
 
+#define LdrLoadDllRoutineName "LdrLoadDll"
+
+NTKERNELAPI
+BOOLEAN
+NTAPI
+PsIsProtectedProcess(
+	_In_ PEPROCESS Process
+);
+NTKERNELAPI
+PCHAR
+NTAPI
+PsGetProcessImageFileName(
+	_In_ PEPROCESS Process
+);
+NTKERNELAPI
+BOOLEAN
+NTAPI
+KeTestAlertThread(
+	_In_ KPROCESSOR_MODE AlertMode
+);
 
 typedef struct _INJ_SYSTEM_DLL_DESCRIPTOR
 {
@@ -26,6 +45,7 @@ INJ_SYSTEM_DLL_DESCRIPTOR InjpSystemDlls[] = {
   { RTL_CONSTANT_STRING(L"\\System32\\wowarmhw.dll"), INJ_SYSTEM32_WOWARMHW_LOADED },
   { RTL_CONSTANT_STRING(L"\\System32\\xtajit.dll"),   INJ_SYSTEM32_XTAJIT_LOADED   },
 };
+
 
 BOOLEAN
 KeInsertQueueApc(
@@ -243,7 +263,6 @@ NTSTATUS Inject_Perform(PPENDING_INJECT InjectionInfo)
 	// Validate parameters
 	if (!InjectionInfo->LdrLoadDllRoutineAddress) {
 		Log(L"can't perform injection without knowning LdrLoadDll function address");
-		Inject_RemovePendingInject(InjectionInfo->Process);
 		return STATUS_INVALID_PARAMETER;
 	}
 
@@ -371,16 +390,6 @@ if (!x64) {
 		SystemArgument2,
 		0);
 
-	// Notify user-mode that we queued an APC for this process so the user-mode
-	// controller can start a short-lived checker (e.g. 10s) to detect when the
-	// master DLL is loaded and update the process hook-state accordingly.
-	// This uses Comm_BroadcastProcessNotify which is safe to call from here.
-	{
-		ULONG notified = 0;
-		DWORD pid = (DWORD)(ULONG_PTR)PsGetProcessId(InjectionInfo->Process);
-		NTSTATUS st = Comm_BroadcastApcQueued(pid, &notified);
-		Log(L"Inject: broadcast apc queued notify for pid %u result 0x%08x notified=%u\n", pid, st, notified);
-	}
 	ZwClose(SectionHandle);
 	/*
 	https://github.com/wbenny/injdrv
@@ -388,8 +397,7 @@ if (!x64) {
 	This call internally checks if any user-mode APCs are queued and if so, sets the Thread->ApcState.UserApcPending variable to TRUE. 
 	Because of this, the kernel immediately delivers this user-mode APC (by KiDeliverApc) on next transition from kernel-mode to user-mode.
 	*/
-	KeTestAlertThread(UserMode);
-	Inject_RemovePendingInject(InjectionInfo->Process);
+	KeTestAlertThread(UserMode); 
 	return status;
 CLEAN_UP:
 	// If we allocated an APC but didn't successfully queue it, free it now.
@@ -412,7 +420,7 @@ CLEAN_UP:
 		ZwClose(SectionHandle);
 		SectionHandle = NULL;
 	}
-	Inject_RemovePendingInject(InjectionInfo->Process);
+
 	return status;
 }
 // thunk less injection do not require the asm code, it will directly call ldrloaddll
@@ -517,16 +525,7 @@ NTSTATUS Inject_PerformThunkLess(PPENDING_INJECT InjectionInfo)
 		SystemArgument2,
 		0);
 
-	// Notify user-mode that we queued an APC for this process so the user-mode
-	// controller can start a short-lived checker (e.g. 10s) to detect when the
-	// master DLL is loaded and update the process hook-state accordingly.
-	// This uses Comm_BroadcastProcessNotify which is safe to call from here.
-	{
-		ULONG notified = 0;
-		DWORD pid = (DWORD)(ULONG_PTR)PsGetProcessId(InjectionInfo->Process);
-		NTSTATUS st = Comm_BroadcastApcQueued(pid, &notified);
-		Log(L"Inject: broadcast apc queued notify for pid %u result 0x%08x notified=%u\n", pid, st, notified);
-	}
+	
 	ZwClose(SectionHandle);
 	return status;
 CLEAN_UP:

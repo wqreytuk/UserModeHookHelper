@@ -22,7 +22,8 @@ public:
 
 	// Resolve NT path: try user-mode then kernel fallback via Filter.
 	static bool ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& outNtPath);
-
+	static void UMHH_DriverCheck(); 
+	static bool UMHH_BS_DriverCheck();
 	// Resolve a DOS/Win32 path (e.g., C:\...) to an NT-style path. Returns
 	// true on success and stores a string like "\\Device\\HarddiskVolumeX\\..."
 	// If resolution fails, returns false.
@@ -38,14 +39,15 @@ public:
 	// return quickly. If not set, Fatal() will log and return.
 	static void SetFatalHandler(FatalHandlerType handler);
 	static void Fatal(const wchar_t* message);
-
+	static bool ForceInject(DWORD pid);
 	// Determine whether the target process is 64-bit. Returns true on success
 	// and sets outIs64. On failure returns false and leaves outIs64 unchanged.
 	static bool IsProcess64(DWORD pid, bool& outIs64);
 	// Set the Filter instance used by Helper for kernel queries. The caller
 	// should set this once during initialization (e.g., from the dialog).
 	static void SetFilterInstance(class Filter* f);
-
+	// craete a file that require nearly no privilege, every can operate
+	static bool CreateLowPrivReqFile(wchar_t* filePath,PHANDLE outFileHandle);
 	// Check if a module with the given (case-insensitive) base name is loaded
 	// in the target process. Returns true on success and sets outPresent.
 	// Fails (returns false) if the process cannot be opened or enumerated.
@@ -53,11 +55,16 @@ public:
 	// Convert an integer value to uppercase hexadecimal without leading zeros.
 	// Returns L"0" when value==0. Does NOT include any prefix like 0x.
 	static std::wstring ToHex(ULONGLONG value);
+    // Enable or disable the SeDebugPrivilege for the current process/token.
+    // Returns true on success.
+    static bool EnableDebugPrivilege(bool enable);
 private:
 	// Shared reusable buffer for path queries. Protected by m_bufMutex.
 	static std::unique_ptr<TCHAR[]> m_sharedBuf;
 	static size_t m_sharedBufCap;
 	static std::mutex m_bufMutex;	// Optional pointer to the Filter instance owned by the UI. May be NULL.
 	static Filter* m_filterInstance;
+   
+
 };
 #endif

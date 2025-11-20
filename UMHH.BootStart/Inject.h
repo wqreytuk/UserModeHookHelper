@@ -1,3 +1,4 @@
+
 #ifndef INJECT_H
 #define INJECT_H
 
@@ -6,10 +7,6 @@
 #ifdef _M_AMD64
 #define INJ_CONFIG_SUPPORTS_WOW64
 #endif
-
-#define LdrLoadDllRoutineName "LdrLoadDll"
-
-
 typedef enum _INJ_SYSTEM_DLL
 {
 	INJ_NOTHING_LOADED = 0x0000,
@@ -64,28 +61,8 @@ KeInitializeApc(
 	KPROCESSOR_MODE ApcMode,
 	PVOID NormalContext
 );
-
-NTKERNELAPI
-BOOLEAN
-NTAPI
-PsIsProtectedProcess(
-	_In_ PEPROCESS Process
-);
-NTKERNELAPI
-PCHAR
-NTAPI
-PsGetProcessImageFileName(
-	_In_ PEPROCESS Process
-);
-NTKERNELAPI
-BOOLEAN
-NTAPI
-KeTestAlertThread(
-	_In_ KPROCESSOR_MODE AlertMode
-);
-
 VOID Inject_RemovePendingInject(PEPROCESS Process);
-PPENDING_INJECT Inject_GetPendingInj(PEPROCESS Process);
+
 // Initialize/uninitialize injection subsystem
 NTSTATUS Inject_Init(VOID);
 VOID Inject_Uninit(VOID);

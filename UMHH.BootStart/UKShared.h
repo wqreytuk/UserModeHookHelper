@@ -30,8 +30,6 @@
 #define CMD_IS_PROCESS_WOW64 9
 // Set global hook mode on/off. Payload: BOOLEAN enabled (1 = enabled, 0 = disabled)
 #define CMD_SET_GLOBAL_HOOK_MODE 10
-// Signal the driver to emit a simple HelloWorld log message (no payload)
-#define CMD_FORCE_INJECT 11
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {

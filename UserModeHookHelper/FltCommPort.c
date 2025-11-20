@@ -4,7 +4,8 @@
 #include "HookList.h"
 #include "PortCtx.h"
 #include "DriverCtx.h"
-
+#include "Inject.h"
+#include "PE.h"
 // Some WDK versions may not declare PsGetProcessWow64Process; forward-declare it here.
 extern PVOID PsGetProcessWow64Process(IN PEPROCESS Process);
 
@@ -18,7 +19,7 @@ static NTSTATUS Handle_GetHookSection(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MES
 
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
-
+static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 // NOTE: Do NOT declare or call user-mode-only path conversion helpers from
 // kernel code here. NT-path resolution is performed in user-mode. The driver
 // keeps a simple fallback when a path isn't supplied by user-mode.
@@ -250,6 +251,9 @@ Comm_MessageNotify(
 	case CMD_SET_GLOBAL_HOOK_MODE:
 		status = Handle_SetGlobalHookMode(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
+	case CMD_FORCE_INJECT:
+		status = Handle_ForceInject(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
 	default:
 		break;
 	}
@@ -257,7 +261,77 @@ Comm_MessageNotify(
 	if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
 	return status;
 }
+static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
+	UNREFERENCED_PARAMETER(OutputBuffer);
+	UNREFERENCED_PARAMETER(OutputBufferSize);
+	UNREFERENCED_PARAMETER(ReturnOutputBufferLength);
 
+	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	DWORD pid = 0;
+	RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+	PEPROCESS process = NULL;
+	PUNICODE_STRING imageName = NULL;
+	NTSTATUS stLookup = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process);
+	if (NT_SUCCESS(stLookup) && process != NULL) {
+		NTSTATUS stImg = SeLocateProcessImageName(process, &imageName);
+		if (!NT_SUCCESS(stImg) || imageName == NULL || imageName->Length == 0) {
+			// imageName not available; ensure we don't hold a stale pointer
+			if (imageName) {
+				ExFreePool(imageName);
+				imageName = NULL;
+			}
+		}
+	}
+	if (!process) {
+		Log(L"FATAL, can not get EPROCESS by pid");
+		return STATUS_UNSUCCESSFUL;
+	}
+
+	if (imageName) {
+		// only queue injection when create process
+		if (process) {
+			Inject_CheckAndQueue(imageName, process);
+			
+		}
+		ExFreePool(imageName);
+		imageName = NULL;
+	}
+	else {
+		ObDereferenceObject(process);
+		return STATUS_UNSUCCESSFUL;
+	}
+
+	PPENDING_INJECT injectionInfo = Inject_GetPendingInj(process);
+	if (injectionInfo) {
+		if (injectionInfo->IsInjected) {
+			Log(L"PID=%u already injected\n", pid);
+			ObDereferenceObject(process);
+			return STATUS_SUCCESS;
+		}
+		else {
+			Log(L"Process %d WOW64: %s can be injected now\n", PsGetProcessId(process),
+				!injectionInfo->x64 ? L"TRUE" : L"FALSE",
+				PsGetProcessImageFileName(process));
+
+			if (!NT_SUCCESS(Inject_QueueInjectionApc(KernelMode,
+				&Inject_InjectionApcNormalRoutine,
+				injectionInfo,
+				NULL,
+				NULL))) {
+				Log(L"FATAL, failed to queue injection apc normal routine\n");
+				ObDereferenceObject(process);
+				return STATUS_SUCCESS;
+			}
+
+			injectionInfo->IsInjected = TRUE;
+		}
+	}
+	ObDereferenceObject(process);
+	return STATUS_SUCCESS;
+}
 static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
 	UNREFERENCED_PARAMETER(OutputBuffer);
 	UNREFERENCED_PARAMETER(OutputBufferSize);

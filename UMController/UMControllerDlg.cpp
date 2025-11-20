@@ -256,18 +256,22 @@ int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam
 		if (a.bInHookList == b.bInHookList) {
 			if (!a.bInHookList) {
 				res = 0; // both not in hook list
-			} else {
+			}
+			else {
 				// both in hook list: prefer master DLL loaded
 				if (a.masterDllLoaded != b.masterDllLoaded) {
 					res = a.masterDllLoaded ? -1 : 1; // loaded comes first
-				} else if (a.is64 != b.is64) {
+				}
+				else if (a.is64 != b.is64) {
 					// prefer x86 (is64 == false) before x64
 					res = a.is64 ? 1 : -1;
-				} else {
+				}
+				else {
 					res = 0;
 				}
 			}
-		} else if (a.bInHookList) res = -1;
+		}
+		else if (a.bInHookList) res = -1;
 		else res = 1;
 		break;
 	case 3: // NT Path (case-insensitive)
@@ -334,6 +338,16 @@ public:
 		// Keep legacy behavior to avoid refactoring existing LogCore call sites yet.
 		app.GetETW().Log(L"[HookCore]   %s", buffer);
 	}
+	bool CreateLowPrivReqFile(wchar_t* filePath, PHANDLE outFileHandle) {
+		return Helper::CreateLowPrivReqFile(filePath, outFileHandle);
+	}
+
+	bool EnableDebugPrivilege(bool enable) override {
+		return Helper::EnableDebugPrivilege(enable);
+	}
+	bool IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) override {
+		return Helper::IsModuleLoaded(pid, baseName, outPresent);
+	}
 	bool InjectTrampoline(DWORD targetPid, const wchar_t* fullDllPath) override {
 		if (targetPid == 0 || !fullDllPath || *fullDllPath == L'\0') {
 			app.GetETW().Log(L"[UMCtrl]     InjectTrampoline: invalid args pid=%u path=%s\n", targetPid, fullDllPath ? fullDllPath : L"(null)");
@@ -360,6 +374,9 @@ public:
 		}
 		return RegistryStore::WriteProcHookList(out);
 	}
+	virtual bool ForceInject(DWORD pid) override {
+		return  Helper::ForceInject(pid);
+	}
 	bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) override {
 		return RegistryStore::RemoveProcHookEntry(pid, filetimeHi, filetimeLo, hookId);
 	}
@@ -383,7 +400,7 @@ public:
 static HookServicesAdapter g_HookServices; // singleton adapter instance
 
 // Plugin export prototype: receives HWND and IHookServices pointer
-typedef void (__cdecl *PFN_PluginMain)(HWND hwnd, IHookServices* services);
+typedef void(__cdecl *PFN_PluginMain)(HWND hwnd, IHookServices* services);
 
 void CUMControllerDlg::ScanAndPopulatePlugins() {
 	// Clear previous mapping & loaded handles
@@ -401,7 +418,7 @@ void CUMControllerDlg::ScanAndPopulatePlugins() {
 	// Use the controller executable directory as the authoritative UserDir
 	std::wstring exe = Helper::GetCurrentModulePath(L"");
 	size_t pos = exe.find_last_of(L"/\\");
-	std::wstring dir = (pos==std::wstring::npos) ? exe : exe.substr(0,pos);
+	std::wstring dir = (pos == std::wstring::npos) ? exe : exe.substr(0, pos);
 	std::wstring pluginsPath = dir + L"\\plugins";
 
 	// Enumerate DLL files in pluginsPath
@@ -415,10 +432,31 @@ void CUMControllerDlg::ScanAndPopulatePlugins() {
 			if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
 				std::wstring filename = fd.cFileName;
 				std::wstring full = pluginsPath + L"\\" + filename;
+				// Compute display name by stripping common arch/trampoline suffixes
+				std::wstring display = filename;
+				std::wstring low = display;
+				for (wchar_t &c : low) c = towlower(c);
+				const std::vector<std::wstring> suf = { L"win32.dll" };
+				bool exclude = false;
+				for (const auto &s : suf) {
+					if (low.size() >= s.size()) {
+						size_t pos = low.rfind(s);
+						if (pos != std::wstring::npos && pos + s.size() == low.size()) {
+							exclude = true;
+							break;
+						}
+					}
+				}
+				if (exclude)
+					continue;
+				// If display still contains dots (e.g., name.part.dll), trim at first dot
+				size_t dot = display.find(L'.');
+				if (dot != std::wstring::npos) display = display.substr(0, dot);
+
 				// menu id allocation
-							int cmd = cmdBase + idx;
-							m_PluginMap[cmd] = full;
-							m_PluginsSubMenu.AppendMenu(MF_STRING, (UINT_PTR)cmd, (LPCTSTR)filename.c_str());
+				int cmd = cmdBase + idx;
+				m_PluginMap[cmd] = full;
+				m_PluginsSubMenu.AppendMenu(MF_STRING, (UINT_PTR)cmd, (LPCTSTR)display.c_str());
 				idx++;
 				if (idx >= 255) break; // limit range
 			}
@@ -584,7 +622,8 @@ BOOL CUMControllerDlg::OnInitDialog()
 	if (RegistryStore::ReadGlobalHookMode(enabled)) {
 		m_globalHookMode = enabled;
 		LOG_CTRL_ETW(L"Registry: ReadGlobalHookMode returned true, enabled=%d\n", (int)enabled);
-	} else {
+	}
+	else {
 		LOG_CTRL_ETW(L"Registry: ReadGlobalHookMode returned false, leaving default enabled=%d\n", (int)enabled);
 	}
 	// Enumeration-only progress: no timeout or per-PID resolution tracking.
@@ -631,10 +670,12 @@ BOOL CUMControllerDlg::OnInitDialog()
 			UINT prev = CheckMenuItem(h, ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, MF_BYCOMMAND | (m_globalHookMode ? MF_CHECKED : MF_UNCHECKED));
 			LOG_CTRL_ETW(L"Applied menu check: id=%d enabled=%d prev=0x%08x\n", ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, (int)m_globalHookMode, prev);
 			DrawMenuBar();
-		} else {
+		}
+		else {
 			LOG_CTRL_ETW(L"GetMenu()->m_hMenu was NULL when applying GlobalHookMode check\n");
 		}
-	} else {
+	}
+	else {
 		LOG_CTRL_ETW(L"GetMenu() returned NULL when applying GlobalHookMode check\n");
 	}
 
@@ -1563,7 +1604,7 @@ void CUMControllerDlg::FinishStartupIfDone() {
 							if (pid == 0 || pid == 4) continue;
 							HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
 							if (!h) continue;
-							FILETIME createTime{0,0}, exitTime, kernelTime, userTime;
+							FILETIME createTime{ 0,0 }, exitTime, kernelTime, userTime;
 							if (GetProcessTimes(h, &createTime, &exitTime, &kernelTime, &userTime)) {
 								DWORD hi = createTime.dwHighDateTime;
 								DWORD lo = createTime.dwLowDateTime;
@@ -1586,12 +1627,14 @@ void CUMControllerDlg::FinishStartupIfDone() {
 						RegistryStore::RemoveProcHookEntry(pid, hi, lo, std::get<3>(h));
 					}
 				}
-			} catch (...) {
+			}
+			catch (...) {
 				LOG_CTRL_ETW(L"Background purge: failed to purge stale ProcHookList entries\n");
 			}
 		}).detach();
 		LOG_CTRL_ETW(L"Scheduled background purge of ProcHookList entries\n");
-	} catch (...) {
+	}
+	catch (...) {
 		LOG_CTRL_ETW(L"FinishStartupIfDone: failed to schedule background purge\n");
 	}
 }

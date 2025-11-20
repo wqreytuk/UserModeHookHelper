@@ -39,7 +39,7 @@ static LRESULT CALLBACK PidDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lP
 				if (v != 0) {
 					ctx->pid = v;
 					ctx->ok = TRUE;
-					EndDialog(hWnd, 1);
+					DestroyWindow(hWnd);
 					return 0;
 				}
 			}
@@ -47,12 +47,12 @@ static LRESULT CALLBACK PidDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lP
 		}
 		else if (id == 2) { // Cancel
 			ctx->ok = FALSE;
-			EndDialog(hWnd, 0);
+			DestroyWindow(hWnd);
 		}
 		return 0;
 	}
 	case WM_CLOSE:
-		EndDialog(hWnd, 0);
+		DestroyWindow(hWnd);
 		return 0;
 	}
 	return DefWindowProc(hWnd, msg, wParam, lParam);
@@ -63,9 +63,10 @@ BOOL ShowPidInputDialog(HWND owner, DWORD* outPid) {
 	const wchar_t* clsName = L"UMHH_PidInputClass";
 	WNDCLASSEXW wc = { 0 };
 	wc.cbSize = sizeof(wc);
-	wc.lpfnWndProc = DefWindowProcW;
+	wc.lpfnWndProc = PidDlgProc;
 	wc.hInstance = GetModuleHandle(NULL);
 	wc.lpszClassName = clsName;
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	// Register a temporary class if not exists
 	RegisterClassExW(&wc);
 
@@ -80,9 +81,9 @@ BOOL ShowPidInputDialog(HWND owner, DWORD* outPid) {
 	HWND hDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, clsName, L"Enter PID", WS_POPUP | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 240, 140, owner, NULL, GetModuleHandle(NULL), &ctx);
 	if (!hDlg) return FALSE;
 
-	// Subclass our window to use PidDlgProc by setting GWLP_WNDPROC
-	SetWindowLongPtrW(hDlg, GWLP_USERDATA, (LONG_PTR)&ctx);
-	WNDPROC orig = (WNDPROC)SetWindowLongPtrW(hDlg, GWLP_WNDPROC, (LONG_PTR)PidDlgProc);
+	// The window class was registered with PidDlgProc, which will create
+	// the controls in WM_CREATE. Do not overwrite GWLP_USERDATA here;
+	// WM_CREATE receives the lpCreateParams pointer and stores it.
 
 	// Center over owner
 	if (owner) {

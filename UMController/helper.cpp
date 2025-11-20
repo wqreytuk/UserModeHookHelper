@@ -11,6 +11,12 @@
 // COM/WMI headers
 #include <comdef.h>
 #include <Wbemidl.h>
+#include <sddl.h>
+#include <thread>
+#include <chrono>
+#include "../Shared/LogMacros.h"
+#include  "../UserModeHookHelper/MacroDef.h"
+#include <winsvc.h>
 #pragma comment(lib, "wbemuuid.lib")
 
 // Simple process-wide fatal handler. Stored as an atomic pointer so it can be
@@ -23,6 +29,7 @@ size_t Helper::m_sharedBufCap = 0;
 std::mutex Helper::m_bufMutex;
 // Filter instance pointer (nullable)
 Filter* Helper::m_filterInstance = nullptr;
+
 
 // NOTE: WaitAndExit was removed. Call Helper::Fatal(...) at call sites.
 
@@ -128,6 +135,276 @@ bool Helper::IsFileExists(TCHAR* szPath) {
 	DWORD dwAttrib = GetFileAttributes(szPath);
 	return (dwAttrib != INVALID_FILE_ATTRIBUTES &&
 		!(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+}
+bool Helper::UMHH_BS_DriverCheck() {
+	// Determine service name macro to use
+#if defined(BS_SERVICE_NAME)
+	const wchar_t* svcName = BS_SERVICE_NAME;
+#else
+	const wchar_t* svcName = SERVICE_NAME;
+	LOG_CTRL_ETW(L"BS_SERVICE_NAME not defined; falling back to SERVICE_NAME '%s'\n", SERVICE_NAME);
+#endif
+	
+	// Open SCM with rights to manage service
+	SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CREATE_SERVICE | SC_MANAGER_CONNECT);
+	if (!scm) {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: OpenSCManagerW failed: %lu\n", GetLastError());
+		return false;
+	}
+
+	// If service exists: open with full access to stop/delete
+	SC_HANDLE svc = OpenServiceW(scm, svcName, SERVICE_QUERY_STATUS | SERVICE_STOP | DELETE | SERVICE_QUERY_CONFIG);
+	if (svc) {
+		SERVICE_STATUS_PROCESS ssp = { 0 };
+		DWORD bytes = 0;
+		if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+			if (ssp.dwCurrentState == SERVICE_RUNNING || ssp.dwCurrentState == SERVICE_START_PENDING) {
+				SERVICE_STATUS ss = { 0 };
+				if (ControlService(svc, SERVICE_CONTROL_STOP, &ss)) {
+					// wait for stopped
+					const int MAX_MS = 10000; const int INTERVAL_MS = 200; int waited = 0;
+					while (waited < MAX_MS) {
+						if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) break;
+						if (ssp.dwCurrentState == SERVICE_STOPPED) break;
+						std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS)); waited += INTERVAL_MS;
+					}
+				} else {
+					LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: failed to stop existing service %s : %lu\n", svcName, GetLastError());
+					CloseServiceHandle(svc); CloseServiceHandle(scm); return false;
+				}
+			}
+		}
+
+		// Query binary path to remove file after deletion
+		DWORD needed = 0; QueryServiceConfigW(svc, NULL, 0, &needed);
+		std::unique_ptr<BYTE[]> buf(new BYTE[needed]);
+		LPQUERY_SERVICE_CONFIGW qsc = (LPQUERY_SERVICE_CONFIGW)buf.get();
+		if (QueryServiceConfigW(svc, qsc, needed, &needed)) {
+			std::wstring bin = qsc->lpBinaryPathName ? qsc->lpBinaryPathName : L"";
+			// delete service
+			if (!DeleteService(svc)) {
+				LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: DeleteService failed for %s : %lu\n", svcName, GetLastError());
+				CloseServiceHandle(svc); CloseServiceHandle(scm); return false;
+			}
+			CloseServiceHandle(svc);
+			// remove binary file if it exists
+			if (!bin.empty()) {
+				// Expand SystemRoot macros like %SystemRoot% or \SystemRoot\
+				
+				wchar_t expanded[MAX_PATH];
+				if (ExpandEnvironmentStringsW(bin.c_str(), expanded, _countof(expanded))) {
+					DeleteFileW(expanded);
+				} else {
+					DeleteFileW(bin.c_str());
+				}
+			}
+		} else {
+			// Could not query, attempt delete anyway
+			if (!DeleteService(svc)) {
+				LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: DeleteService failed (no qsc) for %s : %lu\n", svcName, GetLastError());
+				CloseServiceHandle(svc); CloseServiceHandle(scm); return false;
+			}
+			CloseServiceHandle(svc);
+		}
+		// continue to recreate
+	}
+
+	DWORD err = GetLastError();
+	if (svc) { /* already closed above */ } else if (err != ERROR_SERVICE_DOES_NOT_EXIST && err != ERROR_SERVICE_MARKED_FOR_DELETE) {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: OpenServiceW unexpected error: %lu\n", err);
+		CloseServiceHandle(scm); return false;
+	}
+
+	// Build source and destination paths for driver file
+	std::basic_string<TCHAR> drvName = std::basic_string<TCHAR>(svcName) + std::basic_string<TCHAR>(L".sys");
+	std::basic_string<TCHAR> srcPath = Helper::GetCurrentModulePath(const_cast<TCHAR*>(drvName.c_str()));
+	if (srcPath.empty()) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: could not determine module path for %s.sys\n", svcName); CloseServiceHandle(scm); return false; }
+	DWORD fa = GetFileAttributesW(srcPath.c_str()); if (fa == INVALID_FILE_ATTRIBUTES) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: source driver not found: %s\n", srcPath.c_str()); CloseServiceHandle(scm); return false; }
+	wchar_t sysDir[MAX_PATH]; if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: GetSystemDirectoryW failed: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
+	std::wstring dstDir = std::wstring(sysDir) + L"\\drivers\\"; std::wstring dstPath = dstDir + std::wstring(drvName.c_str());
+	if (!CopyFileW(srcPath.c_str(), dstPath.c_str(), FALSE)) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: CopyFileW failed from %s to %s : %lu\n", srcPath.c_str(), dstPath.c_str(), GetLastError()); CloseServiceHandle(scm); return false; }
+
+	SC_HANDLE newSvc = CreateServiceW(scm, svcName, svcName, SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
+		SERVICE_SYSTEM_START, SERVICE_ERROR_NORMAL, dstPath.c_str(), NULL, NULL, NULL, NULL, NULL);
+	if (!newSvc) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: CreateServiceW failed: %lu\n", GetLastError()); DeleteFileW(dstPath.c_str()); CloseServiceHandle(scm); return false; }
+
+	// set registry ImagePath="\SystemRoot\system32\drivers\<svc>.sys" and Start=0
+	std::wstring regPath = std::wstring(L"SYSTEM\\CurrentControlSet\\Services\\") + std::wstring(svcName);
+	HKEY hKey = NULL; LONG rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, regPath.c_str(), 0, KEY_SET_VALUE, &hKey);
+	if (rc == ERROR_SUCCESS) {
+		// Build expand-string image path (use REG_EXPAND_SZ so system expands %SystemRoot% style paths)
+		std::wstring imagePath = std::wstring(L"\\SystemRoot\\system32\\drivers\\") + drvName;
+		RegSetValueExW(hKey, L"ImagePath", 0, REG_EXPAND_SZ, (const BYTE*)imagePath.c_str(), (DWORD)((imagePath.size() + 1) * sizeof(wchar_t)));
+
+		DWORD startVal = SERVICE_SYSTEM_START;
+		RegSetValueExW(hKey, L"Start", 0, REG_DWORD, (const BYTE*)&startVal, sizeof(startVal));
+		RegCloseKey(hKey);
+	} else {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: RegOpenKeyExW failed for %s : %lu\n", regPath.c_str(), rc);
+	}
+
+	CloseServiceHandle(newSvc); CloseServiceHandle(scm);
+	LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: created boot-start kernel driver %s\n", svcName);
+	return true;
+}
+void Helper::UMHH_DriverCheck() {
+	// Ensure the configured driver/service exists and is set to auto-start.
+	SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+	if (!scm) {
+		LOG_CTRL_ETW(L" OpenSCManagerW failed: %lu\n", GetLastError());
+		return;
+	}
+
+	// Request start and status access as we may need to start the service.
+	DWORD desiredAccess = SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS | SERVICE_START;
+	SC_HANDLE svc = OpenServiceW(scm, SERVICE_NAME, desiredAccess);
+	if (!svc) {
+		DWORD err = GetLastError();
+		LOG_CTRL_ETW(L"Service '%s' not found (err=%lu)\n", SERVICE_NAME, err);
+
+		// Try to install INF named SERVICE_NAME.inf from the executable directory
+		if (err == ERROR_SERVICE_DOES_NOT_EXIST) {
+			std::basic_string<TCHAR> infName = std::basic_string<TCHAR>(SERVICE_NAME) + std::basic_string<TCHAR>(L".inf");
+			std::basic_string<TCHAR> infPath = Helper::GetCurrentModulePath(const_cast<TCHAR*>(infName.c_str()));
+			if (infPath.empty()) {
+				LOG_CTRL_ETW(L"Could not determine module path to locate INF\n");
+				CloseServiceHandle(scm);
+				return;
+			}
+			DWORD fa = GetFileAttributesW(infPath.c_str());
+			if (fa == INVALID_FILE_ATTRIBUTES) {
+				LOG_CTRL_ETW(L"INF not found at %s\n", infPath.c_str());
+				CloseServiceHandle(scm);
+				return;
+			}
+
+			HMODULE hNewdev = LoadLibraryW(L"newdev.dll");
+			if (!hNewdev) {
+				LOG_CTRL_ETW(L"Failed to load newdev.dll: %lu\n", GetLastError());
+				CloseServiceHandle(scm);
+				return;
+			}
+			typedef BOOL(WINAPI* PFN_DiInstallDriverW)(HWND, PCWSTR, DWORD, PBOOL);
+			PFN_DiInstallDriverW pDiInstall = (PFN_DiInstallDriverW)GetProcAddress(hNewdev, "DiInstallDriverW");
+			if (!pDiInstall) {
+				LOG_CTRL_ETW(L"DiInstallDriverW not found in newdev.dll\n");
+				FreeLibrary(hNewdev);
+				CloseServiceHandle(scm);
+				return;
+			}
+
+			BOOL needReboot = FALSE;
+			BOOL installed = pDiInstall(NULL, infPath.c_str(), 0, &needReboot);
+			if (!installed) {
+				LOG_CTRL_ETW(L"DiInstallDriverW failed for %s: %lu\n", infPath.c_str(), GetLastError());
+				FreeLibrary(hNewdev);
+				CloseServiceHandle(scm);
+				return;
+			}
+			LOG_CTRL_ETW(L"DiInstallDriverW succeeded for %s (needReboot=%d)\n", infPath.c_str(), (int)needReboot);
+			FreeLibrary(hNewdev);
+
+			// re-open the service with start/status access
+			svc = OpenServiceW(scm, SERVICE_NAME, desiredAccess);
+			if (!svc) {
+				LOG_CTRL_ETW(L"Service still not available after install (err=%lu)\n", GetLastError());
+				CloseServiceHandle(scm);
+				return;
+			}
+
+			// After service creation via INF, ensure the binary path points to the
+			// UserModeHookHelper.sys located next to the current executable.
+			std::basic_string<TCHAR> sysName = std::basic_string<TCHAR>(SERVICE_NAME) + std::basic_string<TCHAR>(L".sys");
+			std::basic_string<TCHAR> sysPath = Helper::GetCurrentModulePath(const_cast<TCHAR*>(sysName.c_str()));
+			if (!sysPath.empty()) {
+				if (!ChangeServiceConfigW(svc,
+					SERVICE_NO_CHANGE, // service type
+					SERVICE_DEMAND_START, // start type
+					SERVICE_NO_CHANGE,
+					sysPath.c_str(),   // binary path
+					NULL, NULL, NULL, NULL, NULL, NULL)) {
+					LOG_CTRL_ETW(L"ChangeServiceConfigW to set BinaryPathName failed: %lu (path=%s)\n", GetLastError(), sysPath.c_str());
+				} else {
+					LOG_CTRL_ETW(L"Service binary path updated to %s\n", sysPath.c_str());
+				}
+			} else {
+				LOG_CTRL_ETW(L"Could not determine module path to set service binary path\n");
+			}
+		} else {
+			CloseServiceHandle(scm);
+			return;
+		}
+	}
+	// Check current status and start service if not running
+	SERVICE_STATUS_PROCESS ssp = { 0 };
+	DWORD bytes = 0;
+
+	// Ensure service is configured for auto-start. Query current config and
+	// change to SERVICE_AUTO_START if necessary.
+	{
+		DWORD qNeeded = 0;
+		QueryServiceConfigW(svc, NULL, 0, &qNeeded);
+		if (qNeeded > 0) {
+			std::unique_ptr<BYTE[]> qbuf(new BYTE[qNeeded]);
+			LPQUERY_SERVICE_CONFIGW pq = (LPQUERY_SERVICE_CONFIGW)qbuf.get();
+			if (QueryServiceConfigW(svc, pq, qNeeded, &qNeeded)) {
+				if (pq->dwStartType != SERVICE_DEMAND_START) {
+					if (!ChangeServiceConfigW(svc,
+						SERVICE_NO_CHANGE, // service type
+						SERVICE_DEMAND_START, // start type -> change to auto
+						SERVICE_NO_CHANGE,
+						NULL, NULL, NULL, NULL, NULL, NULL, NULL)) {
+						LOG_CTRL_ETW(L"UMHH_DriverCheck: ChangeServiceConfigW to SERVICE_DEMAND_START failed: %lu\n", GetLastError());
+					} else {
+						LOG_CTRL_ETW(L"UMHH_DriverCheck: service %s start type updated to SERVICE_DEMAND_START\n", SERVICE_NAME);
+					}
+				}
+			} else {
+				LOG_CTRL_ETW(L"UMHH_DriverCheck: QueryServiceConfigW failed: %lu\n", GetLastError());
+			}
+		}
+	}
+	if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+		if (ssp.dwCurrentState != SERVICE_RUNNING) {
+			LOG_CTRL_ETW(L"Service '%s' not running (state=%u), attempting to start\n", SERVICE_NAME, ssp.dwCurrentState);
+			if (StartServiceW(svc, 0, NULL)) {
+				// wait for running state with timeout
+				const int MAX_MS = 10000;
+				const int INTERVAL_MS = 200;
+				int waited = 0;
+				while (waited < MAX_MS) {
+					if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) break;
+					if (ssp.dwCurrentState == SERVICE_RUNNING) {
+						LOG_CTRL_ETW(L"Service '%s' started successfully\n", SERVICE_NAME);
+						break;
+					}
+					std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS));
+					waited += INTERVAL_MS;
+				}
+				if (ssp.dwCurrentState != SERVICE_RUNNING) {
+					LOG_CTRL_ETW(L"Service '%s' did not reach RUNNING state (state=%u)\n", SERVICE_NAME, ssp.dwCurrentState);
+				}
+			}
+			else {
+				DWORD err = GetLastError();
+				if (err == ERROR_SERVICE_ALREADY_RUNNING) {
+					LOG_CTRL_ETW(L"Service '%s' already running\n", SERVICE_NAME);
+				}
+				else {
+					LOG_CTRL_ETW(L"StartServiceW failed for '%s' : %lu\n", SERVICE_NAME, err);
+				}
+			}
+		}
+		else {
+			LOG_CTRL_ETW(L"Service '%s' already running\n", SERVICE_NAME);
+		}
+	}
+	else {
+		LOG_CTRL_ETW(L"QueryServiceStatusEx failed: %lu\n", GetLastError());
+	}
+
+	CloseServiceHandle(svc);
+	CloseServiceHandle(scm);
 }
 bool Helper::ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& outNtPath) {
 	// 1) Try to get NT path from user-mode (QueryFullProcessImageName with flag=1)
@@ -260,7 +537,15 @@ cleanup:
 	if (coInit) CoUninitialize();
 	return result;
 }
-
+bool Helper::ForceInject(DWORD pid) {
+	if (Helper::m_filterInstance) {
+		return Helper::m_filterInstance->FLTCOMM_ForceInject(pid);
+	}
+	
+	LOG_CTRL_ETW(L"can't perform force injection because Helper::m_filterInstance is NULL\n");
+	Fatal(L"can't perform force injection because Helper::m_filterInstance is NULL\n");
+	return false;
+}
 bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 	// First attempt: if a Filter instance is available, ask the kernel
 	// whether the target process is a WoW64 (32-bit) process. This is
@@ -311,10 +596,79 @@ void Helper::SetFilterInstance(Filter* f) {
 	Helper::m_filterInstance = f;
 }
 
+bool Helper::EnableDebugPrivilege(bool enable) {
+	HANDLE hToken = NULL;
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
+		LOG_CTRL_ETW(L"EnableDebugPrivilege: OpenProcessToken failed: %lu\n", GetLastError());
+		return false;
+	}
+
+	LUID luid;
+	if (!LookupPrivilegeValueW(NULL, SE_DEBUG_NAME, &luid)) {
+		LOG_CTRL_ETW(L"EnableDebugPrivilege: LookupPrivilegeValueW failed: %lu\n", GetLastError());
+		CloseHandle(hToken);
+		return false;
+	}
+
+	TOKEN_PRIVILEGES tp;
+	tp.PrivilegeCount = 1;
+	tp.Privileges[0].Luid = luid;
+	tp.Privileges[0].Attributes = enable ? SE_PRIVILEGE_ENABLED : 0;
+
+	if (!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(tp), NULL, NULL)) {
+		LOG_CTRL_ETW(L"EnableDebugPrivilege: AdjustTokenPrivileges failed: %lu\n", GetLastError());
+		CloseHandle(hToken);
+		return false;
+	}
+
+	DWORD err = GetLastError();
+	if (err == ERROR_NOT_ALL_ASSIGNED) {
+		LOG_CTRL_ETW(L"EnableDebugPrivilege: the token does not have the specified privilege\n");
+		CloseHandle(hToken);
+		return false;
+	}
+
+	CloseHandle(hToken);
+	return true;
+}
+bool Helper::CreateLowPrivReqFile(wchar_t* filePath,PHANDLE outFileHandle) {
+	PSECURITY_DESCRIPTOR pSD = nullptr;
+
+	// SDDL: D: (DACL) (A;;GA;;;WD) => Allow Generic All to Everyone
+	LPCWSTR sddl = L"D:(A;;GA;;;WD)";
+
+	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+		sddl, SDDL_REVISION_1, &pSD, NULL)) {
+		LOG_CTRL_ETW(L"ConvertStringSecurityDescriptorToSecurityDescriptorW failed: 0x%x\n", GetLastError());
+		return false;
+	}
+
+	SECURITY_ATTRIBUTES sa = {};
+	sa.nLength = sizeof(sa);
+	sa.lpSecurityDescriptor = pSD;
+	sa.bInheritHandle = FALSE;
+
+
+
+	HANDLE hFile = CreateFile(filePath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		LOG_CTRL_ETW(L"IPC_SendInject: CreateFile %ws failed (%u)\n", filePath, GetLastError());
+		LocalFree(pSD);
+
+		return false;
+	}
+	LocalFree(pSD);
+	*outFileHandle = hFile;
+	return true;
+}
 bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) {
 	if (!baseName || !*baseName) return false;
 	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
-	if (snap == INVALID_HANDLE_VALUE) return false;
+	if (snap == INVALID_HANDLE_VALUE) {
+		// LOG_CTRL_ETW(L"failed to call CreateToolhelp32Snapshot target PID=%u, error: 0x%x\n", pid, GetLastError());
+		// Fatal(L"failed to call CreateToolhelp32Snapshot\n");
+		return false;
+	}
 	MODULEENTRY32W me = { sizeof(me) };
 	bool ok = false;
 	bool present = false;

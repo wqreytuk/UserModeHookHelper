@@ -7,6 +7,7 @@
 #include "UMController.h"
 #include "UMControllerDlg.h"
 #include "ETW.h"
+#include "Helper.h"
 
 
 #ifdef _DEBUG
@@ -59,7 +60,11 @@ BOOL CUMControllerApp::InitInstance()
 	// Now safe to start ETW tracing (window/dialog not yet created but MFC core initialized)
 	GetETW().StartTracer();
 	GetETW().Reg();
-
+	
+	if (!Helper::UMHH_BS_DriverCheck()) {
+		Helper::Fatal(L"UMHH_BS_DriverCheck failed\n");
+	}
+	Helper::UMHH_DriverCheck();
 
 	AfxEnableControlContainer();
 

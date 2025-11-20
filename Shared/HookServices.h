@@ -15,11 +15,14 @@
 struct IHookServices {
     virtual void Log(const wchar_t* fmt, ...) = 0;
     virtual void LogCore(const wchar_t* fmt, ...) = 0;
+	virtual bool EnableDebugPrivilege(bool enable) = 0;
     // Request the master injected DLL to load a trampoline DLL for the given
     // target process. Returns true if the signal was sent successfully. The
     // caller supplies the absolute path to the trampoline DLL that should be
     // loaded inside the target process.
     virtual bool InjectTrampoline(DWORD targetPid, const wchar_t* fullDllPath) = 0;
+	virtual bool IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) = 0;
+	virtual bool  CreateLowPrivReqFile(wchar_t* filePath, PHANDLE outFileHandle) = 0;
     // Query whether the target process is 64-bit. When successful, returns
     // true and sets `outIs64` to true for 64-bit processes or false for
     // 32-bit (WoW64) processes. Implementations should prefer kernel-backed
@@ -34,5 +37,6 @@ struct IHookServices {
     virtual bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) = 0;
     // Load persisted ProcHookList entries into 'outEntries' (HookRow instances)
     virtual bool LoadProcHookList(std::vector<HookRow>& outEntries) = 0;
+	virtual bool ForceInject(DWORD pid) = 0;
     virtual ~IHookServices() {}
 };
