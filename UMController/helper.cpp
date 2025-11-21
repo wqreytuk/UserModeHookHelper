@@ -162,6 +162,9 @@ bool Helper::UMHH_BS_DriverCheck() {
 		DWORD bytes = 0;
 		if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
 			if (ssp.dwCurrentState == SERVICE_RUNNING || ssp.dwCurrentState == SERVICE_START_PENDING) {
+				bool ghEnabled = false; RegistryStore::ReadGlobalHookMode(ghEnabled);
+				if (ghEnabled)
+					return true;
 				SERVICE_STATUS ss = { 0 };
 				if (ControlService(svc, SERVICE_CONTROL_STOP, &ss)) {
 					// wait for stopped
@@ -317,7 +320,7 @@ void Helper::UMHH_DriverCheck() {
 			if (!sysPath.empty()) {
 				if (!ChangeServiceConfigW(svc,
 					SERVICE_NO_CHANGE, // service type
-					SERVICE_DEMAND_START, // start type
+					SERVICE_AUTO_START, // start type
 					SERVICE_NO_CHANGE,
 					sysPath.c_str(),   // binary path
 					NULL, NULL, NULL, NULL, NULL, NULL)) {
@@ -328,7 +331,8 @@ void Helper::UMHH_DriverCheck() {
 			} else {
 				LOG_CTRL_ETW(L"Could not determine module path to set service binary path\n");
 			}
-		} else {
+		} 
+		else {
 			CloseServiceHandle(scm);
 			return;
 		}
@@ -346,15 +350,15 @@ void Helper::UMHH_DriverCheck() {
 			std::unique_ptr<BYTE[]> qbuf(new BYTE[qNeeded]);
 			LPQUERY_SERVICE_CONFIGW pq = (LPQUERY_SERVICE_CONFIGW)qbuf.get();
 			if (QueryServiceConfigW(svc, pq, qNeeded, &qNeeded)) {
-				if (pq->dwStartType != SERVICE_DEMAND_START) {
+				if (pq->dwStartType != SERVICE_AUTO_START) {
 					if (!ChangeServiceConfigW(svc,
 						SERVICE_NO_CHANGE, // service type
-						SERVICE_DEMAND_START, // start type -> change to auto
+						SERVICE_AUTO_START, // start type -> change to auto
 						SERVICE_NO_CHANGE,
 						NULL, NULL, NULL, NULL, NULL, NULL, NULL)) {
-						LOG_CTRL_ETW(L"UMHH_DriverCheck: ChangeServiceConfigW to SERVICE_DEMAND_START failed: %lu\n", GetLastError());
+						LOG_CTRL_ETW(L"UMHH_DriverCheck: ChangeServiceConfigW to SERVICE_AUTO_START failed: %lu\n", GetLastError());
 					} else {
-						LOG_CTRL_ETW(L"UMHH_DriverCheck: service %s start type updated to SERVICE_DEMAND_START\n", SERVICE_NAME);
+						LOG_CTRL_ETW(L"UMHH_DriverCheck: service %s start type updated to SERVICE_AUTO_START\n", SERVICE_NAME);
 					}
 				}
 			} else {
@@ -743,7 +747,7 @@ std::wstring Helper::ToHex(ULONGLONG value) {
 // Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)
 bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 	// disable for now, seems like I fucked up file system when using global injection
-	DesiredEnabled = FALSE;
+	// DesiredEnabled = FALSE;
 
 	const wchar_t* svcName =
 #if defined(BS_SERVICE_NAME)
@@ -803,16 +807,18 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 		}
 
 		// Start service if not running
-		SC_HANDLE svc2 = OpenServiceW(scm, svcName, SERVICE_QUERY_STATUS | SERVICE_START);
-		if (svc2) {
-			SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0;
-			if (QueryServiceStatusEx(svc2, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
-				if (ssp.dwCurrentState != SERVICE_RUNNING) {
-					StartServiceW(svc2, 0, NULL);
-				}
-			}
-			CloseServiceHandle(svc2);
-		}
+		
+		
+		 SC_HANDLE svc2 = OpenServiceW(scm, svcName, SERVICE_QUERY_STATUS | SERVICE_START);
+		 if (svc2) {
+		 	SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0;
+		 	if (QueryServiceStatusEx(svc2, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+		 		if (ssp.dwCurrentState != SERVICE_RUNNING) {
+		 			StartServiceW(svc2, 0, NULL);
+		 		}
+		 	}
+		 	CloseServiceHandle(svc2);
+		 }
 
 	} else {
 		// Desired disabled: if service exists and running, stop and set Start value to SERVICE_DEMAND_START (or 3?)

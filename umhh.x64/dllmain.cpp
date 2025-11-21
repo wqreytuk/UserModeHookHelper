@@ -590,14 +590,14 @@ OnProcessAttach(
 		&ProviderHandle);
 
 
-	wchar_t ntPath[MAX_PATH * 4] = { 0 };
-	size_t len = 0;
-	GetNtPathOfCurrentProcess(NtdllHandle, ntPath, &len);
-	// get hash and check
-	if (CheckEarlyBreak((UCHAR*)ntPath, len * sizeof(wchar_t))) {
-		EtwLog(L"current process is marked as early break, now breaking into debugger\n");
-		DbgBreakPoint();
-	}
+	// wchar_t ntPath[MAX_PATH * 4] = { 0 };
+	// size_t len = 0;
+	// GetNtPathOfCurrentProcess(NtdllHandle, ntPath, &len);
+	// // get hash and check
+	// if (CheckEarlyBreak((UCHAR*)ntPath, len * sizeof(wchar_t))) {
+	// 	EtwLog(L"current process is marked as early break, now breaking into debugger\n");
+	// 	DbgBreakPoint();
+	// }
 
 	// mycode();
 	RtlCreateUserThread(NtCurrentProcess(),

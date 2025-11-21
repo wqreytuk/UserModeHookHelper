@@ -6,6 +6,7 @@
 #include "PortCtx.h"
 #include "DriverCtx.h"
 #include "Inject.h"
+#include "BootStartControl.h"
  
 // Helper: read persisted settings from registry and initialize DriverCtx
 static VOID LoadPersistedDriverSettings(VOID) {
@@ -101,6 +102,10 @@ NTSTATUS
 	DbgBreakPoint();
 	(RegistryPath); 
 	Log(L"DriverEntry\n");
+
+	// stop umhh.bootstart driver
+	// BS_SendSuspendInjectQueue(TRUE);
+	Log(L"Tell UMHH.BootStart driver to stop injection\n");
 
 	Inject_CheckWin7();
 

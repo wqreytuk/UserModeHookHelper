@@ -367,6 +367,9 @@ public:
 		app.GetETW().Log(L"[UMCtrl]     InjectTrampoline: signal sent pid=%u path=%s\n", targetPid, fullDllPath);
 		return true;
 	}
+	bool  GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath) {
+		return Helper::GetFullImageNtPathByPID(pid, outNtPath);
+	}
 	bool IsProcess64(DWORD targetPid, bool& outIs64) override {
 		// Use Helper which itself queries the kernel via Filter when available.
 		return Helper::IsProcess64(targetPid, outIs64);

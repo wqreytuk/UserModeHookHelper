@@ -98,6 +98,9 @@
     <Lib>
       <AdditionalDependencies>$(SolutionDir)/lib/capstone.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Lib>
+    <ClCompile>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+    </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="Disasm.h" />

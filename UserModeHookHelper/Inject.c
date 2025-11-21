@@ -604,7 +604,7 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process,BOOLEAN F
 {
     if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
     ULONGLONG hash = ComputeNtPathHash(ImageName);
-	if (Force) {
+	if (Force){
 		// we're performing force injection
 		if (PsIsProtectedProcess(Process)) {
 			Log(L"Proteced process injection is not supported\n");
@@ -613,7 +613,7 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process,BOOLEAN F
 		PendingInject_Add_Internal(Process);
 	}
 	else if (DriverCtx_GetGlobalHookMode()) {
-		// this driver is not responsible for globa hook
+		// UMHH.BootStart take care of it
 		return;
 	}
     else if (hash != 0 && HookList_ContainsHash(hash)) {

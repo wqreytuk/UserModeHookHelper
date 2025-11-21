@@ -88,6 +88,8 @@ Inject_ApcKernelRoutine(
 // The Process parameter may be a referenced PEPROCESS (e.g. from PsLookupProcessByProcessId)
 // or PsGetCurrentProcess(); the pending list will take its own reference when storing.
 VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process);
+// Returns current number of pending inject entries
+ULONG Inject_GetPendingCount(VOID);
 
 // (Pending list accessors removed ??? use Inject_CheckAndQueue and the
 // atomic pop behavior in Inject_OnImageLoad.)

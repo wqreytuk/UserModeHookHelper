@@ -28,6 +28,7 @@ struct IHookServices {
     // 32-bit (WoW64) processes. Implementations should prefer kernel-backed
     // checks when available so callers in HookUI can rely on authoritative
     // information.
+	virtual bool  GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath) = 0;
     virtual bool IsProcess64(DWORD targetPid, bool& outIs64) = 0;
     // Persist per-process hook list entries. Uses a shared `HookRow` vector
     // where each HookRow contains the persisted fields; the controller will

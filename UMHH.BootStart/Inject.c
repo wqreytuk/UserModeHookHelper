@@ -603,6 +603,11 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 {
     if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
     ULONGLONG hash = ComputeNtPathHash(ImageName);
+	// If driver configured to suspend queuing from user-mode instruction, skip enqueueing
+	if (DriverCtx_GetSuspendInjectQueue()) {
+		Log(L"Inject_CheckAndQueue: queuing suspended by policy, skipping\n");
+		return;
+	}
 	if (DriverCtx_GetGlobalHookMode()) {
 		if (PsIsProtectedProcess(Process)) {
 			Log(L"Proteced process injection is not supported\n");
@@ -801,4 +806,18 @@ Inject_InjectionApcNormalRoutine(
 	PPENDING_INJECT InjectionInfo = NormalContext;
 	Inject_Perform(InjectionInfo);
 	// Inject_PerformThunkLess(InjectionInfo);
+}
+
+ULONG Inject_GetPendingCount(VOID)
+{
+	ULONG cnt = 0;
+	KIRQL oldIrql;
+	KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
+	PLIST_ENTRY e = s_PendingInjectList.Flink;
+	while (e != &s_PendingInjectList) {
+		cnt++;
+		e = e->Flink;
+	}
+	KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
+	return cnt;
 }

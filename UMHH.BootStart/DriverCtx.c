@@ -4,6 +4,7 @@ static PFLT_FILTER s_Filter = NULL;
 static PFLT_PORT s_ServerPort = NULL;
 static PWSTR s_UserDir = NULL;
 static BOOLEAN s_GlobalHookMode = FALSE;
+static BOOLEAN s_SuspendInjectQueue = FALSE;
 
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter) {
     s_Filter = Filter;
@@ -53,4 +54,12 @@ VOID DriverCtx_SetGlobalHookMode(BOOLEAN Enabled) {
 
 BOOLEAN DriverCtx_GetGlobalHookMode(VOID) {
     return s_GlobalHookMode;
+}
+
+VOID DriverCtx_SetSuspendInjectQueue(BOOLEAN Suspend) {
+    s_SuspendInjectQueue = Suspend ? TRUE : FALSE;
+}
+
+BOOLEAN DriverCtx_GetSuspendInjectQueue(VOID) {
+    return s_SuspendInjectQueue;
 }

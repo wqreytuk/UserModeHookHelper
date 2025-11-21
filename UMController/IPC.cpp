@@ -123,7 +123,7 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	hFile = CreateFile(eventFilePath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
 		LocalFree(pSD);
-		LOG_CTRL_ETW(L"failed to create event file: %ws\n", eventFilePath);
+		LOG_CTRL_ETW(L"failed to create event file: %ws, error=0x%x\n", eventFilePath, GetLastError());
 		Helper::Fatal(L"failed to create event file\n");
 	}
 	else {

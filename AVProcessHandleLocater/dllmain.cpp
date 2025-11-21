@@ -10,8 +10,8 @@
 #include "../UMController/Helper.h"
  
 
-#define AVPHL_X64_DLL L"AvProcessHandleLocated.dll.x64.dll"
-#define AVPHL_X86_DLL L"AvProcessHandleLocated.dll.Win32.dll"
+#define AVPHL_X64_DLL L"AvProcessHandleLocater.x64.dll"
+#define AVPHL_X86_DLL L"AvProcessHandleLocater.Win32.dll"
 #define SIGNAL_FILENAME L"C:\\Users\\Public\\AVPHL.%d"
 static const GUID ProviderGUID =
 { 0x3da12c0, 0x27c2, 0x4d75, { 0x95, 0x3a, 0x2c, 0x4e, 0x66, 0xa3, 0x74, 0x64 } };
@@ -53,12 +53,31 @@ BOOL WriteSignalFile(IHookServices* services,wchar_t* signalPath,DWORD pid) {
 		CloseHandle(hFile);
 		return FALSE;
 	}
+	CloseHandle(hFile);
 	return TRUE;
 }
 bool TryOpenProcWithReadWrite(DWORD pid) {
 	HANDLE h = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE, 0, pid);
 	if (!h)
 		return false;
+	
+
+	HANDLE hProcess = OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, pid);
+	if (hProcess == NULL) {
+		return false;
+	}
+	void* baseaddress = VirtualAllocEx(hProcess, NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (baseaddress == nullptr) {
+		CloseHandle(h);
+		return false;
+	}
+
+	char test_data[MAX_PATH] = "AAAAAAAAAAAAAAAAAAAA";
+	if (!WriteProcessMemory(hProcess, baseaddress, (void*)test_data, strlen(test_data), NULL)) {
+		CloseHandle(h);
+		return false;
+	}
+
 	CloseHandle(h);
 	return true;
 }
@@ -74,23 +93,32 @@ VOID EntryCode() {
 	// read out to get to be tested pid
 	HANDLE hFile = CreateFileW(signalPath, GENERIC_READ, 0, 0, OPEN_ALWAYS, 0, 0);
 	if (hFile == INVALID_HANDLE_VALUE) {
-		Log(L"failed to create file=%s, abort\n", signalPath);
+		DeleteFile(signalPath);
+		Log(L"failed to create file=%s, error=0x%x, abort\n", signalPath, GetLastError());
 		return;
 	}
 	DWORD targetPid = 0;
 	DWORD bytesOut = 0;
 	if (!ReadFile(hFile, &targetPid, sizeof(DWORD), &bytesOut, 0)) {
 		Log(L"failed to read file=%s, abort\n", signalPath);
+		CloseHandle(hFile);
+		DeleteFile(signalPath);
 		return;
 	}
+	CloseHandle(hFile);
+	DeleteFile(signalPath);
 	// skip myself
-	if (targetPid == GetCurrentProcessId())
+	if (targetPid == GetCurrentProcessId()) {
+		Log(L"skip self process opening\n");
 		return;
+	}
 	if (!TryOpenProcWithReadWrite(targetPid)) {
-	// nothing
+		Log(L"can not open target process with READ|WRITE\n");
 	}
 	else {
-		Log(L"AVProcessHandleLocater success, %u can open %u", GetCurrentProcessId(), targetPid);
+		WCHAR path[MAX_PATH];
+		DWORD len = GetModuleFileNameW(NULL, path, MAX_PATH);
+		Log(L"AVProcessHandleLocater success, PID=%u Path=%s can open %u", GetCurrentProcessId(), path, targetPid);
 	}
 }
 
@@ -128,6 +156,112 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 		else meDir = s;
 	}
 
+	std::wstring pathToInjectX64;
+	wchar_t* temp_hook_code_dll_name = 0;
+	{
+		wchar_t modPathBuf[MAX_PATH];
+		DWORD modLen = GetModuleFileNameW(hThis, modPathBuf, _countof(modPathBuf));
+		std::wstring folder;
+		std::wstring base_folder;
+		if (modLen == 0) {
+			folder = L".\\plugins_dll_temp";
+		}
+		else {
+			std::wstring modPath(modPathBuf);
+			size_t p = modPath.find_last_of(L"\\/");
+			if (p == std::wstring::npos) folder = L".\\plugins_dll_temp";
+			else {
+				base_folder = modPath.substr(0, p);
+				folder = modPath.substr(0, p) + L"\\plugins_dll_temp";
+			}
+		}
+		// Ensure directory exists (CreateDirectoryW is fine if already exists)
+		if (!CreateDirectoryW(folder.c_str(), NULL)) {
+			DWORD err = GetLastError();
+			if (err != ERROR_ALREADY_EXISTS) {
+				Log(L"CreateDirectoryW failed for %s err=%u\n", folder.c_str(), err);
+			}
+		}
+
+		// Construct trampoline path (do not perform injection here)
+		// std::wstring hook_code_dll_name = is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL;
+		std::wstring hook_code_dll_name = AVPHL_X64_DLL;
+		// Build timestamped filename
+		SYSTEMTIME st; GetLocalTime(&st);
+		wchar_t ts[64];
+		swprintf(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
+			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+		std::wstring new_dll_name = L"";
+		new_dll_name = new_dll_name + ts + L"_" + hook_code_dll_name;
+		temp_hook_code_dll_name = (wchar_t*)malloc(2 * (new_dll_name.length() + 1));
+		ZeroMemory(temp_hook_code_dll_name, 2 * (new_dll_name.length() + 1));
+		memcpy(temp_hook_code_dll_name, new_dll_name.c_str(), 2 * new_dll_name.length());
+		std::wstring dest = folder + L"\\" + ts + L"_" + hook_code_dll_name;
+		std::wstring src = base_folder +std::wstring(L"\\")+ hook_code_dll_name;
+		if (CopyFileW(src.c_str(), dest.c_str(), FALSE)) {
+			pathToInjectX64 = dest; // use copied file
+			Log(L"Copied hook DLL to %s\n", dest.c_str());
+		}
+		else {
+			DWORD err = GetLastError();
+			Log(L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", src.c_str(), dest.c_str(), err);
+			// keep pathToInject as original selectedPath
+		}
+	}
+
+	std::wstring pathToInjectX86;
+	 temp_hook_code_dll_name = 0;
+	{
+		wchar_t modPathBuf[MAX_PATH];
+		DWORD modLen = GetModuleFileNameW(hThis, modPathBuf, _countof(modPathBuf));
+		std::wstring folder;
+		std::wstring base_folder;
+		if (modLen == 0) {
+			folder = L".\\plugins_dll_temp";
+		}
+		else {
+			std::wstring modPath(modPathBuf);
+			size_t p = modPath.find_last_of(L"\\/");
+			if (p == std::wstring::npos) folder = L".\\plugins_dll_temp";
+			else {
+				base_folder = modPath.substr(0, p);
+				folder = modPath.substr(0, p) + L"\\plugins_dll_temp";
+			}
+		}
+		// Ensure directory exists (CreateDirectoryW is fine if already exists)
+		if (!CreateDirectoryW(folder.c_str(), NULL)) {
+			DWORD err = GetLastError();
+			if (err != ERROR_ALREADY_EXISTS) {
+				Log(L"CreateDirectoryW failed for %s err=%u\n", folder.c_str(), err);
+			}
+		}
+
+		// Construct trampoline path (do not perform injection here)
+		// std::wstring hook_code_dll_name = is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL;
+		std::wstring hook_code_dll_name = AVPHL_X86_DLL;
+		// Build timestamped filename
+		SYSTEMTIME st; GetLocalTime(&st);
+		wchar_t ts[64];
+		swprintf(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
+			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+		std::wstring new_dll_name = L"";
+		new_dll_name = new_dll_name + ts + L"_" + hook_code_dll_name;
+		temp_hook_code_dll_name = (wchar_t*)malloc(2 * (new_dll_name.length() + 1));
+		ZeroMemory(temp_hook_code_dll_name, 2 * (new_dll_name.length() + 1));
+		memcpy(temp_hook_code_dll_name, new_dll_name.c_str(), 2 * new_dll_name.length());
+		std::wstring dest = folder + L"\\" + ts + L"_" + hook_code_dll_name;
+		std::wstring src = base_folder + std::wstring(L"\\") +hook_code_dll_name;
+		if (CopyFileW(src.c_str(), dest.c_str(), FALSE)) {
+			pathToInjectX86 = dest; // use copied file
+			Log(L"Copied hook DLL to %s\n", dest.c_str());
+		}
+		else {
+			DWORD err = GetLastError();
+			Log(L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", src.c_str(), dest.c_str(), err);
+			// keep pathToInject as original selectedPath
+		}
+	}
+
 	// Enumerate all processes and find those with the master DLL loaded
 	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (snap == INVALID_HANDLE_VALUE) {
@@ -145,9 +279,13 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 	do {
 		DWORD targetPid = pe.th32ProcessID;
 		if (targetPid == 0 || targetPid == 4) continue;
-
+		if (targetPid == 756)
+			Log(L"Break\n");
 		bool is64 = false;
 		if (!services->IsProcess64(targetPid, is64)) {
+			std::wstring outNtPath;
+			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
+				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
 			// Could not determine arch; skip
 			Log(L"failed to call IsProcess64, this is should not happen in normal circumstance\n");
 			continue;
@@ -157,12 +295,18 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 		bool dllLoaded = false;
 		// Helper::IsModuleLoaded is available in the host; call via implementation here
 		if (!services->IsModuleLoaded(targetPid, masterName, dllLoaded)) { 
+			std::wstring outNtPath;
+			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
+				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
 			Log(L"failed to call IsModuleLoaded target PID=%u, this is should not happen in normal circumstance\n", targetPid);
 			continue; 
 		}
 		if (!dllLoaded) {
+			std::wstring outNtPath;
+			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
+				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
 			Log(L"TargetPID=%u arch=%s master dll not loaded, trying force injection\n",targetPid, is64 ? L"x64" : L"x86");
-			// continue;
+			continue;
 			// my driver is not an early launch driver, so he can not possibly hook all processes
 			// some process such as lsass.exe is already started before my driver
 			if (!services->ForceInject(targetPid)) {
@@ -182,43 +326,49 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 				continue;
 			}
 		}
-		// Construct trampoline path (do not perform injection here)
-		std::wstring tramp = meDir + L"\\" + (is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL);
 
 		// Log candidate target and chosen trampoline path (no injection performed)
-		Log(L"Candidate PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", tramp.c_str());
+		Log(L"Candidate PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str());
 
 		// create signal file
 		WCHAR signalPath[MAX_PATH];
 		FormatObjectName(signalPath, RTL_NUMBER_OF(signalPath), SIGNAL_FILENAME, (unsigned)targetPid);
 		if (!WriteSignalFile(services, signalPath, pid)) {
+			DeleteFile(signalPath);
+			std::wstring outNtPath;
+			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
+				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
 			Log(L"failed to call WriteSignalFile\n");
 			continue;
 		}
 
-		if (!services->InjectTrampoline(targetPid, tramp.c_str())) {
-			Log(L"failed to call InjectTrampoline PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", tramp.c_str());
+		if (!services->InjectTrampoline(targetPid, is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str())) {
+			DeleteFile(signalPath);
+			std::wstring outNtPath;
+			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
+				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
+			Log(L"failed to call InjectTrampoline PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str());
 			continue;
 		}
 		// check if dll injected
-		const int maxIterations = 50; bool loaded = false;
-		for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
-			services->IsModuleLoaded(pid, is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL, loaded);
-			if (loaded)
-				break;
-			Sleep(100);
-		}
-
-		if (!loaded) {
-			Log(L"failed to inject %s\n", is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL);
-			continue;
-		}
+		// const int maxIterations = 50; bool loaded = false;
+		// for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
+		// 	services->IsModuleLoaded(pid, is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL, loaded);
+		// 	if (loaded)
+		// 		break;
+		// 	Sleep(100);
+		// }
+		// 
+		// if (!loaded) {
+		// 	Log(L"failed to inject %s\n", is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL);
+		// 	continue;
+		// }
 
 	} while (Process32NextW(snap, &pe));
 
 
 	CloseHandle(snap);
-
+	MessageBoxW(hwnd, L"search finished\n", L"AVPHL", MB_OK);
 	return TRUE;
 }
 

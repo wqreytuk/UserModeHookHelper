@@ -83,10 +83,11 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <TargetName>$(ProjectName).$(Platform)</TargetName>
+    <OutDir>$(SolutionDir)$(Configuration)\..\x64\$(Configuration)\plugins</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\plugins</OutDir>
+    <OutDir>$(SolutionDir)$(Configuration)\..\x64\$(Configuration)\plugins</OutDir>
     <TargetName>$(ProjectName).$(Platform)</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">

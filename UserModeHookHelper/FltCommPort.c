@@ -275,7 +275,7 @@ static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferS
 	RtlCopyMemory(&nt_base, msg->m_Data + sizeof(DWORD), sizeof(PVOID));
 	if (!nt_base) {
 		Log(L"user passed ntpath is NULL\n");
-			return STATUS_UNSUCCESSFUL;
+		return STATUS_UNSUCCESSFUL;
 	}
 	PEPROCESS process = NULL;
 	PUNICODE_STRING imageName = NULL;

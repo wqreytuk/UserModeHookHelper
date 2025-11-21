@@ -5,6 +5,7 @@
 #include "HookList.h"
 #include "DriverCtx.h"
 #include "Inject.h"
+#include "Device.h"
  
 // Helper: read persisted settings from registry and initialize DriverCtx
 static VOID LoadPersistedDriverSettings(VOID) {
@@ -99,6 +100,8 @@ DriverUnload(
 	UNREFERENCED_PARAMETER(DriverObject);
 	// Reuse MiniUnload to cleanup resources
 	MiniUnload(0);
+	// Remove device objects
+	UMHH_DeleteDeviceObjects(DriverObject);
 	Log(L"DriverUnload invoked\n");
 }
 // mainn
@@ -119,6 +122,9 @@ NTSTATUS
 	// initialize modules
 	HookList_Init();
 	Inject_Init();
+
+	// create device for IOCTL control
+//	UMHH_CreateDeviceObjects(DriverObject);
 
 	// this driver is meaning to support global hook, so we don't care what registry value is, just set to global hook mode
 	DriverCtx_SetGlobalHookMode(TRUE);

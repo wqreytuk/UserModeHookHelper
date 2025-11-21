@@ -42,4 +42,8 @@ VOID DriverCtx_ClearUserDir(VOID);
 VOID DriverCtx_SetGlobalHookMode(BOOLEAN Enabled);
 BOOLEAN DriverCtx_GetGlobalHookMode(VOID);
 
+// Suspend/resume inject queueing controlled by user-mode via IOCTL
+VOID DriverCtx_SetSuspendInjectQueue(BOOLEAN Suspend);
+BOOLEAN DriverCtx_GetSuspendInjectQueue(VOID);
+
 #endif
