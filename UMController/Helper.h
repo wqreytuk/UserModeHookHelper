@@ -58,6 +58,10 @@ public:
     // Enable or disable the SeDebugPrivilege for the current process/token.
     // Returns true on success.
     static bool EnableDebugPrivilege(bool enable);
+	// Copy UMHH x64 and Win32 DLLs located next to the running executable
+	// to the root of C:\ (destination paths: `C:\umhh.dll.x64.dll` and
+	// `C:\umhh.dll.Win32.dll`). Returns true if all copies succeeded.
+	static bool CopyUmhhDllsToRoot();
 	// Toggle the boot-start driver `UMHH.BootStart` according to DesiredEnabled.
 	// If DesiredEnabled==true: ensure driver file exists under System32\drivers,
 	// create service as boot-start (Start=0) and start it.

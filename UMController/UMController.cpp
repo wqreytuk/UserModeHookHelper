@@ -60,7 +60,7 @@ BOOL CUMControllerApp::InitInstance()
 	// Now safe to start ETW tracing (window/dialog not yet created but MFC core initialized)
 	GetETW().StartTracer();
 	GetETW().Reg();
-	
+	copy hook dll to sysroot
 	if (!Helper::UMHH_BS_DriverCheck()) {
 		Helper::Fatal(L"UMHH_BS_DriverCheck failed\n");
 	}

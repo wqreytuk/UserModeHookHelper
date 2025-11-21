@@ -16,6 +16,7 @@
 #include <chrono>
 #include "../Shared/LogMacros.h"
 #include  "../UserModeHookHelper/MacroDef.h"
+#include "../UserModeHookHelper/UKShared.h"
 #include <winsvc.h>
 #pragma comment(lib, "wbemuuid.lib")
 
@@ -691,8 +692,6 @@ std::wstring Helper::ToHex(ULONGLONG value) {
 		out.push_back(digits[v]);
 	}
 	return out;
-}
-
 // Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)
 bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 	const wchar_t* svcName =
@@ -791,3 +790,55 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 	CloseServiceHandle(scm);
 	return true;
 }
+
+bool Helper::CopyUmhhDllsToRoot() {
+	// Determine source paths located next to the running executable
+	std::wstring x64Name = X64_DLL; // L"umhh.dll.x64.dll"
+	std::wstring x86Name = X86_DLL; // L"umhh.dll.Win32.dll"
+
+	// Get paths next to the current module
+	std::basic_string<TCHAR> srcX64 = Helper::GetCurrentModulePath(const_cast<TCHAR*>(x64Name.c_str()));
+	std::basic_string<TCHAR> srcX86 = Helper::GetCurrentModulePath(const_cast<TCHAR*>(x86Name.c_str()));
+
+	if (srcX64.empty() && srcX86.empty()) {
+		LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: could not determine source paths for UMHH DLLs\n");
+		return false;
+	}
+
+	// Build destination paths on C:\
+	std::wstring dstX64 = L"C:\\" + x64Name;
+	std::wstring dstX86 = L"C:\\" + x86Name;
+
+	bool ok = true;
+
+	if (!srcX64.empty()) {
+		DWORD fa = GetFileAttributesW(srcX64.c_str());
+		if (fa != INVALID_FILE_ATTRIBUTES) {
+			if (!CopyFileW(srcX64.c_str(), dstX64.c_str(), FALSE)) {
+				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: failed to copy %s to %s : %lu\n", srcX64.c_str(), dstX64.c_str(), GetLastError());
+				ok = false;
+			} else {
+				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: copied %s to %s\n", srcX64.c_str(), dstX64.c_str());
+			}
+		} else {
+			LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: source x64 DLL not found: %s\n", srcX64.c_str());
+			ok = false;
+		}
+	}
+
+	if (!srcX86.empty()) {
+		DWORD fa = GetFileAttributesW(srcX86.c_str());
+		if (fa != INVALID_FILE_ATTRIBUTES) {
+			if (!CopyFileW(srcX86.c_str(), dstX86.c_str(), FALSE)) {
+				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: failed to copy %s to %s : %lu\n", srcX86.c_str(), dstX86.c_str(), GetLastError());
+				ok = false;
+			} else {
+				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: copied %s to %s\n", srcX86.c_str(), dstX86.c_str());
+			}
+		} else {
+			LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: source x86 DLL not found: %s\n", srcX86.c_str());
+			ok = false;
+		}
+	}
+
+	return ok;}
