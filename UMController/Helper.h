@@ -58,6 +58,11 @@ public:
     // Enable or disable the SeDebugPrivilege for the current process/token.
     // Returns true on success.
     static bool EnableDebugPrivilege(bool enable);
+	// Toggle the boot-start driver `UMHH.BootStart` according to DesiredEnabled.
+	// If DesiredEnabled==true: ensure driver file exists under System32\drivers,
+	// create service as boot-start (Start=0) and start it.
+	// If DesiredEnabled==false: stop the service if running and set Start to disabled.
+	static bool ConfigureBootStartService(bool DesiredEnabled);
 private:
 	// Shared reusable buffer for path queries. Protected by m_bufMutex.
 	static std::unique_ptr<TCHAR[]> m_sharedBuf;

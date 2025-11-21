@@ -120,8 +120,8 @@ NTSTATUS
 	HookList_Init();
 	Inject_Init();
 
-	// Load persisted settings from registry (global hook mode, user dir, ...)
-	LoadPersistedDriverSettings();
+	// this driver is meaning to support global hook, so we don't care what registry value is, just set to global hook mode
+	DriverCtx_SetGlobalHookMode(TRUE);
 
 
 	NTSTATUS status = SetSysNotifiers();

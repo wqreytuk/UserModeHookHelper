@@ -228,19 +228,12 @@ bool Helper::UMHH_BS_DriverCheck() {
 		SERVICE_SYSTEM_START, SERVICE_ERROR_NORMAL, dstPath.c_str(), NULL, NULL, NULL, NULL, NULL);
 	if (!newSvc) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: CreateServiceW failed: %lu\n", GetLastError()); DeleteFileW(dstPath.c_str()); CloseServiceHandle(scm); return false; }
 
-	// set registry ImagePath="\SystemRoot\system32\drivers\<svc>.sys" and Start=0
-	std::wstring regPath = std::wstring(L"SYSTEM\\CurrentControlSet\\Services\\") + std::wstring(svcName);
-	HKEY hKey = NULL; LONG rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, regPath.c_str(), 0, KEY_SET_VALUE, &hKey);
-	if (rc == ERROR_SUCCESS) {
-		// Build expand-string image path (use REG_EXPAND_SZ so system expands %SystemRoot% style paths)
-		std::wstring imagePath = std::wstring(L"\\SystemRoot\\system32\\drivers\\") + drvName;
-		RegSetValueExW(hKey, L"ImagePath", 0, REG_EXPAND_SZ, (const BYTE*)imagePath.c_str(), (DWORD)((imagePath.size() + 1) * sizeof(wchar_t)));
-
-		DWORD startVal = SERVICE_SYSTEM_START;
-		RegSetValueExW(hKey, L"Start", 0, REG_DWORD, (const BYTE*)&startVal, sizeof(startVal));
-		RegCloseKey(hKey);
-	} else {
-		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: RegOpenKeyExW failed for %s : %lu\n", regPath.c_str(), rc);
+	// Use ConfigureBootStartService to ensure registry/config is set for boot-start.
+	if (!ConfigureBootStartService(true)) {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: ConfigureBootStartService failed to enable %s\n", svcName);
+		// we continue, since service was created; but return false to indicate not fully configured
+		CloseServiceHandle(newSvc); CloseServiceHandle(scm);
+		return false;
 	}
 
 	CloseServiceHandle(newSvc); CloseServiceHandle(scm);
@@ -698,4 +691,103 @@ std::wstring Helper::ToHex(ULONGLONG value) {
 		out.push_back(digits[v]);
 	}
 	return out;
+}
+
+// Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)
+bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
+	const wchar_t* svcName =
+#if defined(BS_SERVICE_NAME)
+		BS_SERVICE_NAME;
+#else
+		SERVICE_NAME;
+#endif
+
+	// Open SCM
+	SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE);
+	if (!scm) {
+		LOG_CTRL_ETW(L"ConfigureBootStartService: OpenSCManagerW failed: %lu\n", GetLastError());
+		return false;
+	}
+
+	// Compute paths
+	std::basic_string<TCHAR> drvName = std::basic_string<TCHAR>(svcName) + std::basic_string<TCHAR>(L".sys");
+	wchar_t sysDir[MAX_PATH]; if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) { LOG_CTRL_ETW(L"ConfigureBootStartService: GetSystemDirectoryW failed: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
+	std::wstring dstDir = std::wstring(sysDir) + L"\\drivers\\"; std::wstring dstPath = dstDir + std::wstring(drvName.c_str());
+
+	// Open service if exists
+	SC_HANDLE svc = OpenServiceW(scm, svcName, SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP | SERVICE_CHANGE_CONFIG | DELETE);
+	if (DesiredEnabled) {
+		// Ensure driver file exists in system drivers dir. If not, try to copy from exe dir.
+		DWORD fa = GetFileAttributesW(dstPath.c_str());
+		if (fa == INVALID_FILE_ATTRIBUTES) {
+			// try to locate next to exe
+			std::basic_string<TCHAR> srcPath = Helper::GetCurrentModulePath(const_cast<TCHAR*>(drvName.c_str()));
+			if (!srcPath.empty()) {
+				CopyFileW(srcPath.c_str(), dstPath.c_str(), FALSE);
+			}
+		}
+
+		if (!svc) {
+			// create the service as boot-start
+			SC_HANDLE newSvc = CreateServiceW(scm, svcName, svcName, SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
+				SERVICE_SYSTEM_START, SERVICE_ERROR_NORMAL, dstPath.c_str(), NULL, NULL, NULL, NULL, NULL);
+			if (!newSvc) {
+				LOG_CTRL_ETW(L"ConfigureBootStartService: CreateServiceW failed: %lu\n", GetLastError());
+				CloseServiceHandle(scm);
+				return false;
+			}
+			CloseServiceHandle(newSvc);
+		}
+
+		// Write registry ImagePath and Start=0
+		std::wstring regPath = std::wstring(L"SYSTEM\\CurrentControlSet\\Services\\") + std::wstring(svcName);
+		HKEY hKey = NULL; LONG rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, regPath.c_str(), 0, KEY_SET_VALUE, &hKey);
+		if (rc == ERROR_SUCCESS) {
+			std::wstring imagePath = std::wstring(L"\\SystemRoot\\system32\\drivers\\") + drvName;
+			RegSetValueExW(hKey, L"ImagePath", 0, REG_EXPAND_SZ, (const BYTE*)imagePath.c_str(), (DWORD)((imagePath.size() + 1) * sizeof(wchar_t)));
+			DWORD startVal = SERVICE_SYSTEM_START;
+			RegSetValueExW(hKey, L"Start", 0, REG_DWORD, (const BYTE*)&startVal, sizeof(startVal));
+			RegCloseKey(hKey);
+		} else {
+			LOG_CTRL_ETW(L"ConfigureBootStartService: RegOpenKeyExW failed for %s : %lu\n", regPath.c_str(), rc);
+		}
+
+		// Start service if not running
+		SC_HANDLE svc2 = OpenServiceW(scm, svcName, SERVICE_QUERY_STATUS | SERVICE_START);
+		if (svc2) {
+			SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0;
+			if (QueryServiceStatusEx(svc2, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+				if (ssp.dwCurrentState != SERVICE_RUNNING) {
+					StartServiceW(svc2, 0, NULL);
+				}
+			}
+			CloseServiceHandle(svc2);
+		}
+
+	} else {
+		// Desired disabled: if service exists and running, stop and set Start value to SERVICE_DEMAND_START (or 3?)
+		if (svc) {
+			SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0;
+			if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+				if (ssp.dwCurrentState == SERVICE_RUNNING) {
+					SERVICE_STATUS ss = { 0 };
+					ControlService(svc, SERVICE_CONTROL_STOP, &ss);
+				}
+			}
+
+			std::wstring regPath = std::wstring(L"SYSTEM\\CurrentControlSet\\Services\\") + std::wstring(svcName);
+			HKEY hKey = NULL; LONG rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, regPath.c_str(), 0, KEY_SET_VALUE, &hKey);
+			if (rc == ERROR_SUCCESS) {
+				DWORD startVal = SERVICE_DEMAND_START; // set to manual/demand
+				RegSetValueExW(hKey, L"Start", 0, REG_DWORD, (const BYTE*)&startVal, sizeof(startVal));
+				RegCloseKey(hKey);
+			} else {
+				LOG_CTRL_ETW(L"ConfigureBootStartService: RegOpenKeyExW failed for %s : %lu\n", regPath.c_str(), rc);
+			}
+		}
+	}
+
+	if (svc) CloseServiceHandle(svc);
+	CloseServiceHandle(scm);
+	return true;
 }
