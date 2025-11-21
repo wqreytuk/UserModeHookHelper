@@ -140,13 +140,39 @@ bool Filter::FLTCOMM_SetGlobalHookMode(bool enabled) {
 }
 
 bool Filter::FLTCOMM_ForceInject(DWORD pid) {
-	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD));
+	// For x64 process, I need to get ntdll.dll base
+	// for x86, I need to get Windows\SysWOW64\ntdll.dll base
+	bool is64 = false;
+	if (!Helper::IsProcess64(pid, is64)) {
+		LOG_CTRL_ETW(L"failed to determine PID=% architecture\n", pid);
+		return false;
+	}
+	PVOID base = 0;
+
+	if (!is64) {
+		if (!Helper::GetModuleBaseWithPath(pid, "SysWOW64\\ntdll.dll", &base) ){
+			LOG_CTRL_ETW(L"failed to call GetModuleBaseWithPath to get PID=% ntdll base, SysWOW64\\ntdll.dll\n", pid);
+			return false;
+		}
+	}
+	else {
+
+		if (!Helper::GetModuleBaseWithPath(pid, "System32\\ntdll.dll", &base) ){
+			LOG_CTRL_ETW(L"failed to call GetModuleBaseWithPath to get PID=% ntdll base, System32\\ntdll.dll\n", pid);
+			return false;
+		}
+	}
+
+
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD)+sizeof(PVOID));
 	if (!msg) return false;
-	memset(msg, 0, sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD));
+	memset(msg, 0, sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD) + sizeof(PVOID));
 	msg->m_Cmd = CMD_FORCE_INJECT;
-	memcpy(msg->m_Data, &pid, sizeof(DWORD));
+	memcpy(msg->m_Data, &pid, sizeof(DWORD)); 
+	memcpy(msg->m_Data + sizeof(DWORD), &base, sizeof(PVOID));
 	DWORD bytesOut = 0;
-	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD)), NULL, 0, &bytesOut);
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)(sizeof(UMHH_COMMAND_MESSAGE) + sizeof(DWORD) + sizeof(PVOID)),
+		NULL, 0, &bytesOut);
 	free(msg);
 	return hr == S_OK;
 }

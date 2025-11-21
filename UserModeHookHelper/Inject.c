@@ -600,17 +600,21 @@ PPENDING_INJECT Inject_GetPendingInj(PEPROCESS Process)
     return ret;
 }
 
-VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
+VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process,BOOLEAN Force)
 {
     if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
     ULONGLONG hash = ComputeNtPathHash(ImageName);
-	if (DriverCtx_GetGlobalHookMode()) {
-		// if global hook mode is enable, we'll hook all process except protected process
+	if (Force) {
+		// we're performing force injection
 		if (PsIsProtectedProcess(Process)) {
 			Log(L"Proteced process injection is not supported\n");
 			return;
 		}
 		PendingInject_Add_Internal(Process);
+	}
+	else if (DriverCtx_GetGlobalHookMode()) {
+		// this driver is not responsible for globa hook
+		return;
 	}
     else if (hash != 0 && HookList_ContainsHash(hash)) {
         PendingInject_Add_Internal(Process);

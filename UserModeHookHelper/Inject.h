@@ -110,7 +110,7 @@ Inject_ApcKernelRoutine(
 // Queue check: compute hash of supplied image name and add process to pending list
 // The Process parameter may be a referenced PEPROCESS (e.g. from PsLookupProcessByProcessId)
 // or PsGetCurrentProcess(); the pending list will take its own reference when storing.
-VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process);
+VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process, BOOLEAN Force);
 
 // (Pending list accessors removed ??? use Inject_CheckAndQueue and the
 // atomic pop behavior in Inject_OnImageLoad.)

@@ -320,7 +320,7 @@ NTSTATUS Inject_Perform(PPENDING_INJECT InjectionInfo)
 	Log(L"using thunk code: 0x%p\n", ApcRoutineAddress);
 	PWCHAR DllPath = (PWCHAR)((PUCHAR)SectionMemoryAddress + InjThunk[x64].Length);
 	WCHAR dllPath[MAX_PATH] = { 0 };
-	SL_ConcatWideString(DriverCtx_GetUserDir(), L"\\", dllPath, MAX_PATH);
+	SL_ConcatWideString(L"C:", L"\\", dllPath, MAX_PATH);
 	SL_ConcatWideString(dllPath, x64 ? X64_DLL : X86_DLL, dllPath, MAX_PATH);
 	// copy wide string including terminating NUL
 	RtlCopyMemory(DllPath, dllPath, (wcslen(dllPath) + 1) * sizeof(WCHAR));
@@ -604,10 +604,6 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
     if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
     ULONGLONG hash = ComputeNtPathHash(ImageName);
 	if (DriverCtx_GetGlobalHookMode()) {
-		// when global hook mode is enabled, injection will be taken care by UMHH.BootStart.sys
-		// there is no need for us to perform injection
-		return;
-		// if global hook mode is enable, we'll hook all process except protected process
 		if (PsIsProtectedProcess(Process)) {
 			Log(L"Proteced process injection is not supported\n");
 			return;

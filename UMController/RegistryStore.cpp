@@ -10,6 +10,7 @@
 static const wchar_t* VALUE_NAME = L"HookPaths";
 static const wchar_t* COMPOSITE_VALUE_NAME = L"NtProcCache"; // new composite key cache
 static const wchar_t* PROCHOOK_VALUE_NAME = L"ProcHookList"; // per-process hook list
+static const wchar_t* EARLYBREAK_VALUE_NAME = L"EarlyBreakList"; // per-process early-break marks (NT paths)
 
 bool RegistryStore::ReadHookPaths(std::vector<std::wstring>& outPaths) {
     outPaths.clear();
@@ -275,6 +276,72 @@ bool RegistryStore::WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD,
     LONG r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &disp);
     if (r != ERROR_SUCCESS) return false;
     LONG rr = RegSetValueExW(hKey, PROCHOOK_VALUE_NAME, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size()*sizeof(wchar_t)));
+    RegCloseKey(hKey);
+    return rr == ERROR_SUCCESS;
+}
+
+bool RegistryStore::ReadEarlyBreakMarks(std::vector<std::wstring>& outNtPaths) {
+    outNtPaths.clear();
+    HKEY hKey = NULL;
+    LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_READ, &hKey);
+    if (r != ERROR_SUCCESS) return true; // treat missing as empty
+    DWORD type = 0; DWORD dataSize = 0;
+    r = RegQueryValueExW(hKey, EARLYBREAK_VALUE_NAME, NULL, &type, NULL, &dataSize);
+    if (r != ERROR_SUCCESS) { RegCloseKey(hKey); if (r == ERROR_FILE_NOT_FOUND) return true; return false; }
+    if (type != REG_MULTI_SZ) { RegCloseKey(hKey); return false; }
+    if (dataSize == 0) { RegCloseKey(hKey); return true; }
+    std::vector<wchar_t> buf(dataSize/sizeof(wchar_t));
+    r = RegQueryValueExW(hKey, EARLYBREAK_VALUE_NAME, NULL, NULL, reinterpret_cast<LPBYTE>(buf.data()), &dataSize);
+    RegCloseKey(hKey);
+    if (r != ERROR_SUCCESS) return false;
+    size_t idx = 0, wcCount = dataSize/sizeof(wchar_t);
+    while (idx < wcCount) {
+        if (buf[idx] == L'\0') { ++idx; continue; }
+        std::wstring s(&buf[idx]);
+        outNtPaths.push_back(s);
+        idx += s.size() + 1;
+    }
+    return true;
+}
+
+bool RegistryStore::AddEarlyBreakMark(const std::wstring& ntPath) {
+    std::vector<std::wstring> marks;
+    if (!ReadEarlyBreakMarks(marks)) return false;
+    for (auto &m : marks) { if (_wcsicmp(m.c_str(), ntPath.c_str()) == 0) return true; }
+    marks.push_back(ntPath);
+    std::vector<wchar_t> buf;
+    for (auto &s : marks) { buf.insert(buf.end(), s.c_str(), s.c_str() + s.size()); buf.push_back(L'\0'); }
+    if (buf.empty() || buf.back() != L'\0') buf.push_back(L'\0');
+    HKEY hKey = NULL; DWORD disp=0;
+    LONG r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &disp);
+    if (r != ERROR_SUCCESS) return false;
+    LONG rr = RegSetValueExW(hKey, EARLYBREAK_VALUE_NAME, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size()*sizeof(wchar_t)));
+    RegCloseKey(hKey);
+    return rr == ERROR_SUCCESS;
+}
+
+bool RegistryStore::RemoveEarlyBreakMark(const std::wstring& ntPath) {
+    std::vector<std::wstring> marks;
+    if (!ReadEarlyBreakMarks(marks)) return false;
+    std::vector<std::wstring> out;
+    bool removed = false;
+    for (auto &m : marks) {
+        if (!removed && _wcsicmp(m.c_str(), ntPath.c_str()) == 0) { removed = true; continue; }
+        out.push_back(m);
+    }
+    if (!removed) return true;
+    if (out.empty()) {
+        HKEY hKey = NULL; LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_SET_VALUE, &hKey);
+        if (r == ERROR_SUCCESS) { RegDeleteValueW(hKey, EARLYBREAK_VALUE_NAME); RegCloseKey(hKey); }
+        return true;
+    }
+    std::vector<wchar_t> buf;
+    for (auto &s : out) { buf.insert(buf.end(), s.c_str(), s.c_str() + s.size()); buf.push_back(L'\0'); }
+    if (buf.empty() || buf.back() != L'\0') buf.push_back(L'\0');
+    HKEY hKey = NULL; DWORD disp=0;
+    LONG r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &disp);
+    if (r != ERROR_SUCCESS) return false;
+    LONG rr = RegSetValueExW(hKey, EARLYBREAK_VALUE_NAME, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size()*sizeof(wchar_t)));
     RegCloseKey(hKey);
     return rr == ERROR_SUCCESS;
 }

@@ -61,7 +61,7 @@ ProcessCrNotify(
 	if (imageName) {
 		// only queue injection when create process
 		if (process && Create) {
-			Inject_CheckAndQueue(imageName, process);
+			Inject_CheckAndQueue(imageName, process,FALSE);
 		}
 		ExFreePool(imageName);
 		imageName = NULL;

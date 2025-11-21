@@ -15,6 +15,9 @@
 #define ID_MENU_ADD_HOOK       40001
 #define ID_MENU_REMOVE_HOOK    40002
 #define ID_MENU_INJECT_DLL     40003
+// Early-break marking context menu
+#define ID_MENU_MARK_EARLY_BREAK 40008
+#define ID_MENU_UNMARK_EARLY_BREAK 40009
 // Context-menu remove (single selected process) — separate from Tools->Remove
 #define ID_MENU_REMOVE_HOOK_SINGLE 40005
 // Add from executable via Tools menu (distinct from context-menu add-by-process)

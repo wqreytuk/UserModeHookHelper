@@ -8,13 +8,13 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$RepoRoot = (Get-Location).Path,
     [Parameter(Mandatory=$false)]
-    [string]$RemoteBase = "\\$RemoteHost\c$\users\public\UserModeHookHelper",
+    [string]$RemoteBase = "\\$RemoteHost\c$\users\x\Desktop\Documents",
     [Parameter(Mandatory=$false)]
     [string]$LocalSysPath = "$RepoRoot\x64\Debug\UserModeHookHelper.sys",
     [Parameter(Mandatory=$false)]
     [string]$LocalBootSysPath = "$RepoRoot\x64\Debug\UMHH.BootStart.sys",
     [Parameter(Mandatory=$false)]
-    [string]$RemoteSysDestDir = "\\$RemoteHost\c$\users\public\UserModeHookHelper\x64\Debug"
+    [string]$RemoteSysDestDir = "\\$RemoteHost\c$\users\x\Desktop\Documents\x64\Debug"
 )
 
 # Disconnect any previous connection (ignore errors)

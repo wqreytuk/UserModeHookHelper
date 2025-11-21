@@ -14,6 +14,8 @@
 #define PF_IN_HOOK_LIST      0x00000001u  // process is currently in hook list
 #define PF_MASTER_DLL_LOADED 0x00000002u  // master/injection helper DLL already loaded
 #define PF_IS_64BIT          0x00000004u  // target process is 64-bit
+// Early-break mark: set when user marks this process for early break handling
+#define PF_EARLY_BREAK_MARKED 0x00000008u
 
 
     typedef unsigned long long PROC_ITEMDATA;

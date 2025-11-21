@@ -2,6 +2,7 @@
 #include "Helper.h"
 #include "ETW.h"
 #include "UMController.h"
+#include "RegistryStore.h"
 #include <atomic>
 #include <wchar.h>
 #include <memory>
@@ -16,8 +17,9 @@
 #include <chrono>
 #include "../Shared/LogMacros.h"
 #include  "../UserModeHookHelper/MacroDef.h"
-#include "../UserModeHookHelper/UKShared.h"
 #include <winsvc.h>
+#include "../UserModeHookHelper/UKShared.h"
+#include <psapi.h>
 #pragma comment(lib, "wbemuuid.lib")
 
 // Simple process-wide fatal handler. Stored as an atomic pointer so it can be
@@ -230,8 +232,10 @@ bool Helper::UMHH_BS_DriverCheck() {
 	if (!newSvc) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: CreateServiceW failed: %lu\n", GetLastError()); DeleteFileW(dstPath.c_str()); CloseServiceHandle(scm); return false; }
 
 	// Use ConfigureBootStartService to ensure registry/config is set for boot-start.
-	if (!ConfigureBootStartService(true)) {
-		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: ConfigureBootStartService failed to enable %s\n", svcName);
+	// Query persisted GlobalHookMode first; only enable boot-start if registry requests it.
+	bool ghEnabled = false; RegistryStore::ReadGlobalHookMode(ghEnabled);
+	if (!ConfigureBootStartService(ghEnabled)) {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: ConfigureBootStartService failed for %s (requested enabled=%d)\n", svcName, (int)ghEnabled);
 		// we continue, since service was created; but return false to indicate not fully configured
 		CloseServiceHandle(newSvc); CloseServiceHandle(scm);
 		return false;
@@ -540,6 +544,48 @@ bool Helper::ForceInject(DWORD pid) {
 	Fatal(L"can't perform force injection because Helper::m_filterInstance is NULL\n");
 	return false;
 }
+
+bool Helper::strcasestr_check(const char *haystack, const char *needle) {
+	if (!haystack || !needle) return false;
+	if (*needle == '\0') return true; /* empty needle -> match */
+
+	for (; *haystack != '\0'; ++haystack) {
+		const char *h = haystack;
+		const char *n = needle;
+		while (*n != '\0' &&
+			tolower((unsigned char)*h) == tolower((unsigned char)*n)) {
+			++h; ++n;
+		}
+		if (*n == '\0') return true; /* matched whole needle */
+		if (*h == '\0') return false; /* haystack ended */
+	}
+	return false;
+}
+bool Helper::GetModuleBaseWithPath(DWORD pid, char* mPath,PVOID* base) {
+	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+	if (!hProcess) {
+		LOG_CTRL_ETW(L"failed to open PID=%u with VM_READ access, error: 0x%x\n", pid, GetLastError());
+		return false;
+	}
+
+	HMODULE hMods[1024];
+	DWORD cbNeeded;
+	DWORD64 kbase = 0;
+	if (EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded)) {
+		for (DWORD i = 0; i < cbNeeded / sizeof(HMODULE); i++) {
+			char szModName[MAX_PATH];
+			GetModuleFileNameExA(hProcess, hMods[i], szModName, MAX_PATH);
+
+			if (strcasestr_check(szModName, mPath) == 1) {
+				*base = hMods[i];
+				break;
+			}
+		}
+	}
+	if (*base)
+		return true;
+	return false;
+}
 bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 	// First attempt: if a Filter instance is available, ask the kernel
 	// whether the target process is a WoW64 (32-bit) process. This is
@@ -692,8 +738,13 @@ std::wstring Helper::ToHex(ULONGLONG value) {
 		out.push_back(digits[v]);
 	}
 	return out;
+}
+
 // Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)
 bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
+	// disable for now, seems like I fucked up file system when using global injection
+	DesiredEnabled = FALSE;
+
 	const wchar_t* svcName =
 #if defined(BS_SERVICE_NAME)
 		BS_SERVICE_NAME;
@@ -791,6 +842,8 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 	return true;
 }
 
+
+
 bool Helper::CopyUmhhDllsToRoot() {
 	// Determine source paths located next to the running executable
 	std::wstring x64Name = X64_DLL; // L"umhh.dll.x64.dll"
@@ -805,9 +858,18 @@ bool Helper::CopyUmhhDllsToRoot() {
 		return false;
 	}
 
-	// Build destination paths on C:\
-	std::wstring dstX64 = L"C:\\" + x64Name;
-	std::wstring dstX86 = L"C:\\" + x86Name;
+	// --------------------------------------------------------------
+	// Get system drive dynamically (e.g., "C:\" or "D:\")
+	// --------------------------------------------------------------
+	WCHAR winDir[MAX_PATH] = { 0 };
+	GetWindowsDirectoryW(winDir, MAX_PATH);
+
+	std::wstring systemDrive = std::wstring(winDir, 2) + L"\\";   // "C:\" or "D:\" etc.
+	// --------------------------------------------------------------
+
+	// Build destination paths
+	std::wstring dstX64 = systemDrive + x64Name;
+	std::wstring dstX86 = systemDrive + x86Name;
 
 	bool ok = true;
 
@@ -815,12 +877,15 @@ bool Helper::CopyUmhhDllsToRoot() {
 		DWORD fa = GetFileAttributesW(srcX64.c_str());
 		if (fa != INVALID_FILE_ATTRIBUTES) {
 			if (!CopyFileW(srcX64.c_str(), dstX64.c_str(), FALSE)) {
-				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: failed to copy %s to %s : %lu\n", srcX64.c_str(), dstX64.c_str(), GetLastError());
+				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: failed to copy %s to %s : %lu\n",
+					srcX64.c_str(), dstX64.c_str(), GetLastError());
 				ok = false;
-			} else {
+			}
+			else {
 				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: copied %s to %s\n", srcX64.c_str(), dstX64.c_str());
 			}
-		} else {
+		}
+		else {
 			LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: source x64 DLL not found: %s\n", srcX64.c_str());
 			ok = false;
 		}
@@ -830,15 +895,19 @@ bool Helper::CopyUmhhDllsToRoot() {
 		DWORD fa = GetFileAttributesW(srcX86.c_str());
 		if (fa != INVALID_FILE_ATTRIBUTES) {
 			if (!CopyFileW(srcX86.c_str(), dstX86.c_str(), FALSE)) {
-				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: failed to copy %s to %s : %lu\n", srcX86.c_str(), dstX86.c_str(), GetLastError());
+				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: failed to copy %s to %s : %lu\n",
+					srcX86.c_str(), dstX86.c_str(), GetLastError());
 				ok = false;
-			} else {
+			}
+			else {
 				LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: copied %s to %s\n", srcX86.c_str(), dstX86.c_str());
 			}
-		} else {
+		}
+		else {
 			LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: source x86 DLL not found: %s\n", srcX86.c_str());
 			ok = false;
 		}
 	}
 
-	return ok;}
+	return ok;
+}

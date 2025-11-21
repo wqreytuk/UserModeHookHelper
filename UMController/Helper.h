@@ -43,6 +43,8 @@ public:
 	// Determine whether the target process is 64-bit. Returns true on success
 	// and sets outIs64. On failure returns false and leaves outIs64 unchanged.
 	static bool IsProcess64(DWORD pid, bool& outIs64);
+	static bool GetModuleBaseWithPath(DWORD pid, char* mPath, PVOID* base);
+	static bool strcasestr_check(const char *haystack, const char *needle);
 	// Set the Filter instance used by Helper for kernel queries. The caller
 	// should set this once during initialization (e.g., from the dialog).
 	static void SetFilterInstance(class Filter* f);

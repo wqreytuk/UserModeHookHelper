@@ -264,14 +264,19 @@ Comm_MessageNotify(
 static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
 	UNREFERENCED_PARAMETER(OutputBuffer);
 	UNREFERENCED_PARAMETER(OutputBufferSize);
-	UNREFERENCED_PARAMETER(ReturnOutputBufferLength);
 
-	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
+	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD)) + (ULONG)sizeof(PVOID)) {
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 		return STATUS_BUFFER_TOO_SMALL;
 	}
 	DWORD pid = 0;
 	RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+	PVOID nt_base = 0;
+	RtlCopyMemory(&nt_base, msg->m_Data + sizeof(DWORD), sizeof(PVOID));
+	if (!nt_base) {
+		Log(L"user passed ntpath is NULL\n");
+			return STATUS_UNSUCCESSFUL;
+	}
 	PEPROCESS process = NULL;
 	PUNICODE_STRING imageName = NULL;
 	NTSTATUS stLookup = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process);
@@ -293,7 +298,7 @@ static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferS
 	if (imageName) {
 		// only queue injection when create process
 		if (process) {
-			Inject_CheckAndQueue(imageName, process);
+			Inject_CheckAndQueue(imageName, process,TRUE);
 			
 		}
 		ExFreePool(imageName);
@@ -305,6 +310,17 @@ static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferS
 	}
 
 	PPENDING_INJECT injectionInfo = Inject_GetPendingInj(process);
+	if (!injectionInfo) {
+		Log(L"faild to get injection info with EPROCESS=0x%p from pending list", process);
+		ObDereferenceObject(process);
+		return STATUS_UNSUCCESSFUL;
+	}
+	injectionInfo->LdrLoadDllRoutineAddress = PE_GetExport(nt_base, LdrLoadDllRoutineName);
+	if (!injectionInfo->LdrLoadDllRoutineAddress) {
+		Log(L"can not get %s from ntbase=0x%p", LdrLoadDllRoutineName, nt_base);
+		ObDereferenceObject(process);
+		return STATUS_UNSUCCESSFUL;
+	}
 	if (injectionInfo) {
 		if (injectionInfo->IsInjected) {
 			Log(L"PID=%u already injected\n", pid);
@@ -323,7 +339,7 @@ static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferS
 				NULL))) {
 				Log(L"FATAL, failed to queue injection apc normal routine\n");
 				ObDereferenceObject(process);
-				return STATUS_SUCCESS;
+				return STATUS_UNSUCCESSFUL;
 			}
 
 			injectionInfo->IsInjected = TRUE;

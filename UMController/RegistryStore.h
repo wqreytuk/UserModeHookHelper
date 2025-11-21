@@ -42,4 +42,10 @@ namespace RegistryStore {
     // Convenience accessors
     bool ReadGlobalHookMode(bool& outEnabled);
     bool WriteGlobalHookMode(bool enabled);
+    // Persist per-process 'EarlyBreak' marks as NT-path strings (REG_MULTI_SZ).
+    // Each entry is the process image NT path (e.g. "\Device\HarddiskVolume3\Windows\System32\notepad.exe").
+    // This is drive-agnostic and stable across PID reuse for the same image.
+    bool ReadEarlyBreakMarks(std::vector<std::wstring>& outNtPaths);
+    bool AddEarlyBreakMark(const std::wstring& ntPath);
+    bool RemoveEarlyBreakMark(const std::wstring& ntPath);
 }

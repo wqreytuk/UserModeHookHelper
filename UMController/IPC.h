@@ -8,6 +8,9 @@
 #define DLL_IPC_SIGNAL_FILE_FMT L"\\??\\" USER_IPC_SIGNAL_FILE_FMT
 
 
+#define EARLY_BREAK_SIGNAL_FILE_FMT L"C:\\Users\\Public\\early.break.%p"
+
+
 // IPC API: write a null-terminated UTF-16 DLL path into the per-pid
 // named section and signal the corresponding per-pid named event.
 // Returns TRUE on success, FALSE on failure.

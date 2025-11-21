@@ -312,6 +312,8 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_MENU_ADD_EXE, &CUMControllerDlg::OnAddExecutableToHookList)
 	ON_COMMAND(ID_MENU_CLEAR_ETW, &CUMControllerDlg::OnClearEtwLog)
 	ON_COMMAND(ID_MENU_OPEN_ETW_LOG, &CUMControllerDlg::OnOpenEtwLog)
+	ON_COMMAND(ID_MENU_MARK_EARLY_BREAK, &CUMControllerDlg::OnMarkEarlyBreak)
+	ON_COMMAND(ID_MENU_UNMARK_EARLY_BREAK, &CUMControllerDlg::OnUnmarkEarlyBreak)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
 	// Hook dialog destruction message now supplied by DLL (numeric constant)
 	ON_MESSAGE(WM_APP + 0x701, &CUMControllerDlg::OnHookDlgDestroyed)
@@ -552,10 +554,11 @@ BOOL CUMControllerDlg::OnInitDialog()
 	// Column order swapped: 0 = Process Name, 1 = PID (tree-friendly for potential hierarchy later)
 	m_ProcListCtrl.InsertColumn(0, L"Process Name", LVCFMT_LEFT, 200);
 	m_ProcListCtrl.InsertColumn(1, L"PID", LVCFMT_LEFT, 100);
-	// Column 2: HookState (Yes/No/master/x86|x64), Column 3: NT Path, Column 4: Start Params
-	m_ProcListCtrl.InsertColumn(2, L"HookState", LVCFMT_LEFT, 120);
-	m_ProcListCtrl.InsertColumn(3, L"NT Path", LVCFMT_LEFT, 400);
-	m_ProcListCtrl.InsertColumn(4, L"Start Params", LVCFMT_LEFT, 300);
+	// Column 2: Early Break (icon/text), Column 3: HookState, Column 4: NT Path, Column 5: Start Params
+	m_ProcListCtrl.InsertColumn(2, L"Early Break", LVCFMT_CENTER, 80);
+	m_ProcListCtrl.InsertColumn(3, L"HookState", LVCFMT_LEFT, 120);
+	m_ProcListCtrl.InsertColumn(4, L"NT Path", LVCFMT_LEFT, 400);
+	m_ProcListCtrl.InsertColumn(5, L"Start Params", LVCFMT_LEFT, 300);
 	m_ProcListCtrl.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
 
 	// (About moved to Help menu; removed system menu insertion)
@@ -985,7 +988,7 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 				if (is64) flags |= PF_IS_64BIT;
 				PROC_ITEMDATA newPacked = MAKE_ITEMDATA(mpid, flags);
 				m_ProcListCtrl.SetItemData(item, (DWORD_PTR)newPacked);
-				m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(newPacked).c_str());
+				m_ProcListCtrl.SetItemText(item, 3, FormatHookColumn(newPacked).c_str());
 			}
 		}
 	}
@@ -1009,7 +1012,7 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 					if (is64) flags |= PF_IS_64BIT;
 					PROC_ITEMDATA newPacked = MAKE_ITEMDATA(e.pid, flags);
 					m_ProcListCtrl.SetItemData(item, (DWORD_PTR)newPacked);
-					m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(newPacked).c_str());
+					m_ProcListCtrl.SetItemText(item, 3, FormatHookColumn(newPacked).c_str());
 				}
 			}
 		}
@@ -1039,12 +1042,22 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 			if (all[idx].bInHookList) flags |= PF_IN_HOOK_LIST;
 			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
 			if (is64) flags |= PF_IS_64BIT;
+			// Apply persisted EarlyBreak mark if present (by NT path)
+			std::vector<std::wstring> _marks_local;
+			if (RegistryStore::ReadEarlyBreakMarks(_marks_local)) {
+				const std::wstring &nt = all[idx].path;
+				if (!nt.empty()) {
+					for (auto &m : _marks_local) { if (_wcsicmp(m.c_str(), nt.c_str()) == 0) { flags |= PF_EARLY_BREAK_MARKED; break; } }
+				}
+			}
 			PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
 			int nIndex = m_ProcListCtrl.InsertItem(i, all[idx].name.c_str());
 			m_ProcListCtrl.SetItemText(nIndex, 1, std::to_wstring(all[idx].pid).c_str());
-			m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(packed).c_str());
-			m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
-			m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
+			// Early Break marker column
+			m_ProcListCtrl.SetItemText(nIndex, 2, (flags & PF_EARLY_BREAK_MARKED) ? L"★" : L"");
+			m_ProcListCtrl.SetItemText(nIndex, 3, FormatHookColumn(packed).c_str());
+			m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].path.c_str());
+			m_ProcListCtrl.SetItemText(nIndex, 5, all[idx].cmdline.c_str());
 			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)packed);
 			i++;
 		}
@@ -1161,9 +1174,10 @@ void CUMControllerDlg::LoadProcessList() {
 			flags |= PF_IN_HOOK_LIST;
 		}
 		PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
-		m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(packed).c_str());
-		m_ProcListCtrl.SetItemText(nIndex, 3, all[idx].path.c_str());
-		m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].cmdline.c_str());
+		m_ProcListCtrl.SetItemText(nIndex, 2, (FLAGS_FROM_ITEMDATA(packed) & PF_EARLY_BREAK_MARKED) ? L"★" : L"");
+		m_ProcListCtrl.SetItemText(nIndex, 3, FormatHookColumn(packed).c_str());
+		m_ProcListCtrl.SetItemText(nIndex, 4, all[idx].path.c_str());
+		m_ProcListCtrl.SetItemText(nIndex, 5, all[idx].cmdline.c_str());
 		m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)packed);
 		// ProcessManager already maintains the index mapping
 		i++;
@@ -1239,9 +1253,10 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			const wchar_t* nameOrResolving = entry.name.empty() ? L"(resolving)" : entry.name.c_str();
 			int nIndex = m_ProcListCtrl.InsertItem(newIdx, nameOrResolving);
 			m_ProcListCtrl.SetItemText(nIndex, 1, pidStr);
-			m_ProcListCtrl.SetItemText(nIndex, 2, FormatHookColumn(MAKE_ITEMDATA(pid, 0)).c_str());
-			m_ProcListCtrl.SetItemText(nIndex, 3, L"");
+			m_ProcListCtrl.SetItemText(nIndex, 2, L"");
+			m_ProcListCtrl.SetItemText(nIndex, 3, FormatHookColumn(MAKE_ITEMDATA(pid, 0)).c_str());
 			m_ProcListCtrl.SetItemText(nIndex, 4, L"");
+			m_ProcListCtrl.SetItemText(nIndex, 5, L"");
 			// Use cached state (may be default until resolver runs)
 			bool is64 = entry.is64;
 			bool dllLoaded = entry.masterDllLoaded;
@@ -1249,6 +1264,13 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			if (entry.bInHookList) flags |= PF_IN_HOOK_LIST;
 			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
 			if (is64) flags |= PF_IS_64BIT;
+			// Apply persisted EarlyBreak mark for this PID if present (by NT path)
+			std::vector<std::wstring> _marks_local2;
+			if (RegistryStore::ReadEarlyBreakMarks(_marks_local2)) {
+				if (!entry.path.empty()) {
+					for (auto &m : _marks_local2) { if (_wcsicmp(m.c_str(), entry.path.c_str()) == 0) { flags |= PF_EARLY_BREAK_MARKED; break; } }
+				}
+			}
 			m_ProcListCtrl.SetItemData(nIndex, (DWORD_PTR)MAKE_ITEMDATA(pid, flags));
 		}
 
@@ -1292,9 +1314,18 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			// Insert new item for this PID (column 0 = name, column 1 = PID)
 			int newItem = m_ProcListCtrl.InsertItem(idx, e.name.c_str());
 			m_ProcListCtrl.SetItemText(newItem, 1, std::to_wstring(pid).c_str());
-			m_ProcListCtrl.SetItemText(newItem, 2, FormatHookColumn(MAKE_ITEMDATA(pid, (e.bInHookList ? PF_IN_HOOK_LIST : 0))).c_str());
-			m_ProcListCtrl.SetItemText(newItem, 3, e.path.c_str());
-			m_ProcListCtrl.SetItemText(newItem, 4, e.cmdline.c_str());
+			// Determine Early Break marker for display (based on persisted NT path)
+			bool earlyMarkedNow = false;
+			std::vector<std::wstring> _marks_local_newitem;
+			if (RegistryStore::ReadEarlyBreakMarks(_marks_local_newitem)) {
+				if (!e.path.empty()) {
+					for (auto &m : _marks_local_newitem) { if (_wcsicmp(m.c_str(), e.path.c_str()) == 0) { earlyMarkedNow = true; break; } }
+				}
+			}
+			m_ProcListCtrl.SetItemText(newItem, 2, earlyMarkedNow ? L"★" : L"");
+			m_ProcListCtrl.SetItemText(newItem, 3, FormatHookColumn(MAKE_ITEMDATA(pid, (e.bInHookList ? PF_IN_HOOK_LIST : 0))).c_str());
+			m_ProcListCtrl.SetItemText(newItem, 4, e.path.c_str());
+			m_ProcListCtrl.SetItemText(newItem, 5, e.cmdline.c_str());
 			bool is64 = false; Helper::IsProcess64(pid, is64);
 			bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
 			DWORD flags = 0;
@@ -1318,9 +1349,10 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			if (is64Now) flags |= PF_IS_64BIT;
 		}
 		PROC_ITEMDATA mergedPacked = MAKE_ITEMDATA(pid, flags);
-		m_ProcListCtrl.SetItemText(item, 2, FormatHookColumn(mergedPacked).c_str());
-		m_ProcListCtrl.SetItemText(item, 3, path.c_str());
-		m_ProcListCtrl.SetItemText(item, 4, cmdline.c_str());
+		m_ProcListCtrl.SetItemText(item, 2, (FLAGS_FROM_ITEMDATA(mergedPacked) & PF_EARLY_BREAK_MARKED) ? L"★" : L"");
+		m_ProcListCtrl.SetItemText(item, 3, FormatHookColumn(mergedPacked).c_str());
+		m_ProcListCtrl.SetItemText(item, 4, path.c_str());
+		m_ProcListCtrl.SetItemText(item, 5, cmdline.c_str());
 		m_ProcListCtrl.SetItemData(item, (DWORD_PTR)mergedPacked);
 		// No progress updates in enumeration-only mode.
 		return 0;
@@ -1375,9 +1407,10 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			}
 			if (item != -1) {
 				m_ProcListCtrl.SetItemText(item, 0, L"(resolving)");
-				m_ProcListCtrl.SetItemText(item, 2, L"No");
-				m_ProcListCtrl.SetItemText(item, 3, L"");
-				m_ProcListCtrl.SetItemText(item, 4, L"");
+					m_ProcListCtrl.SetItemText(item, 2, L"");
+					m_ProcListCtrl.SetItemText(item, 3, L"No");
+					m_ProcListCtrl.SetItemText(item, 4, L"");
+					m_ProcListCtrl.SetItemText(item, 5, L"");
 			}
 
 			// Start resolver for this PID using ProcessResolver helper
@@ -1480,6 +1513,10 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	// Use single-item remove ID for context menu so Tools->Remove remains the batch dialog
 	menu.AppendMenu(MF_STRING, ID_MENU_REMOVE_HOOK_SINGLE, L"Remove from Hook List");
 	menu.AppendMenu(MF_STRING, ID_MENU_INJECT_DLL, L"Inject DLL");
+	// Early-break marking
+	menu.AppendMenu(MF_SEPARATOR, 0, L"");
+	menu.AppendMenu(MF_STRING, ID_MENU_MARK_EARLY_BREAK, L"Mark Early Break");
+	menu.AppendMenu(MF_STRING, ID_MENU_UNMARK_EARLY_BREAK, L"Unmark Early Break");
 
 	// grey out certai menu based on bInHookList
 	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
@@ -1490,6 +1527,25 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	// Only allow injecting the master DLL when the master DLL is already
 	// present inside the target process (PF_MASTER_DLL_LOADED).
 	menu.EnableMenuItem(ID_MENU_INJECT_DLL, dllLoaded ? MF_ENABLED : MF_GRAYED);
+
+	// Early-break menu state: determine if this process is marked (by NT path)
+	DWORD flags64 = flags; // keep existing flags usage
+	bool marked = false;
+	std::vector<std::wstring> marks;
+	if (RegistryStore::ReadEarlyBreakMarks(marks)) {
+		std::wstring ntpath = item.path;
+		if (ntpath.empty()) {
+			ProcKey key{ pid, item.startTime };
+			auto it = m_SessionNtPathCache.find(key);
+			if (it != m_SessionNtPathCache.end()) ntpath = it->second;
+		}
+		if (!ntpath.empty()) {
+			for (auto &m : marks) { if (_wcsicmp(m.c_str(), ntpath.c_str()) == 0) { marked = true; break; } }
+		}
+	}
+	// Only one of these should be enabled at a time
+	menu.EnableMenuItem(ID_MENU_MARK_EARLY_BREAK, marked ? MF_GRAYED : MF_ENABLED);
+	menu.EnableMenuItem(ID_MENU_UNMARK_EARLY_BREAK, marked ? MF_ENABLED : MF_GRAYED);
 
 
 	CPoint point;
@@ -1524,7 +1580,7 @@ void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
 			packed = MAKE_ITEMDATA(pid, flags);
 			// Update UI cached state
 			m_ProcListCtrl.SetItemData(nItem, (DWORD_PTR)packed);
-			m_ProcListCtrl.SetItemText(nItem, 2, FormatHookColumn(packed).c_str());
+			m_ProcListCtrl.SetItemText(nItem, 3, FormatHookColumn(packed).c_str());
 			dllLoaded = true;
 		}
 	}
@@ -1552,6 +1608,74 @@ void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)
 		MessageBox(L"Failed to show hook dialog via HookUI DLL.", L"Hook", MB_ICONERROR);
 	}
 	if (pResult) *pResult = 0;
+}
+
+void CUMControllerDlg::OnMarkEarlyBreak()
+{
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) return;
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+	ProcessEntry e; int idx = -1;
+	if (!PM_GetEntryCopyByPid(pid, e, &idx)) return;
+	// If global hook mode is disabled, show a reminder and don't mark
+	bool gh = false; RegistryStore::ReadGlobalHookMode(gh);
+	if (!gh) {
+		MessageBox(L"Global Hook Mode is disabled. Please enable it before marking Early Break.", L"Enable Global Hook Mode", MB_ICONWARNING | MB_OK);
+		return;
+	}
+	// Ensure we have an NT path to persist
+	std::wstring ntpath = e.path;
+	if (ntpath.empty()) {
+		HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+		if (h) { Helper::GetFullImageNtPathFromHandle(h, ntpath); CloseHandle(h); }
+	}
+	if (ntpath.empty()) {
+		MessageBox(L"Unable to resolve process image path; cannot mark Early Break.", L"Error", MB_ICONERROR | MB_OK);
+		return;
+	}
+	if (!RegistryStore::AddEarlyBreakMark(ntpath)) {
+		LOG_CTRL_ETW(L"Failed to persist EarlyBreak mark for pid=%u\n", pid);
+		MessageBox(L"Failed to persist Early Break mark. Check permissions.", L"Error", MB_ICONERROR | MB_OK);
+		return;
+	}
+	// Update UI flags
+	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
+	flags |= PF_EARLY_BREAK_MARKED;
+	packed = MAKE_ITEMDATA(pid, flags);
+	m_ProcListCtrl.SetItemData(nItem, (DWORD_PTR)packed);
+	m_ProcListCtrl.SetItemText(nItem, 2, L"★");
+	m_ProcListCtrl.SetItemText(nItem, 3, FormatHookColumn(packed).c_str());
+}
+
+void CUMControllerDlg::OnUnmarkEarlyBreak()
+{
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) return;
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+	ProcessEntry e; int idx = -1;
+	if (!PM_GetEntryCopyByPid(pid, e, &idx)) return;
+	std::wstring ntpath = e.path;
+	if (ntpath.empty()) {
+		HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+		if (h) { Helper::GetFullImageNtPathFromHandle(h, ntpath); CloseHandle(h); }
+	}
+	if (ntpath.empty()) {
+		MessageBox(L"Unable to resolve process image path; cannot unmark Early Break.", L"Error", MB_ICONERROR | MB_OK);
+		return;
+	}
+	if (!RegistryStore::RemoveEarlyBreakMark(ntpath)) {
+		LOG_CTRL_ETW(L"Failed to remove EarlyBreak mark for pid=%u\n", pid);
+		MessageBox(L"Failed to remove Early Break mark. Check permissions.", L"Error", MB_ICONERROR | MB_OK);
+		return;
+	}
+	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
+	flags &= ~PF_EARLY_BREAK_MARKED;
+	packed = MAKE_ITEMDATA(pid, flags);
+	m_ProcListCtrl.SetItemData(nItem, (DWORD_PTR)packed);
+	m_ProcListCtrl.SetItemText(nItem, 2, L"");
+	m_ProcListCtrl.SetItemText(nItem, 3, FormatHookColumn(packed).c_str());
 }
 
 LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {

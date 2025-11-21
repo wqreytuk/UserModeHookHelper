@@ -18,6 +18,17 @@
 
 
 
+
+
+typedef NTSTATUS(NTAPI *PFN_NtQueryInformationProcess)(
+	HANDLE,
+	PROCESSINFOCLASS,
+	PVOID,
+	ULONG,
+	PULONG
+	);
+BOOLEAN GetNtPathOfCurrentProcess(HANDLE NtdllHandle, wchar_t* ntPath, size_t* outLen);
+BOOLEAN CheckEarlyBreak(UCHAR* ntPath, size_t len);
 //
 // Include support for ETW logging.
 // Note that following functions are mocked, because they're
@@ -313,11 +324,18 @@ VOID EtwLog(_In_ PCWSTR Format, ...)
 	// Prepend stable prefix unless caller already provided one.
 	if (Buffer[0] == L'[') {
 		EventWriteString(ProviderHandle, 0, 0, Buffer);
-	} else {
+	}
+	else {
 		WCHAR Prefixed[1100];
 		_snwprintf(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[MasterDLL]  %s", Buffer);
 		Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
-		EventWriteString(ProviderHandle, 0, 0, Prefixed);
+		if (ProviderHandle)
+			EventWriteString(ProviderHandle, 0, 0, Prefixed);
+		else {
+			UNICODE_STRING u;
+			RtlInitUnicodeString(&u, Prefixed);
+			DbgPrint("%s\n", u);
+		}
 	}
 }
 // mainn
@@ -562,7 +580,6 @@ OnProcessAttach(
 	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&_snwprintf);
 
 
-
 	RtlInitAnsiString(&RoutineName, (PSTR)"_vsnwprintf");
 	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&_vsnwprintf);
 
@@ -571,6 +588,17 @@ OnProcessAttach(
 		NULL,
 		NULL,
 		&ProviderHandle);
+
+
+	wchar_t ntPath[MAX_PATH * 4] = { 0 };
+	size_t len = 0;
+	GetNtPathOfCurrentProcess(NtdllHandle, ntPath, &len);
+	// get hash and check
+	if (CheckEarlyBreak((UCHAR*)ntPath, len * sizeof(wchar_t))) {
+		EtwLog(L"current process is marked as early break, now breaking into debugger\n");
+		DbgBreakPoint();
+	}
+
 	// mycode();
 	RtlCreateUserThread(NtCurrentProcess(),
 		NULL,
@@ -661,6 +689,84 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 
 		break;
 	}
+
+	return TRUE;
+}
+
+
+BOOLEAN CheckEarlyBreak(UCHAR* ntPath, size_t len) {
+	const DWORD64 FNV_prime = 1099511628211ULL;
+	DWORD64 hash = 14695981039346656037ULL;
+
+	// Process exact number of bytes provided by the caller. This ensures
+	// UTF-16LE buffers (which may contain embedded zero bytes) are hashed
+	// correctly.
+	const UCHAR* p = ntPath;
+	const UCHAR* end = ntPath + len;
+	while (p < end) {
+		hash ^= (DWORD64)(*p);
+		hash *= FNV_prime;
+		++p;
+	}
+	// then we check if a file with this hash as name exist
+	WCHAR pathBuf[MAX_PATH] = { 0 };
+
+	_snwprintf(pathBuf, RTL_NUMBER_OF(pathBuf), EARLY_BREAK_SIGNAL_FILE_FMT, hash);
+	if (!FileExistsViaNtOpenFile(pathBuf)) {
+		return FALSE;
+	}
+	UNICODE_STRING uPath;
+	OBJECT_ATTRIBUTES oa;
+	RtlInitUnicodeString(&uPath, pathBuf);
+	InitializeObjectAttributes(&oa, &uPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+	NTSTATUS status = pNtDeleteFile(&oa);
+	if (NT_SUCCESS(status))
+		return TRUE;
+	return FALSE;
+}
+
+BOOLEAN GetNtPathOfCurrentProcess(HANDLE NtdllHandle, wchar_t* ntPath, size_t* outLen)
+{
+	PFN_NtQueryInformationProcess NtQueryInformationProcess = nullptr;
+
+	// Resolve NtQueryInformationProcess
+	ANSI_STRING aName; 
+	RtlInitAnsiString(&aName, "NtQueryInformationProcess");
+
+
+	if (LdrGetProcedureAddress(NtdllHandle, &aName, 0,
+		(PVOID*)&NtQueryInformationProcess) < 0)
+	{
+		EtwLog(L"can not get function %Z address\n", aName);
+		RtlFreeAnsiString(&aName);
+		return FALSE;
+	} 
+
+	ULONG returnLength = 0;
+
+	PBYTE buff[MAX_PATH * 4] = { 0 };
+	NTSTATUS status = NtQueryInformationProcess(
+		NtCurrentProcessId(),
+		ProcessImageFileName,
+		buff,
+		MAX_PATH * 4,
+		&returnLength
+	);
+
+	if (status < 0) {
+		EtwLog(L"failed to call NtQueryInformationProcess\n");
+		return FALSE;
+	}
+
+	// This structure:
+	// typedef struct _UNICODE_STRING { USHORT Length; USHORT MaximumLength; PWSTR Buffer; }
+	UNICODE_STRING* us = (UNICODE_STRING*)buff;
+	for (size_t i = 0; i < us->Length; i++)
+	{
+		ntPath[i] = us->Buffer[i];
+	}
+	*outLen = us->Length;
 
 	return TRUE;
 }

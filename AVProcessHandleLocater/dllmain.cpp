@@ -162,7 +162,7 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 		}
 		if (!dllLoaded) {
 			Log(L"TargetPID=%u arch=%s master dll not loaded, trying force injection\n",targetPid, is64 ? L"x64" : L"x86");
-			continue;
+			// continue;
 			// my driver is not an early launch driver, so he can not possibly hook all processes
 			// some process such as lsass.exe is already started before my driver
 			if (!services->ForceInject(targetPid)) {
