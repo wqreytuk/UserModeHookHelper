@@ -139,16 +139,14 @@ void CUMControllerDlg::OnToggleGlobalHookMode() {
 		}
 	}
 
-	// If enabled, start a background scanner to check master DLL presence for all processes
-	if (m_globalHookMode) {
-		std::thread([this]() {
-			// Snapshot current PIDs
-			auto all = PM_GetAll();
-			std::vector<DWORD> pids;
-			for (auto &e : all) pids.push_back(e.pid);
-			// Start resolver for all known pids; ProcessResolver will mark master DLL state for entries
-			ProcessResolver::StartLoaderResolver(this, pids, &m_Filter);
-		}).detach();
+	// Start a background scanner that checks master DLL presence for all processes.
+	// This scanner uses the x64 master DLL basename unconditionally and runs
+	// regardless of Global Hook Mode; it helps ensure UI flags stay updated.
+	{
+		auto all = PM_GetAll();
+		std::vector<DWORD> pids;
+		for (auto &e : all) pids.push_back(e.pid);
+		ProcessResolver::StartMasterDllScanner(this, pids);
 	}
 	else {
 		// GlobalHookMode was just disabled — refresh hook/module state using
@@ -985,7 +983,9 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 			}
 			if (item != -1) {
 				bool is64 = false; Helper::IsProcess64(mpid, is64);
-				bool dllLoaded = false; Helper::IsModuleLoaded(mpid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+				bool dllLoaded = false;
+				const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+				Helper::IsModuleLoaded(mpid, dllName, dllLoaded);
 				DWORD flags = PF_IN_HOOK_LIST;
 				if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
 				if (is64) flags |= PF_IS_64BIT;
@@ -1009,7 +1009,9 @@ void CUMControllerDlg::OnAddExecutableToHookList() {
 				}
 				if (item != -1) {
 					bool is64 = false; Helper::IsProcess64(e.pid, is64);
-					bool dllLoaded = false; Helper::IsModuleLoaded(e.pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+					bool dllLoaded = false;
+					const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+					Helper::IsModuleLoaded(e.pid, dllName, dllLoaded);
 					DWORD flags = PF_IN_HOOK_LIST;
 					if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
 					if (is64) flags |= PF_IS_64BIT;
@@ -1330,7 +1332,9 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			m_ProcListCtrl.SetItemText(newItem, 4, e.path.c_str());
 			m_ProcListCtrl.SetItemText(newItem, 5, e.cmdline.c_str());
 			bool is64 = false; Helper::IsProcess64(pid, is64);
-			bool dllLoaded = false; Helper::IsModuleLoaded(pid, is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME, dllLoaded);
+			bool dllLoaded = false;
+			const wchar_t* dllName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+			Helper::IsModuleLoaded(pid, dllName, dllLoaded);
 			DWORD flags = 0;
 			if (e.bInHookList) flags |= PF_IN_HOOK_LIST;
 			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;

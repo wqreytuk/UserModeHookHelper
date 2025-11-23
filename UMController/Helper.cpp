@@ -20,6 +20,7 @@
 #include <winsvc.h>
 #include "../UserModeHookHelper/UKShared.h"
 #include <psapi.h>
+#include "../Shared/SharedMacroDef.h"
 #pragma comment(lib, "wbemuuid.lib")
 
 // Simple process-wide fatal handler. Stored as an atomic pointer so it can be
@@ -706,6 +707,25 @@ bool Helper::CreateLowPrivReqFile(wchar_t* filePath,PHANDLE outFileHandle) {
 	return true;
 }
 bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) {
+	// if this call is to check master module, we'll use event way
+	if (wcsstr(baseName, DLL_PREFIX)) {
+		wchar_t event_name[100] = { 0 };
+		swprintf_s(event_name, MASTER_LOAD_EVENT L"%d", pid);
+		HANDLE h = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"MyTestEvent");
+		if (!h)
+			return false;
+		DWORD err = GetLastError();
+		if (err == ERROR_FILE_NOT_FOUND) {
+			return false;
+		}
+		else {
+			LOG_CTRL_ETW(L"OpenEvent failed, error = %lu\n", err);
+			Fatal(L"OpenEvent failed\n");
+		}
+		return true;
+	}
+
+
 	if (!baseName || !*baseName) return false;
 	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
 	if (snap == INVALID_HANDLE_VALUE) {

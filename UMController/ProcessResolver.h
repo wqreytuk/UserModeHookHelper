@@ -17,4 +17,9 @@ namespace ProcessResolver {
     // a target process. This polls for up to 10s to detect whether the
     // master DLL has been loaded and then updates ProcessManager/UI.
     void StartCreateChecker(HWND hwnd, DWORD pid);
+
+    // Start a scanner that checks master DLL presence using the x64 master
+    // DLL basename unconditionally. This is used only by a background
+    // scanner when Global Hook Mode is enabled.
+    void StartMasterDllScanner(CUMControllerDlg* dlg, const std::vector<DWORD>& pids);
 }

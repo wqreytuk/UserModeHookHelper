@@ -9,6 +9,7 @@
 #include <ntdll.h>
 #include "../UMController/IPC.h"
 #include "../UMController/ETW.h"
+#include "../Shared/SharedMacroDef.h"
 
 #define PAGE_SIZE 0x1000 
 
@@ -584,12 +585,40 @@ OnProcessAttach(
 	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&_vsnwprintf);
 
 
+	// we should create an event to signal that we have master dll loaded
+	
+
+	WCHAR event_name[1100];
+	_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, MASTER_LOAD_EVENT L"%d", NtCurrentProcessId());
+	
+	UNICODE_STRING name;
+	RtlInitUnicodeString(&name, event_name);
+
+	OBJECT_ATTRIBUTES oa;
+	InitializeObjectAttributes(
+		&oa,
+		&name,
+		OBJ_CASE_INSENSITIVE,
+		NULL,
+		NULL
+	);
+
+	HANDLE hEvent = NULL;
+
+	NTSTATUS status = NtCreateEvent(
+		&hEvent,
+		EVENT_ALL_ACCESS,
+		&oa,
+		NotificationEvent,   // or SynchronizationEvent
+		FALSE                // Initial state
+	);
+
 	EventRegister(&ProviderGUID,
 		NULL,
 		NULL,
 		&ProviderHandle);
 
-
+	// early break check code
 	// wchar_t ntPath[MAX_PATH * 4] = { 0 };
 	// size_t len = 0;
 	// GetNtPathOfCurrentProcess(NtdllHandle, ntPath, &len);

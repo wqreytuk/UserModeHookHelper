@@ -40,7 +40,7 @@ typedef struct _UMHH_COMMAND_MESSAGE {
 }UMHH_COMMAND_MESSAGE, *PUMHH_COMMAND_MESSAGE;
 
 #define UMHH_MSG_HEADER_SIZE FIELD_OFFSET(UMHH_COMMAND_MESSAGE, m_Data)
-
+#define DLL_PREFIX L"umhh.dll"
 #define X64_DLL L"umhh.dll.x64.dll"
 #define X86_DLL L"umhh.dll.Win32.dll"
 // Trampoline DLLs follow identical naming convention; used when requesting

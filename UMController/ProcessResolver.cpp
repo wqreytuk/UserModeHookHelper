@@ -118,3 +118,26 @@ void ProcessResolver::StartCreateChecker(HWND hwnd, DWORD pid) {
 		return;
 	}).detach();
 }
+
+void ProcessResolver::StartMasterDllScanner(CUMControllerDlg* dlg, const std::vector<DWORD>& pids) {
+	std::vector<DWORD> scanPids = pids;
+	std::thread([dlg, scanPids]() {
+		for (DWORD pid : scanPids) {
+			// Resolve NT path and hook state as usual
+			std::wstring ntPath;
+			bool havePath = Helper::ResolveProcessNtImagePath(pid, *dlg->GetFilterInstance(), ntPath);
+			bool inHook = false;
+			if (dlg && dlg->IsGlobalHookModeEnabled()) inHook = true; else inHook = false;
+			std::wstring cmdline;
+			Helper::GetProcessCommandLineByPID(pid, cmdline);
+			bool is64 = false;
+			bool dllLoaded = false;
+			// This scanner unconditionally uses the x64 master DLL basename
+			const wchar_t* dllName = MASTER_X64_DLL_BASENAME;
+			Helper::IsModuleLoaded(pid, dllName, dllLoaded);
+			PM_UpdateEntryModuleState(pid, is64, dllLoaded);
+			PM_UpdateEntryFields(pid, ntPath, inHook, cmdline);
+			::PostMessage(dlg->GetSafeHwnd(), WM_APP_UPDATE_PROCESS, (WPARAM)pid, (LPARAM)UPDATE_SOURCE_LOAD);
+		}
+	}).detach();
+}
