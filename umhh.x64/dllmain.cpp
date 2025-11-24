@@ -485,7 +485,7 @@ int ReadFileParsePidAndDllPath(WCHAR* patbuf, char* dllPath) {
 
 	// DesiredAccess: FILE_READ_ATTRIBUTES is enough to check existence.
 	// OpenOptions: FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
-	NTSTATUS status = pNtOpenFile(&hFile,
+	NTSTATUS status = NtOpenFile(&hFile,
 		FILE_READ_ATTRIBUTES | SYNCHRONIZE | FILE_ALL_ACCESS,
 		&objAttr,
 		&iosb,
@@ -543,7 +543,7 @@ BOOL FileExistsViaNtOpenFile(const wchar_t *ntPath)
 
 	// DesiredAccess: FILE_READ_ATTRIBUTES is enough to check existence.
 	// OpenOptions: FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
-	NTSTATUS status = pNtOpenFile(&hFile,
+	NTSTATUS status = NtOpenFile(&hFile,
 		FILE_READ_ATTRIBUTES | SYNCHRONIZE,
 		&objAttr,
 		&iosb,
@@ -553,7 +553,7 @@ BOOL FileExistsViaNtOpenFile(const wchar_t *ntPath)
 
 	if (NT_SUCCESS(status)) {
 		// file open succeeded => exists
-		pNtClose(hFile);
+		NtClose(hFile);
 		return TRUE;
 	}
 	// if you want to check specific reasons:
@@ -589,7 +589,7 @@ OnProcessAttach(
 	
 
 	WCHAR event_name[1100];
-	_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, MASTER_LOAD_EVENT L"%d", NtCurrentProcessId());
+	_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_NT_MASTER_LOAD_EVENT L"%d", NtCurrentProcessId());
 	
 	UNICODE_STRING name;
 	RtlInitUnicodeString(&name, event_name);
@@ -613,20 +613,23 @@ OnProcessAttach(
 		FALSE                // Initial state
 	);
 
+	if (status != 0) {
+		EtwLog(L"failed to call NtCreateEvent, status=0x%x\n", status);
+	}
 	EventRegister(&ProviderGUID,
 		NULL,
 		NULL,
 		&ProviderHandle);
-
+	
 	// early break check code
-	// wchar_t ntPath[MAX_PATH * 4] = { 0 };
-	// size_t len = 0;
-	// GetNtPathOfCurrentProcess(NtdllHandle, ntPath, &len);
-	// // get hash and check
-	// if (CheckEarlyBreak((UCHAR*)ntPath, len * sizeof(wchar_t))) {
-	// 	EtwLog(L"current process is marked as early break, now breaking into debugger\n");
-	// 	DbgBreakPoint();
-	// }
+	 wchar_t ntPath[MAX_PATH * 4] = { 0 };
+	 size_t len = 0;
+	 GetNtPathOfCurrentProcess(NtdllHandle, ntPath, &len);
+	 // get hash and check
+	 if (CheckEarlyBreak((UCHAR*)ntPath, len)) {
+	 	EtwLog(L"current process is marked as early break, now breaking into debugger\n");
+	 	DbgBreakPoint();
+	 }
 
 	// mycode();
 	RtlCreateUserThread(NtCurrentProcess(),
@@ -744,15 +747,8 @@ BOOLEAN CheckEarlyBreak(UCHAR* ntPath, size_t len) {
 	if (!FileExistsViaNtOpenFile(pathBuf)) {
 		return FALSE;
 	}
-	UNICODE_STRING uPath;
-	OBJECT_ATTRIBUTES oa;
-	RtlInitUnicodeString(&uPath, pathBuf);
-	InitializeObjectAttributes(&oa, &uPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
-
-	NTSTATUS status = pNtDeleteFile(&oa);
-	if (NT_SUCCESS(status))
-		return TRUE;
-	return FALSE;
+	
+	return TRUE;
 }
 
 BOOLEAN GetNtPathOfCurrentProcess(HANDLE NtdllHandle, wchar_t* ntPath, size_t* outLen)
@@ -776,7 +772,7 @@ BOOLEAN GetNtPathOfCurrentProcess(HANDLE NtdllHandle, wchar_t* ntPath, size_t* o
 
 	PBYTE buff[MAX_PATH * 4] = { 0 };
 	NTSTATUS status = NtQueryInformationProcess(
-		NtCurrentProcessId(),
+		HANDLE(-1),
 		ProcessImageFileName,
 		buff,
 		MAX_PATH * 4,
@@ -784,7 +780,7 @@ BOOLEAN GetNtPathOfCurrentProcess(HANDLE NtdllHandle, wchar_t* ntPath, size_t* o
 	);
 
 	if (status < 0) {
-		EtwLog(L"failed to call NtQueryInformationProcess\n");
+		EtwLog(L"failed to call NtQueryInformationProcess, status=0x%x\n", status);
 		return FALSE;
 	}
 

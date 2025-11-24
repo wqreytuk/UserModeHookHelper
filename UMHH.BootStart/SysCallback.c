@@ -1,6 +1,14 @@
+#include <ntifs.h>
+#include "mini.h"
 #include "SysCallback.h"
 #include "Trace.h" 
 #include "Inject.h"
+#include "StrLib.h"
+#include "DriverCtx.h"
+
+
+#define DRIVER_STOP_SIGNAL_FILE_PATH L"\\??\\C:\\Users\\Public\\stop_umhh_boot_start"
+
 NTSTATUS SetSysNotifiers() {
 	NTSTATUS status;
 	status = PsSetCreateProcessNotifyRoutine(ProcessCrNotify, FALSE);
@@ -15,6 +23,34 @@ NTSTATUS SetSysNotifiers() {
 	}
 	return status;
 } 
+BOOLEAN FileExists(PCWSTR Path)
+{
+	UNICODE_STRING us;
+	OBJECT_ATTRIBUTES oa;
+	HANDLE h;
+	IO_STATUS_BLOCK iosb;
+
+	RtlInitUnicodeString(&us, Path);
+
+	InitializeObjectAttributes(&oa, &us,
+		OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+		NULL, NULL);
+
+	NTSTATUS status = ZwOpenFile(
+		&h,
+		FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+		&oa,
+		&iosb,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		FILE_SYNCHRONOUS_IO_NONALERT
+	);
+
+	if (NT_SUCCESS(status)) {
+		ZwClose(h);
+		return TRUE;
+	}
+	return FALSE;
+}
 
 VOID
 ProcessCrNotify(
@@ -37,6 +73,15 @@ ProcessCrNotify(
 				ExFreePool(imageName);
 				imageName = NULL;
 			}
+		}
+		// check if created process is whoami.exe, if so, check C:\\users\\public\\stop_umhh_boot_start exist
+		// if so, stop injection
+		UNICODE_STRING whoami_image_name = RTL_CONSTANT_STRING(L"whoami.exe");
+		if (SL_RtlSuffixUnicodeString(&whoami_image_name, imageName, TRUE)) {
+			if (FileExists(DRIVER_STOP_SIGNAL_FILE_PATH)) {
+				DriverCtx_SetGlobalHookMode(FALSE);
+			}
+
 		}
 	}
 	if (!process) {

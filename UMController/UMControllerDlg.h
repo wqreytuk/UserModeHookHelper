@@ -76,6 +76,7 @@ public:
 private:
 	Filter m_Filter;
 	CListCtrl m_ProcListCtrl;
+	std::wstring m_CurrentFilterString;
 	CProgressCtrl m_StartupProgress;
 	CStatic m_StartupPct;
 	CMenu m_Menu;
@@ -125,6 +126,12 @@ private:
 	bool m_CachePersisted = false; // composite cache written this session
 	// persisted toggle
 	bool m_globalHookMode = false;
+
+	// Master DLL scanner guard: ensure scanner started only once
+	bool m_MasterDllScannerStarted = false;
+
+	// Cached Early Break marks (lowercased NT paths) to avoid registry hits
+	std::unordered_set<std::wstring> m_EarlyBreakSet;
 
 	// Plugin system
 	CMenu m_PluginsSubMenu; // submenu showing discovered plugins

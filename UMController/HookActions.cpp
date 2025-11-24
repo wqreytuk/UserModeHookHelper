@@ -110,7 +110,7 @@ void HookActions::HandleAddHook(CUMControllerDlg* dlg, Filter* filter, CListCtrl
             if (is64) flags |= PF_IS_64BIT;
             PROC_ITEMDATA newPacked = MAKE_ITEMDATA(mpid, flags);
             list->SetItemData(item, (DWORD_PTR)newPacked);
-            list->SetItemText(item, 2, FormatHookColumn(newPacked).c_str());
+            list->SetItemText(item, 3, FormatHookColumn(newPacked).c_str());
         }
     }
 
@@ -167,7 +167,7 @@ void HookActions::HandleRemoveHook(CUMControllerDlg* dlg, Filter* filter, CListC
             if (is64) flags |= PF_IS_64BIT;
             PROC_ITEMDATA newPacked = MAKE_ITEMDATA(mpid, flags);
             list->SetItemData(item, (DWORD_PTR)newPacked);
-            list->SetItemText(item, 2, FormatHookColumn(newPacked).c_str());
+            list->SetItemText(item, 3, FormatHookColumn(newPacked).c_str());
         }
     }
 

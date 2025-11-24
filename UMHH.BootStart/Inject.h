@@ -91,6 +91,9 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process);
 // Returns current number of pending inject entries
 ULONG Inject_GetPendingCount(VOID);
 
+// Returns current number of queued APCs outstanding
+ULONG Inject_GetQueuedApcCount(VOID);
+
 // (Pending list accessors removed ??? use Inject_CheckAndQueue and the
 // atomic pop behavior in Inject_OnImageLoad.)
 

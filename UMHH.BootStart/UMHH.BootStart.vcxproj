@@ -35,7 +35,6 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Device.c" />
     <ClCompile Include="Driver.c" />
     <ClCompile Include="DriverCtx.c" />
     <ClCompile Include="HookList.c" />
@@ -225,7 +224,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Common.h" />
-    <ClInclude Include="Device.h" />
     <ClInclude Include="DriverCtx.h" />
     <ClInclude Include="HookList.h" />
     <ClInclude Include="Inject.h" />

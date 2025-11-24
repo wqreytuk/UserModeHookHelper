@@ -5,7 +5,6 @@
 #include "HookList.h"
 #include "DriverCtx.h"
 #include "Inject.h"
-#include "Device.h"
  
 // Helper: read persisted settings from registry and initialize DriverCtx
 static VOID LoadPersistedDriverSettings(VOID) {
@@ -100,8 +99,6 @@ DriverUnload(
 	UNREFERENCED_PARAMETER(DriverObject);
 	// Reuse MiniUnload to cleanup resources
 	MiniUnload(0);
-	// Remove device objects
-	UMHH_DeleteDeviceObjects(DriverObject);
 	Log(L"DriverUnload invoked\n");
 }
 // mainn

@@ -157,60 +157,60 @@ VOID Inject_CheckWin7() {
 }
 // Simple FNV-1a 64-bit over UTF-16LE bytes - use shared helper
 static ULONGLONG ComputeNtPathHash(PUNICODE_STRING Path)
-{	
-    return SL_ComputeNtPathHashUnicode(Path);
+{
+	return SL_ComputeNtPathHashUnicode(Path);
 }
 
 static BOOLEAN PendingInject_Exists_Internal(PEPROCESS Process)
 {
-    BOOLEAN found = FALSE;
-    KIRQL oldIrql;
-    KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
-    PLIST_ENTRY e = s_PendingInjectList.Flink;
-    while (e != &s_PendingInjectList) {
-        PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
-        if (p->Process == Process) { found = TRUE; break; }
-        e = e->Flink;
-    }
-    KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
-    return found;
+	BOOLEAN found = FALSE;
+	KIRQL oldIrql;
+	KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
+	PLIST_ENTRY e = s_PendingInjectList.Flink;
+	while (e != &s_PendingInjectList) {
+		PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
+		if (p->Process == Process) { found = TRUE; break; }
+		e = e->Flink;
+	}
+	KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
+	return found;
 }
 
 static VOID PendingInject_Add_Internal(PEPROCESS Process)
 {
-    if (PendingInject_Exists_Internal(Process)) return;
-    PPENDING_INJECT p = ExAllocatePoolWithTag(NonPagedPool, sizeof(PENDING_INJECT), 'gInP');
-    if (!p) return;
-    RtlZeroMemory(p, sizeof(*p));
-    // take a reference to the process object
-    ObReferenceObject(Process);
-    p->Process = Process;
+	if (PendingInject_Exists_Internal(Process)) return;
+	PPENDING_INJECT p = ExAllocatePoolWithTag(NonPagedPool, sizeof(PENDING_INJECT), 'gInP');
+	if (!p) return;
+	RtlZeroMemory(p, sizeof(*p));
+	// take a reference to the process object
+	ObReferenceObject(Process);
+	p->Process = Process;
 	p->x64 = !PE_IsProcessX86(Process);
-    KIRQL oldIrql;
-    KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
-    InsertTailList(&s_PendingInjectList, &p->ListEntry);
-    KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
+	KIRQL oldIrql;
+	KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
+	InsertTailList(&s_PendingInjectList, &p->ListEntry);
+	KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
 }
 
 // this function is actually not used, because Process is removed in Inject_GetPendingInj
 VOID Inject_RemovePendingInject(PEPROCESS Process)
 {
-    KIRQL oldIrql;
-    KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
-    PLIST_ENTRY e = s_PendingInjectList.Flink;
-    while (e != &s_PendingInjectList) {
-        PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
-        e = e->Flink; // advance first since we may remove
-        if (p->Process == Process) {
-            RemoveEntryList(&p->ListEntry);
-            // drop the reference we took when adding
-            ObDereferenceObject(p->Process);
-            ExFreePoolWithTag(p, 'gInP');
+	KIRQL oldIrql;
+	KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
+	PLIST_ENTRY e = s_PendingInjectList.Flink;
+	while (e != &s_PendingInjectList) {
+		PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
+		e = e->Flink; // advance first since we may remove
+		if (p->Process == Process) {
+			RemoveEntryList(&p->ListEntry);
+			// drop the reference we took when adding
+			ObDereferenceObject(p->Process);
+			ExFreePoolWithTag(p, 'gInP');
 			Log(L"Process %d is removed from pending injection list\n", PsGetProcessId(Process));
-            break;
-        }
-    }
-    KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
+			break;
+		}
+	}
+	KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
 }
 
 // Simple case-insensitive check whether a UNICODE_STRING ends with "ntdll.dll"
@@ -356,10 +356,10 @@ NTSTATUS Inject_Perform(PPENDING_INJECT InjectionInfo)
 	PVOID ApcArgument2 = (PVOID)(wcslen(dllPath) * 2);
 
 #ifdef INJ_CONFIG_SUPPORTS_WOW64
-if (!x64) {
+	if (!x64) {
 
-	PsWrapApcWow64Thread(&ApcContext,&ApcRoutineAddress);
-}
+		PsWrapApcWow64Thread(&ApcContext, &ApcRoutineAddress);
+	}
 #endif
 	PKNORMAL_ROUTINE ApcRoutine = (PKNORMAL_ROUTINE)(ULONG_PTR)ApcRoutineAddress;
 	KPROCESSOR_MODE ApcMode = UserMode;
@@ -393,11 +393,12 @@ if (!x64) {
 	ZwClose(SectionHandle);
 	/*
 	https://github.com/wbenny/injdrv
-	The injected user-mode APC is then force-delivered by calling KeTestAlertThread(UserMode). 
-	This call internally checks if any user-mode APCs are queued and if so, sets the Thread->ApcState.UserApcPending variable to TRUE. 
+	The injected user-mode APC is then force-delivered by calling KeTestAlertThread(UserMode).
+	This call internally checks if any user-mode APCs are queued and if so, sets the Thread->ApcState.UserApcPending variable to TRUE.
 	Because of this, the kernel immediately delivers this user-mode APC (by KiDeliverApc) on next transition from kernel-mode to user-mode.
 	*/
-	KeTestAlertThread(UserMode); 
+	KeTestAlertThread(UserMode);
+	Inject_RemovePendingInject(InjectionInfo->Process);
 	return status;
 CLEAN_UP:
 	// If we allocated an APC but didn't successfully queue it, free it now.
@@ -420,7 +421,7 @@ CLEAN_UP:
 		ZwClose(SectionHandle);
 		SectionHandle = NULL;
 	}
-
+	Inject_RemovePendingInject(InjectionInfo->Process);
 	return status;
 }
 // thunk less injection do not require the asm code, it will directly call ldrloaddll
@@ -479,7 +480,7 @@ NTSTATUS Inject_PerformThunkLess(PPENDING_INJECT InjectionInfo)
 		goto CLEAN_UP;
 	}
 
-	BOOLEAN x64 = !PE_IsProcessX86(InjectionInfo->Process);	
+	BOOLEAN x64 = !PE_IsProcessX86(InjectionInfo->Process);
 
 	PUNICODE_STRING DllPath = (PUNICODE_STRING)SectionMemoryAddress;
 	PWCHAR DllPathBuffer = (PWCHAR)((PUCHAR)SectionMemoryAddress + sizeof(UNICODE_STRING));
@@ -525,7 +526,7 @@ NTSTATUS Inject_PerformThunkLess(PPENDING_INJECT InjectionInfo)
 		SystemArgument2,
 		0);
 
-	
+
 	ZwClose(SectionHandle);
 	return status;
 CLEAN_UP:
@@ -555,27 +556,27 @@ CLEAN_UP:
 
 NTSTATUS Inject_Init(VOID)
 {
-    InitializeListHead(&s_PendingInjectList);
-    KeInitializeSpinLock(&s_PendingInjectLock);
-    return STATUS_SUCCESS;
+	InitializeListHead(&s_PendingInjectList);
+	KeInitializeSpinLock(&s_PendingInjectLock);
+	return STATUS_SUCCESS;
 }
 
 VOID Inject_Uninit(VOID)
 {
-    // Free any remaining entries
-    KIRQL oldIrql;
-    KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
-    PLIST_ENTRY e = s_PendingInjectList.Flink;
-    while (e != &s_PendingInjectList) {
-        PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
-        e = e->Flink;
-        RemoveEntryList(&p->ListEntry);
-        // drop reference taken when added
-        ObDereferenceObject(p->Process);
-        ExFreePoolWithTag(p, 'gInP');
-    }
-    InitializeListHead(&s_PendingInjectList);
-    KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
+	// Free any remaining entries
+	KIRQL oldIrql;
+	KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
+	PLIST_ENTRY e = s_PendingInjectList.Flink;
+	while (e != &s_PendingInjectList) {
+		PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
+		e = e->Flink;
+		RemoveEntryList(&p->ListEntry);
+		// drop reference taken when added
+		ObDereferenceObject(p->Process);
+		ExFreePoolWithTag(p, 'gInP');
+	}
+	InitializeListHead(&s_PendingInjectList);
+	KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
 }
 
 // Atomically remove and return the PEPROCESS to inject for the supplied process
@@ -584,30 +585,24 @@ VOID Inject_Uninit(VOID)
 PPENDING_INJECT Inject_GetPendingInj(PEPROCESS Process)
 {
 	PPENDING_INJECT ret = NULL;
-    KIRQL oldIrql;
-    KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
-    PLIST_ENTRY e = s_PendingInjectList.Flink;
-    while (e != &s_PendingInjectList) {
-        PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
-        e = e->Flink; // advance first
-        if (p->Process == Process) {      
-            ret = p;
-            break;
-        }
-    }
-    KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
-    return ret;
+	KIRQL oldIrql;
+	KeAcquireSpinLock(&s_PendingInjectLock, &oldIrql);
+	PLIST_ENTRY e = s_PendingInjectList.Flink;
+	while (e != &s_PendingInjectList) {
+		PPENDING_INJECT p = CONTAINING_RECORD(e, PENDING_INJECT, ListEntry);
+		e = e->Flink; // advance first
+		if (p->Process == Process) {
+			ret = p;
+			break;
+		}
+	}
+	KeReleaseSpinLock(&s_PendingInjectLock, oldIrql);
+	return ret;
 }
 
 VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 {
-    if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
-    ULONGLONG hash = ComputeNtPathHash(ImageName);
-	// If driver configured to suspend queuing from user-mode instruction, skip enqueueing
-	if (DriverCtx_GetSuspendInjectQueue()) {
-		Log(L"Inject_CheckAndQueue: queuing suspended by policy, skipping\n");
-		return;
-	}
+	if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
 	if (DriverCtx_GetGlobalHookMode()) {
 		if (PsIsProtectedProcess(Process)) {
 			Log(L"Proteced process injection is not supported\n");
@@ -615,10 +610,6 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 		}
 		PendingInject_Add_Internal(Process);
 	}
-    else if (hash != 0 && HookList_ContainsHash(hash)) {
-        PendingInject_Add_Internal(Process);
-        Log(L"Process queued for injection (from broadcast)\n");
-    }
 }
 
 // Pending list accessors were removed; external code should use Inject_CheckAndQueue
@@ -707,7 +698,7 @@ VOID Inject_OnImageLoad(PUNICODE_STRING FullImageName, PEPROCESS Process, PIMAGE
 			Log(L"Process %d WOW64: %s can be injected now\n", PsGetProcessId(Process),
 				injectionInfo->x64 ? L"TRUE" : L"FALSE",
 				PsGetProcessImageFileName(Process));
-			
+
 			if (!NT_SUCCESS(Inject_QueueInjectionApc(KernelMode,
 				&Inject_InjectionApcNormalRoutine,
 				injectionInfo,

@@ -23,7 +23,7 @@ MiniUnload(
 	PsSetCreateProcessNotifyRoutine(ProcessCrNotify, TRUE);
 	PsRemoveLoadImageNotifyRoutine(LoadImageNotify);
 
-	
+
 	Log(L"successfully unloaded BootStart driver\n");
 	return STATUS_SUCCESS;
 }

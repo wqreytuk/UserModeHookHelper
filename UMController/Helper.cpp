@@ -321,7 +321,7 @@ void Helper::UMHH_DriverCheck() {
 			if (!sysPath.empty()) {
 				if (!ChangeServiceConfigW(svc,
 					SERVICE_NO_CHANGE, // service type
-					SERVICE_AUTO_START, // start type
+					SERVICE_DEMAND_START, // start type
 					SERVICE_NO_CHANGE,
 					sysPath.c_str(),   // binary path
 					NULL, NULL, NULL, NULL, NULL, NULL)) {
@@ -351,15 +351,15 @@ void Helper::UMHH_DriverCheck() {
 			std::unique_ptr<BYTE[]> qbuf(new BYTE[qNeeded]);
 			LPQUERY_SERVICE_CONFIGW pq = (LPQUERY_SERVICE_CONFIGW)qbuf.get();
 			if (QueryServiceConfigW(svc, pq, qNeeded, &qNeeded)) {
-				if (pq->dwStartType != SERVICE_AUTO_START) {
+				if (pq->dwStartType != SERVICE_DEMAND_START) {
 					if (!ChangeServiceConfigW(svc,
 						SERVICE_NO_CHANGE, // service type
 						SERVICE_AUTO_START, // start type -> change to auto
-						SERVICE_NO_CHANGE,
+						SERVICE_DEMAND_START,
 						NULL, NULL, NULL, NULL, NULL, NULL, NULL)) {
 						LOG_CTRL_ETW(L"UMHH_DriverCheck: ChangeServiceConfigW to SERVICE_AUTO_START failed: %lu\n", GetLastError());
 					} else {
-						LOG_CTRL_ETW(L"UMHH_DriverCheck: service %s start type updated to SERVICE_AUTO_START\n", SERVICE_NAME);
+						LOG_CTRL_ETW(L"UMHH_DriverCheck: service %s start type updated to SERVICE_DEMAND_START\n", SERVICE_NAME);
 					}
 				}
 			} else {
@@ -540,6 +540,7 @@ cleanup:
 	if (coInit) CoUninitialize();
 	return result;
 }
+ 
 bool Helper::ForceInject(DWORD pid) {
 	if (Helper::m_filterInstance) {
 		return Helper::m_filterInstance->FLTCOMM_ForceInject(pid);
@@ -706,21 +707,22 @@ bool Helper::CreateLowPrivReqFile(wchar_t* filePath,PHANDLE outFileHandle) {
 	*outFileHandle = hFile;
 	return true;
 }
+
+
 bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) {
 	// if this call is to check master module, we'll use event way
 	if (wcsstr(baseName, DLL_PREFIX)) {
 		wchar_t event_name[100] = { 0 };
-		swprintf_s(event_name, MASTER_LOAD_EVENT L"%d", pid);
-		HANDLE h = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"MyTestEvent");
-		if (!h)
-			return false;
+		swprintf_s(event_name, USER_MODE_MASTER_LOAD_EVENT L"%d", pid);
+		HANDLE h = OpenEventW(SYNCHRONIZE, FALSE, event_name);
 		DWORD err = GetLastError();
-		if (err == ERROR_FILE_NOT_FOUND) {
-			return false;
+		if (!err) {
+			CloseHandle(h);
+			outPresent = true;
 		}
-		else {
-			LOG_CTRL_ETW(L"OpenEvent failed, error = %lu\n", err);
-			Fatal(L"OpenEvent failed\n");
+		else if (err == ERROR_ACCESS_DENIED) {
+			outPresent = true;
+			return true;
 		}
 		return true;
 	}
@@ -746,6 +748,7 @@ bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent
 	if (ok) outPresent = present;
 	return ok;
 }
+
 
 std::wstring Helper::ToHex(ULONGLONG value) {
 	if (value == 0) return L"0";
@@ -813,6 +816,63 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 			CloseServiceHandle(newSvc);
 		}
 
+			// Also ensure a dedicated boot-start service named 'umhh.bootstart' exists
+			// and is configured as a kernel driver with System start.
+		{
+			const wchar_t* bootSvcName = L"umhh.bootstart";
+			SC_HANDLE svcBoot = OpenServiceW(scm, bootSvcName, SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG | SERVICE_START | SERVICE_QUERY_STATUS | SERVICE_ALL_ACCESS);
+			if (!svcBoot) {
+				SC_HANDLE created = CreateServiceW(scm, bootSvcName, bootSvcName, SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
+					SERVICE_SYSTEM_START, SERVICE_ERROR_NORMAL, dstPath.c_str(), NULL, NULL, NULL, NULL, NULL);
+				if (!created) {
+					LOG_CTRL_ETW(L"ConfigureBootStartService: CreateServiceW for %s failed: %lu\n", bootSvcName, GetLastError());
+				}
+				else {
+					CloseServiceHandle(created);
+					LOG_CTRL_ETW(L"ConfigureBootStartService: created boot-start service %s\n", bootSvcName);
+				}
+			}
+			else {
+				// Ensure service is configured as kernel driver and system start
+				DWORD qNeeded = 0;
+				QueryServiceConfigW(svcBoot, NULL, 0, &qNeeded);
+				if (qNeeded > 0) {
+					std::unique_ptr<BYTE[]> qbuf(new BYTE[qNeeded]);
+					LPQUERY_SERVICE_CONFIGW pq = (LPQUERY_SERVICE_CONFIGW)qbuf.get();
+					if (QueryServiceConfigW(svcBoot, pq, qNeeded, &qNeeded)) {
+						if (pq->dwServiceType != SERVICE_KERNEL_DRIVER || pq->dwStartType != SERVICE_SYSTEM_START) {
+							if (!ChangeServiceConfigW(svcBoot,
+								SERVICE_KERNEL_DRIVER, // service type
+								SERVICE_SYSTEM_START, // start type
+								SERVICE_NO_CHANGE,
+								dstPath.c_str(), NULL, NULL, NULL, NULL, NULL, NULL)) {
+								LOG_CTRL_ETW(L"ConfigureBootStartService: ChangeServiceConfigW failed for %s : %lu\n", bootSvcName, GetLastError());
+							}
+							else {
+								LOG_CTRL_ETW(L"ConfigureBootStartService: updated %s to kernel driver + SYSTEM_START\n", bootSvcName);
+							}
+						}
+					}
+				}
+				CloseServiceHandle(svcBoot);
+			}
+
+			// Ensure registry ImagePath and Start=SYSTEM_START for boot service
+			{
+				std::wstring regPathBoot = std::wstring(L"SYSTEM\\CurrentControlSet\\Services\\") + std::wstring(L"umhh.bootstart");
+				HKEY hKeyBoot = NULL; LONG rcBoot = RegOpenKeyExW(HKEY_LOCAL_MACHINE, regPathBoot.c_str(), 0, KEY_SET_VALUE, &hKeyBoot);
+				if (rcBoot == ERROR_SUCCESS) {
+					std::wstring imagePathBoot = std::wstring(L"\\SystemRoot\\system32\\drivers\\") + drvName;
+					RegSetValueExW(hKeyBoot, L"ImagePath", 0, REG_EXPAND_SZ, (const BYTE*)imagePathBoot.c_str(), (DWORD)((imagePathBoot.size() + 1) * sizeof(wchar_t)));
+					DWORD startValBoot = SERVICE_SYSTEM_START;
+					RegSetValueExW(hKeyBoot, L"Start", 0, REG_DWORD, (const BYTE*)&startValBoot, sizeof(startValBoot));
+					RegCloseKey(hKeyBoot);
+				}
+				else {
+					LOG_CTRL_ETW(L"ConfigureBootStartService: RegOpenKeyExW failed for %s : %lu\n", regPathBoot.c_str(), rcBoot);
+				}
+			}
+		}
 		// Write registry ImagePath and Start=0
 		std::wstring regPath = std::wstring(L"SYSTEM\\CurrentControlSet\\Services\\") + std::wstring(svcName);
 		HKEY hKey = NULL; LONG rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, regPath.c_str(), 0, KEY_SET_VALUE, &hKey);
@@ -841,7 +901,8 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 		 }
 
 	} else {
-		// Desired disabled: if service exists and running, stop and set Start value to SERVICE_DEMAND_START (or 3?)
+		// Desired disabled: if service exists, stop it, delete the service, and
+		// remove the driver file from the system drivers directory.
 		if (svc) {
 			SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0;
 			if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
@@ -851,14 +912,33 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 				}
 			}
 
-			std::wstring regPath = std::wstring(L"SYSTEM\\CurrentControlSet\\Services\\") + std::wstring(svcName);
-			HKEY hKey = NULL; LONG rc = RegOpenKeyExW(HKEY_LOCAL_MACHINE, regPath.c_str(), 0, KEY_SET_VALUE, &hKey);
-			if (rc == ERROR_SUCCESS) {
-				DWORD startVal = SERVICE_DEMAND_START; // set to manual/demand
-				RegSetValueExW(hKey, L"Start", 0, REG_DWORD, (const BYTE*)&startVal, sizeof(startVal));
-				RegCloseKey(hKey);
+			// Query binary path so we can remove the driver file after deletion
+			std::wstring binPath;
+			DWORD needed = 0; QueryServiceConfigW(svc, NULL, 0, &needed);
+			if (needed > 0) {
+				std::unique_ptr<BYTE[]> buf(new BYTE[needed]);
+				LPQUERY_SERVICE_CONFIGW qsc = (LPQUERY_SERVICE_CONFIGW)buf.get();
+				if (QueryServiceConfigW(svc, qsc, needed, &needed)) {
+					binPath = qsc->lpBinaryPathName ? qsc->lpBinaryPathName : L"";
+				}
+			}
+
+			// Attempt to delete the service
+			if (!DeleteService(svc)) {
+				LOG_CTRL_ETW(L"ConfigureBootStartService: DeleteService failed for %s : %lu\n", svcName, GetLastError());
 			} else {
-				LOG_CTRL_ETW(L"ConfigureBootStartService: RegOpenKeyExW failed for %s : %lu\n", regPath.c_str(), rc);
+				LOG_CTRL_ETW(L"ConfigureBootStartService: service %s deleted\n", svcName);
+			}
+			CloseServiceHandle(svc);
+
+			// Remove driver file if known
+			if (!binPath.empty()) {
+				wchar_t expanded[MAX_PATH];
+				if (ExpandEnvironmentStringsW(binPath.c_str(), expanded, _countof(expanded))) {
+					DeleteFileW(expanded);
+				} else {
+					DeleteFileW(binPath.c_str());
+				}
 			}
 		}
 	}

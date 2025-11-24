@@ -64,17 +64,20 @@ bool TryOpenProcWithReadWrite(DWORD pid) {
 
 	HANDLE hProcess = OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, pid);
 	if (hProcess == NULL) {
+		Log(L"failed to call OpenProcess, error=0x%x\n", GetLastError());
 		return false;
 	}
-	void* baseaddress = VirtualAllocEx(hProcess, NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	void* baseaddress = VirtualAllocEx(hProcess, NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 	if (baseaddress == nullptr) {
 		CloseHandle(h);
+		Log(L"failed to call VirtualAllocEx, error=0x%x\n",GetLastError());
 		return false;
 	}
 
 	char test_data[MAX_PATH] = "AAAAAAAAAAAAAAAAAAAA";
 	if (!WriteProcessMemory(hProcess, baseaddress, (void*)test_data, strlen(test_data), NULL)) {
 		CloseHandle(h);
+		Log(L"failed to call WriteProcessMemory, error=0x%x\n", GetLastError());
 		return false;
 	}
 
@@ -121,7 +124,34 @@ VOID EntryCode() {
 		Log(L"AVProcessHandleLocater success, PID=%u Path=%s can open %u", GetCurrentProcessId(), path, targetPid);
 	}
 }
+bool CheckMyself(DWORD pid) {
+	HANDLE h = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE, 0, pid);
+	if (!h)
+		return false;
 
+
+	HANDLE hProcess = OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, pid);
+	if (hProcess == NULL) {
+		Log(L"CheckMyself: failed to call OpenProcess, error=0x%x\n", GetLastError());
+		return false;
+	}
+	void* baseaddress = VirtualAllocEx(hProcess, NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+	if (baseaddress == nullptr) {
+		CloseHandle(h);
+		Log(L"CheckMyself: failed to call VirtualAllocEx, error=0x%x\n", GetLastError());
+		return false;
+	}
+
+	char test_data[MAX_PATH] = "AAAAAAAAAAAAAAAAAAAA";
+	if (!WriteProcessMemory(hProcess, baseaddress, (void*)test_data, strlen(test_data), NULL)) {
+		CloseHandle(h);
+		Log(L"CheckMyself: failed to call WriteProcessMemory, error=0x%x\n", GetLastError());
+		return false;
+	}
+
+	CloseHandle(h);
+	return true;
+}
 extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices* services) {
 	if (!services) {
 		MessageBoxW(NULL, L"Failed to load plugin DLL.", L"Plugin Error", MB_ICONERROR);
@@ -279,8 +309,13 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 	do {
 		DWORD targetPid = pe.th32ProcessID;
 		if (targetPid == 0 || targetPid == 4) continue;
-		if (targetPid == 756)
-			Log(L"Break\n");
+		
+		// check if I can open this process and try allocate and write
+		if (!CheckMyself(targetPid)) {
+			Log(L"CheckMyself failed, I can't open PID=%u\n", targetPid);
+			continue;
+		}
+
 		bool is64 = false;
 		if (!services->IsProcess64(targetPid, is64)) {
 			std::wstring outNtPath;

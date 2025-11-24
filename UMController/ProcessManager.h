@@ -12,7 +12,8 @@ struct ProcessEntry {
     unsigned long long pathHash;
     std::wstring cmdline;
     bool bInHookList;
-    bool is64;
+	bool is64;
+	bool early_break;
     bool masterDllLoaded;
     FILETIME startTime = {0,0};
 };

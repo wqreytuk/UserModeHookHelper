@@ -2,6 +2,7 @@
 #include "ProcessManager.h"
 #include "Helper.h"
 #include <mutex>
+#include "RegistryStore.h"
 
 namespace {
     std::vector<ProcessEntry> g_list;
@@ -124,6 +125,16 @@ void PM_UpdateEntryFields(DWORD pid, const std::wstring& path, bool inHook, cons
                 const UCHAR* bytes = reinterpret_cast<const UCHAR*>(path.c_str());
                 size_t bytesLen = path.size() * sizeof(wchar_t);
                 g_list[idx].pathHash = Helper::GetNtPathHash(bytes, bytesLen);
+				std::vector<std::wstring> marks;
+				if (RegistryStore::ReadEarlyBreakMarks(marks)) {
+					for (auto &m : marks) {
+						std::wstring low = m;
+						if (!_wcsicmp(m.c_str(), path.c_str()))
+							g_list[idx].early_break = true;
+						else
+							g_list[idx].early_break = false;
+					}
+				}
             } else {
                 g_list[idx].pathHash = 0;
             }
