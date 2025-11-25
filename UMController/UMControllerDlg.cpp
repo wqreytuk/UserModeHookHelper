@@ -613,7 +613,16 @@ BOOL CUMControllerDlg::OnInitDialog()
 		LOG_CTRL_ETW(L"Fatal reported: %s\n", msg);
 		::PostMessage(app.GetHwnd(), WM_APP_FATAL, 0, 0);
 	});
-
+	// UMHH.BootStart driver can only locate our dll at root directory
+	Helper::CopyUmhhDllsToRoot();
+	if (!Helper::UMHH_BS_DriverCheck()) {
+		Helper::Fatal(L"UMHH_BS_DriverCheck failed\n");
+	}
+	Helper::UMHH_DriverCheck();
+	// resolve NtCreateThreadEx syscal number
+	if (!Helper::ResolveNtCreateThreadExSyscallNum(&m_NtCreateThreadExSyscallNum)) {
+		Helper::Fatal(L"ResolveNtCreateThreadExSyscallNum failed\n");
+	}
 	// TODO: Add extra initialization here
 	PM_Init();
 	// Try to populate the in-process hook-hash cache by requesting and
@@ -791,6 +800,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 	// Provide Helper with pointer to our Filter instance so it may query
 	// the kernel for authoritative information (e.g., WoW64 checks).
 	Helper::SetFilterInstance(&m_Filter);
+	Helper::SetNtCreateThreadExSyscallNum(m_NtCreateThreadExSyscallNum);
 
 	// Start periodic rescan thread to detect processes that died without
 	// receiving a notification (or to reconcile missed events). The thread

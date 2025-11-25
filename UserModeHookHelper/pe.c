@@ -119,7 +119,28 @@ PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName)
     return NULL;
 }
 
+PULONGLONG PE_GetSSDT()
+{
+	ULONGLONG  KiSystemCall64 = __readmsr(0xC0000082);	// Get the address of nt!KeSystemCall64
+	ULONGLONG  KiSystemServiceRepeat = 0;
+	INT32 Limit = 4096;
 
+	for (int i = 0; i < Limit; i++) {		        // Increase that address until you hit "0x4c/0x8d/0x15"
+		if (*(PUINT8)(KiSystemCall64 + i) == 0x4C
+			&& *(PUINT8)(KiSystemCall64 + i + 1) == 0x8D
+			&& *(PUINT8)(KiSystemCall64 + i + 2) == 0x15)
+		{
+			KiSystemServiceRepeat = KiSystemCall64 + i;
+			DbgPrint("KiSystemCall64           %p \r\n", KiSystemCall64);
+			DbgPrint("KiSystemServiceRepeat    %p \r\n", KiSystemServiceRepeat);
+
+			// Convert relative address to absolute address
+			return (PULONGLONG)(*(PINT32)(KiSystemServiceRepeat + 3) + KiSystemServiceRepeat + 7);
+		}
+	}
+
+	return 0;
+}
 // Return TRUE if the provided PEPROCESS corresponds to a 32-bit (WoW64)
 // process running under WoW64. Returns FALSE on error or if the process is 64-bit.
 // Note: this function does not take or drop a reference on Process.

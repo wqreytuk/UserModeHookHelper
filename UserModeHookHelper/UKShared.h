@@ -35,8 +35,13 @@
 // Request the kernel duplicate a process handle for a given PID into the
 // caller process. Payload: DWORD pid. Reply: HANDLE (duplicated into caller).
 #define CMD_GET_PROCESS_HANDLE 12
-// Create remote thread via NtCreateThreadEx semantics. Payload: DWORD pid; PVOID startRoutine; PVOID parameter
 #define CMD_CREATE_REMOTE_THREAD 13
+// Create remote thread via NtCreateThreadEx semantics.
+// Payload: DWORD pid; PVOID startRoutine; PVOID parameter; PVOID ntCreateThreadExAddr; PVOID extra
+// All fields are required. The `ntCreateThreadExAddr` must be a pointer-sized value
+// resolved by user-mode (e.g., via CMD_GET_SYSCALL_ADDR helper) and `extra` is an
+// additional user-mode pointer value needed by the caller. The driver will fail
+// the request if the payload is missing or incorrectly sized.
 // Request kernel to return the kernel address (function pointer) for a
 // given syscall number. Payload: ULONG syscallNumber. Reply: pointer-sized
 // kernel address (if available).

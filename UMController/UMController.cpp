@@ -8,6 +8,8 @@
 #include "UMControllerDlg.h"
 #include "ETW.h"
 #include "Helper.h"
+#include "../Shared/LogMacros.h"
+#include "UMControllerMsgs.h"
 
 
 #ifdef _DEBUG
@@ -60,17 +62,22 @@ BOOL CUMControllerApp::InitInstance()
 	// Now safe to start ETW tracing (window/dialog not yet created but MFC core initialized)
 	GetETW().StartTracer();
 	GetETW().Reg();
+
+
+	// Register a minimal fatal handler that posts a message to the main
+	// window so that the UI can shutdown itself on a fatal error instead
+	// of calling exit() from a library thread.
+	Helper::SetFatalHandler([](const wchar_t* msg) {
+		// Log first, then post message to the main UI thread.
+		LOG_CTRL_ETW(L"Fatal reported: %s\n", msg);
+		::PostMessage(app.GetHwnd(), WM_APP_FATAL, 0, 0);
+	});
 	// UMHH.BootStart driver can only locate our dll at root directory
 	Helper::CopyUmhhDllsToRoot();
 	if (!Helper::UMHH_BS_DriverCheck()) {
 		Helper::Fatal(L"UMHH_BS_DriverCheck failed\n");
 	}
 	Helper::UMHH_DriverCheck();
-
-	// resolve NtCreateThreadEx syscal number
-	if (!Helper::ResolveNtCreateThreadExSyscallNum()) {
-		Helper::Fatal(L"ResolveNtCreateThreadExSyscallNum failed\n");
-	}
 
 	AfxEnableControlContainer();
 

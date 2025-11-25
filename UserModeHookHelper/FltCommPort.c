@@ -648,6 +648,11 @@ Handle_AddHook(
 		NTSTATUS st2 = HookList_CreateOrUpdateSection();
 		if (!NT_SUCCESS(st2)) {
 			Log(L"Handle_AddHook: HookList_CreateOrUpdateSection failed 0x%x\n", st2);
+		} else {
+			NTSTATUS st3 = HookList_SaveToRegistry();
+			if (!NT_SUCCESS(st3)) {
+				Log(L"Handle_AddHook: HookList_SaveToRegistry failed 0x%x\n", st3);
+			}
 		}
 	}
 	if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
@@ -681,6 +686,11 @@ Handle_RemoveHook(
 		NTSTATUS st2 = HookList_CreateOrUpdateSection();
 		if (!NT_SUCCESS(st2)) {
 			Log(L"Handle_RemoveHook: HookList_CreateOrUpdateSection failed 0x%x\n", st2);
+		} else {
+			NTSTATUS st3 = HookList_SaveToRegistry();
+			if (!NT_SUCCESS(st3)) {
+				Log(L"Handle_RemoveHook: HookList_SaveToRegistry failed 0x%x\n", st3);
+			}
 		}
 	}
 	if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
@@ -930,16 +940,7 @@ Handle_GetSyscallAddr(
 	ULONG syscallNumber = 0;
 	RtlCopyMemory(&syscallNumber, msg->m_Data, sizeof(ULONG));
 
-	// Try to get KeServiceDescriptorTable symbol via MmGetSystemRoutineAddress
-	UNICODE_STRING ksdtName;
-	RtlInitUnicodeString(&ksdtName, L"KeServiceDescriptorTable");
-	PVOID pKsdt = MmGetSystemRoutineAddress(&ksdtName);
-	if (!pKsdt) {
-		// Try shadow table (some Windows versions use a shadow table)
-		RtlInitUnicodeString(&ksdtName, L"KeServiceDescriptorTableShadow");
-		pKsdt = MmGetSystemRoutineAddress(&ksdtName);
-	}
-
+	PVOID pKsdt = (PVOID)DriverCtx_GetSSDT();
 	if (!pKsdt) {
 		// Not available on this build - can't resolve
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
@@ -966,15 +967,13 @@ Handle_GetSyscallAddr(
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 		return STATUS_INVALID_PARAMETER;
 	}
-
+	// dd nt!KiServiceTable+(0x53*4) L1
+	
+	DWORD _ = *(DWORD*)(syscallNumber * 4 + (UCHAR*)serviceTable);
+	
 	// Read the entry. On many architectures the table contains direct function pointers.
-	PVOID addr = NULL;
-	__try {
-		addr = (PVOID)serviceTable[syscallNumber];
-	} __except (EXCEPTION_EXECUTE_HANDLER) {
-		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-		return STATUS_UNSUCCESSFUL;
-	}
+	PVOID addr = (PVOID)((UCHAR*)serviceTable + (_ >> 4));
+	 
 
 	if (!addr) {
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
@@ -998,8 +997,10 @@ Handle_CreateRemoteThread(
 	ULONG OutputBufferSize,
 	PULONG ReturnOutputBufferLength
 ) {
-	// Expect payload: DWORD pid; PVOID startRoutine; PVOID parameter
-	ULONG need = (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(DWORD) + sizeof(PVOID) + sizeof(PVOID));
+	(OutputBuffer);
+	(OutputBufferSize);
+	// Expect payload: DWORD pid; PVOID startRoutine; PVOID parameter; PVOID ntCreateThreadExAddr; PVOID extra
+	ULONG need = (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(DWORD) + sizeof(PVOID) + sizeof(PVOID) + sizeof(PVOID) + sizeof(PVOID));
 	if (InputBufferSize < need) {
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 		return STATUS_BUFFER_TOO_SMALL;
@@ -1009,115 +1010,32 @@ Handle_CreateRemoteThread(
 	DWORD targetPid = 0;
 	PVOID startRoutine = NULL;
 	PVOID parameter = NULL;
+	PVOID providedNtCreateAddr = NULL;
+	PVOID extraValue = NULL;
 	RtlCopyMemory(&targetPid, msg->m_Data, sizeof(DWORD));
 	RtlCopyMemory(&startRoutine, msg->m_Data + sizeof(DWORD), sizeof(PVOID));
 	RtlCopyMemory(&parameter, msg->m_Data + sizeof(DWORD) + sizeof(PVOID), sizeof(PVOID));
-
-	// Two possible modes:
-	// 1) Caller provided a process HANDLE at end of payload -> resolve that handle
-	//    by attaching to caller process and calling ObReferenceObjectByHandle to
-	//    obtain the referenced process object.
-	// 2) Caller did not provide a handle -> lookup targetProc by PID and open
-	//    a kernel handle to the target process as before.
-
-	PEPROCESS targetProc = NULL;
-	HANDLE hTargetProc = NULL; // kernel handle to process
-	NTSTATUS status = STATUS_UNSUCCESSFUL;
-
-	// Determine if payload contains extra HANDLE (caller-supplied). The payload
-	// layout is: DWORD pid; PVOID startRoutine; PVOID parameter; [optional HANDLE callerHandle]
+	// Required: ntCreateThreadExAddr and extra follow
 	SIZE_T expectedBase = sizeof(DWORD) + sizeof(PVOID) + sizeof(PVOID);
-	BOOLEAN hasCallerHandle = FALSE;
-	if (InputBufferSize >= (UMHH_MSG_HEADER_SIZE + (ULONG)expectedBase + (ULONG)sizeof(HANDLE))) {
-		hasCallerHandle = TRUE;
+	RtlCopyMemory(&providedNtCreateAddr, msg->m_Data + expectedBase, sizeof(PVOID));
+	RtlCopyMemory(&extraValue, msg->m_Data + expectedBase + sizeof(PVOID), sizeof(PVOID));
+	HANDLE proc_handle = NULL;
+	RtlCopyMemory(&proc_handle, msg->m_Data + expectedBase + sizeof(PVOID) + sizeof(PVOID), sizeof(HANDLE));
+ 
+
+	// Resolve NtCreateThreadEx: prefer caller-supplied kernel function pointer
+	PFN_ZWCREATETHREADEX pfnNtCreateThreadEx = NULL;
+	if (providedNtCreateAddr) {
+		pfnNtCreateThreadEx = (PFN_ZWCREATETHREADEX)providedNtCreateAddr;
 	}
-
-	if (hasCallerHandle) {
-		// Extract provided handle value
-		HANDLE provided = NULL;
-		RtlCopyMemory(&provided, msg->m_Data + expectedBase, sizeof(HANDLE));
-
-		// Attach to the caller process context to safely call ObReferenceObjectByHandle
-		PEPROCESS callerProc = NULL;
-		status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)CallerCtx->m_UserProcessId, &callerProc);
-		if (!NT_SUCCESS(status) || callerProc == NULL) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return STATUS_INVALID_PARAMETER;
-		}
-
-		KAPC_STATE apcState;
-		KeStackAttachProcess(callerProc, &apcState);
-		// Try to get a referenced object from the provided handle. Expect it to be a process handle.
-		PVOID referencedObject = NULL;
-		//  PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE
-		// -> 0n1146
-		status = ObReferenceObjectByHandle(provided, 1146, *PsProcessType, UserMode, &referencedObject, NULL);
-		KeUnstackDetachProcess(&apcState);
-
-		// We no longer need callerProc reference after detach
-		ObDereferenceObject(callerProc);
-
-		if (!NT_SUCCESS(status) || referencedObject == NULL) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return STATUS_INVALID_HANDLE;
-		}
-
-		// The referencedObject should be a PEPROCESS pointer (process object)
-		targetProc = (PEPROCESS)referencedObject;
-
-		// Verify the provided handle actually references the expected PID
-		if ((ULONG)(ULONG_PTR)PsGetProcessId(targetProc) != targetPid) {
-			// mismatch - cleanup
-			ObDereferenceObject(targetProc);
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return STATUS_INVALID_PARAMETER;
-		}
-
-		// Open a kernel handle to that process so we can pass it to ZwCreateThreadEx
-		//  PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE
-		// -> 0n1146
-		status = ObOpenObjectByPointer(targetProc, OBJ_KERNEL_HANDLE, NULL,1146, *PsProcessType, KernelMode, &hTargetProc);
-		if (!NT_SUCCESS(status)) {
-			// release the referenced object
-			ObDereferenceObject(targetProc);
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return status;
-		}
-
-	} else {
-		// Lookup target process by pid and open kernel handle
-		status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)targetPid, &targetProc);
-		if (!NT_SUCCESS(status) || targetProc == NULL) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return status;
-		}
-		// 
-		//  PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE
-		// -> 0n1146
-
-		status = ObOpenObjectByPointer(targetProc, OBJ_KERNEL_HANDLE, NULL, 1146, *PsProcessType, KernelMode, &hTargetProc);
-		if (!NT_SUCCESS(status)) {
-			ObDereferenceObject(targetProc);
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return status;
-		}
-	}
-
-	// Resolve ZwCreateThreadEx from export table. Some WDKs expose it; use MmGetSystemRoutineAddress
-	UNICODE_STRING ntName;
-	RtlInitUnicodeString(&ntName, L"NtCreateThreadEx");
-	PFN_ZWCREATETHREADEX pfnNtCreateThreadEx = (PFN_ZWCREATETHREADEX)MmGetSystemRoutineAddress(&ntName);
-	if (!pfnNtCreateThreadEx) {
-		// cleanup
-		ZwClose(hTargetProc);
-		ObDereferenceObject(targetProc);
+	else {
+		// cleanup 
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		Log(L"user MUST provide NtCreateThreadEx kernel function address to make this work\n");
 		return STATUS_NOT_IMPLEMENTED;
 	}
 
-	HANDLE hThread = NULL;
-	// Flags: 0 for create running thread; may set CREATE_SUSPENDED flags if needed
-	status = pfnNtCreateThreadEx(&hThread, THREAD_ALL_ACCESS, NULL, hTargetProc, startRoutine, parameter, 0, 0, 0, 0, NULL);
+	NTSTATUS status = pfnNtCreateThreadEx(extraValue, THREAD_ALL_ACCESS, NULL, proc_handle, startRoutine, parameter, 0, 0, 0, 0, NULL);
 
 	// Note: keep hTargetProc and targetProc alive until after thread creation
 	if (!NT_SUCCESS(status)) {
@@ -1125,56 +1043,11 @@ Handle_CreateRemoteThread(
 		return status;
 	}
 
-	// If caller supplied an output buffer, duplicate the thread handle into caller process
-	if (OutputBuffer && OutputBufferSize >= sizeof(HANDLE)) {
-		// Caller process determined by CallerCtx->m_UserProcessId
-		PEPROCESS callerProc = NULL;
-		status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)CallerCtx->m_UserProcessId, &callerProc);
-		if (!NT_SUCCESS(status) || callerProc == NULL) {
-			ZwClose(hThread);
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return status;
-		}
-		HANDLE hCallerProc = NULL;
-		status = ObOpenObjectByPointer(callerProc, OBJ_KERNEL_HANDLE, NULL, PROCESS_DUP_HANDLE, *PsProcessType, KernelMode, &hCallerProc);
-		if (!NT_SUCCESS(status)) {
-			ObDereferenceObject(callerProc);
-			ZwClose(hThread);
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return status;
-		}
-
-		HANDLE dup = NULL;
-		status = ZwDuplicateObject(ZwCurrentProcess(), hThread, hCallerProc, &dup, 0, 0, DUPLICATE_SAME_ACCESS);
-
-		ZwClose(hCallerProc);
-		ObDereferenceObject(callerProc);
-
-		// Close kernel-local handle; dup is valid in caller process
-		ZwClose(hThread);
-		if (!NT_SUCCESS(status)) {
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-			return status;
-		}
-
-		// Return duplicated handle value to user-mode as HANDLE
-		RtlCopyMemory(OutputBuffer, &dup, sizeof(HANDLE));
-		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(HANDLE);
-
-		// Cleanup target process references/handles
-		if (hTargetProc) ZwClose(hTargetProc);
-		if (targetProc) ObDereferenceObject(targetProc);
-
-		return STATUS_SUCCESS;
-	}
 
 	// Caller didn't request handle duplication; close created thread handle and return success
-	ZwClose(hThread);
-
-	// Cleanup target process references/handles
-	if (hTargetProc) ZwClose(hTargetProc);
-	if (targetProc) ObDereferenceObject(targetProc);
-
+	ZwClose(*(PHANDLE)extraValue);
+	 
 	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+	Log(L"successfully created thread in target process PID=%u\n", targetPid);
 	return STATUS_SUCCESS;
 }

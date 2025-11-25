@@ -7,6 +7,7 @@
 #include "DriverCtx.h"
 #include "Inject.h"
 #include "BootStartControl.h"
+#include "PE.h"
  
 // Helper: read persisted settings from registry and initialize DriverCtx
 static VOID LoadPersistedDriverSettings(VOID) {
@@ -103,9 +104,15 @@ NTSTATUS
 	(RegistryPath); 
 	Log(L"DriverEntry\n");
 
+
+	DriverCtx_SetSSDT((DWORD64)PE_GetSSDT());
+	if(!DriverCtx_GetSSDT()) {
+		Log(L"failed to get SSDT\n");
+		return STATUS_UNSUCCESSFUL;
+	}
 	// stop umhh.bootstart driver
 	// BS_SendSuspendInjectQueue(TRUE);
-	Log(L"Tell UMHH.BootStart driver to stop injection\n");
+	// Log(L"Tell UMHH.BootStart driver to stop injection\n");
 
 	Inject_CheckWin7();
 

@@ -3,6 +3,7 @@
 #include "ETW.h"
 #include "UMController.h"
 #include "RegistryStore.h"
+#include "capstone/capstone.h"
 #include <atomic>
 #include <wchar.h>
 #include <memory>
@@ -34,12 +35,63 @@ size_t Helper::m_sharedBufCap = 0;
 std::mutex Helper::m_bufMutex;
 // Filter instance pointer (nullable)
 Filter* Helper::m_filterInstance = nullptr;
+DWORD Helper::m_NtCreateThreadExSyscallNum = 0;
 
 
 // NOTE: WaitAndExit was removed. Call Helper::Fatal(...) at call sites.
 
 void Helper::SetFatalHandler(FatalHandlerType handler) {
 	g_fatalHandler.store(handler, std::memory_order_release);
+}
+
+// Disassemble a small buffer (usually the first bytes of an export) and
+// attempt to extract the syscall number. This looks for an instruction of
+// the form `mov eax, imm32` in x86-64 code and returns the imm32 value.
+// Returns ULONG_MAX on failure.
+static ULONG ExtractSyscallNumberFromBytes(const unsigned char buf[16]) {
+	csh handle = 0;
+	cs_err err = cs_open(CS_ARCH_X86, CS_MODE_64, &handle);
+	if (err != CS_ERR_OK) return ULONG_MAX;
+
+	cs_option(handle, CS_OPT_DETAIL, CS_OPT_OFF);
+	cs_insn *insn = NULL;
+	size_t count = cs_disasm(handle, buf, 16, 0x0, 0, &insn);
+	ULONG result = ULONG_MAX;
+	if (count > 0) {
+		for (size_t i = 0; i < count; ++i) {
+			// Check for mnemonic "mov" with op_str like "eax, 0xC2"
+			if (insn[i].id == X86_INS_MOV) {
+				// For x86, simple string parse of op_str to find imm
+				const char* op = insn[i].op_str;
+				if (op) {
+					// Look for pattern ", 0x" or ", " followed by digits
+					const char* comma = strchr(op, ',');
+					if (comma) {
+						const char* imm = comma + 1;
+						while (*imm == ' ') ++imm;
+						// support 0xNN hex immediate
+						if (imm[0] == '0' && (imm[1] == 'x' || imm[1] == 'X')) {
+							unsigned long v = 0;
+							if (sscanf_s(imm, "%lx", &v) == 1) {
+								result = (ULONG)v;
+								break;
+							}
+						}
+						else {
+							unsigned long v = 0;
+							if (sscanf_s(imm, "%lu", &v) == 1) {
+								result = (ULONG)v;
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+		cs_free(insn, count);
+	}
+	cs_close(&handle);
+	return result;
 }
 
 void Helper::Fatal(const wchar_t* message) {
@@ -149,7 +201,7 @@ bool Helper::UMHH_BS_DriverCheck() {
 	const wchar_t* svcName = SERVICE_NAME;
 	LOG_CTRL_ETW(L"BS_SERVICE_NAME not defined; falling back to SERVICE_NAME '%s'\n", SERVICE_NAME);
 #endif
-	
+
 	// Open SCM with rights to manage service
 	SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CREATE_SERVICE | SC_MANAGER_CONNECT);
 	if (!scm) {
@@ -176,7 +228,8 @@ bool Helper::UMHH_BS_DriverCheck() {
 						if (ssp.dwCurrentState == SERVICE_STOPPED) break;
 						std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS)); waited += INTERVAL_MS;
 					}
-				} else {
+				}
+				else {
 					LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: failed to stop existing service %s : %lu\n", svcName, GetLastError());
 					CloseServiceHandle(svc); CloseServiceHandle(scm); return false;
 				}
@@ -202,11 +255,13 @@ bool Helper::UMHH_BS_DriverCheck() {
 				wchar_t expanded[MAX_PATH];
 				if (ExpandEnvironmentStringsW(bin.c_str(), expanded, _countof(expanded))) {
 					DeleteFileW(expanded);
-				} else {
+				}
+				else {
 					DeleteFileW(bin.c_str());
 				}
 			}
-		} else {
+		}
+		else {
 			// Could not query, attempt delete anyway
 			if (!DeleteService(svc)) {
 				LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: DeleteService failed (no qsc) for %s : %lu\n", svcName, GetLastError());
@@ -218,7 +273,8 @@ bool Helper::UMHH_BS_DriverCheck() {
 	}
 
 	DWORD err = GetLastError();
-	if (svc) { /* already closed above */ } else if (err != ERROR_SERVICE_DOES_NOT_EXIST && err != ERROR_SERVICE_MARKED_FOR_DELETE) {
+	if (svc) { /* already closed above */ }
+	else if (err != ERROR_SERVICE_DOES_NOT_EXIST && err != ERROR_SERVICE_MARKED_FOR_DELETE) {
 		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: OpenServiceW unexpected error: %lu\n", err);
 		CloseServiceHandle(scm); return false;
 	}
@@ -327,13 +383,15 @@ void Helper::UMHH_DriverCheck() {
 					sysPath.c_str(),   // binary path
 					NULL, NULL, NULL, NULL, NULL, NULL)) {
 					LOG_CTRL_ETW(L"ChangeServiceConfigW to set BinaryPathName failed: %lu (path=%s)\n", GetLastError(), sysPath.c_str());
-				} else {
+				}
+				else {
 					LOG_CTRL_ETW(L"Service binary path updated to %s\n", sysPath.c_str());
 				}
-			} else {
+			}
+			else {
 				LOG_CTRL_ETW(L"Could not determine module path to set service binary path\n");
 			}
-		} 
+		}
 		else {
 			CloseServiceHandle(scm);
 			return;
@@ -359,11 +417,13 @@ void Helper::UMHH_DriverCheck() {
 						SERVICE_DEMAND_START,
 						NULL, NULL, NULL, NULL, NULL, NULL, NULL)) {
 						LOG_CTRL_ETW(L"UMHH_DriverCheck: ChangeServiceConfigW to SERVICE_AUTO_START failed: %lu\n", GetLastError());
-					} else {
+					}
+					else {
 						LOG_CTRL_ETW(L"UMHH_DriverCheck: service %s start type updated to SERVICE_DEMAND_START\n", SERVICE_NAME);
 					}
 				}
-			} else {
+			}
+			else {
 				LOG_CTRL_ETW(L"UMHH_DriverCheck: QueryServiceConfigW failed: %lu\n", GetLastError());
 			}
 		}
@@ -548,7 +608,12 @@ bool Helper::ResolveNtCreateThreadExSyscallNum(DWORD* sys_call_num) {
 		LOG_CTRL_ETW(L"failed to call ReadExportFirstBytesFromFile\n");
 		return false;
 	}
-
+	DWORD res = ExtractSyscallNumberFromBytes(out_buf);
+	if (ULONG_MAX == res) {
+		LOG_CTRL_ETW(L"failed to call ExtractSyscallNumberFromBytes\n");
+		return false;
+	}
+	*sys_call_num = res;
 	return true;
 }
 bool Helper::ForceInject(DWORD pid) {
@@ -599,7 +664,14 @@ bool Helper::ForceInject(DWORD pid) {
 		LOG_CTRL_ETW(L"Get loadlibraryW ProcAddress failed, error=0x%x\n", GetLastError());
 		goto CLEAN_UP;
 	}
-	if(!Helper::m_filterInstance->FLTCOMM_CreateRemoteThread(pid, pLoadLibraryW, baseaddress, NULL)){
+	// get NtCreateThreadEx kernel function addr
+	PVOID syscall_addr = 0;
+	if (!Helper::m_filterInstance->FLTCOMM_GetSyscallAddr(Helper::m_NtCreateThreadExSyscallNum, &syscall_addr)) {
+		LOG_CTRL_ETW(L"call FLTCOMM_GetSyscallAddr failed\n");
+		goto CLEAN_UP;
+	}
+	HANDLE thread_handle = 0;
+	if (!Helper::m_filterInstance->FLTCOMM_CreateRemoteThread(pid, pLoadLibraryW, baseaddress, syscall_addr,&thread_handle, NULL,hProc)) {
 		LOG_CTRL_ETW(L"call FLTCOMM_CreateRemoteThread failed\n");
 		goto CLEAN_UP;
 	}
@@ -628,7 +700,7 @@ bool Helper::strcasestr_check(const char *haystack, const char *needle) {
 	}
 	return false;
 }
-bool Helper::GetModuleBaseWithPath(DWORD pid, char* mPath,PVOID* base) {
+bool Helper::GetModuleBaseWithPath(DWORD pid, char* mPath, PVOID* base) {
 	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
 	if (!hProcess) {
 		LOG_CTRL_ETW(L"failed to open PID=%u with VM_READ access, error: 0x%x\n", pid, GetLastError());
@@ -698,7 +770,9 @@ bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 	outIs64 = is64;
 	return true;
 }
-
+void Helper::SetNtCreateThreadExSyscallNum(DWORD num) {
+	Helper::m_NtCreateThreadExSyscallNum = num;
+}
 void Helper::SetFilterInstance(Filter* f) {
 	Helper::m_filterInstance = f;
 }
@@ -738,7 +812,7 @@ bool Helper::EnableDebugPrivilege(bool enable) {
 	CloseHandle(hToken);
 	return true;
 }
-bool Helper::CreateLowPrivReqFile(wchar_t* filePath,PHANDLE outFileHandle) {
+bool Helper::CreateLowPrivReqFile(wchar_t* filePath, PHANDLE outFileHandle) {
 	PSECURITY_DESCRIPTOR pSD = nullptr;
 
 	// SDDL: D: (DACL) (A;;GA;;;WD) => Allow Generic All to Everyone
@@ -876,6 +950,9 @@ bool Helper::ReadExportFirstBytesFromFile(const wchar_t* dllPath, const char* ex
 		if (offset == (SIZE_T)-1) __leave;
 		memcpy(outBuf, (PBYTE)base + offset, 16);
 		UnmapViewOfFile(base); CloseHandle(hMap); CloseHandle(hFile);
+		base = NULL;
+		hMap = NULL;
+		hFile = NULL;
 		return true;
 	}
 	__finally {
@@ -953,8 +1030,8 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 			CloseServiceHandle(newSvc);
 		}
 
-			// Also ensure a dedicated boot-start service named 'umhh.bootstart' exists
-			// and is configured as a kernel driver with System start.
+		// Also ensure a dedicated boot-start service named 'umhh.bootstart' exists
+		// and is configured as a kernel driver with System start.
 		{
 			const wchar_t* bootSvcName = L"umhh.bootstart";
 			SC_HANDLE svcBoot = OpenServiceW(scm, bootSvcName, SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG | SERVICE_START | SERVICE_QUERY_STATUS | SERVICE_ALL_ACCESS);
@@ -1019,25 +1096,27 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 			DWORD startVal = SERVICE_SYSTEM_START;
 			RegSetValueExW(hKey, L"Start", 0, REG_DWORD, (const BYTE*)&startVal, sizeof(startVal));
 			RegCloseKey(hKey);
-		} else {
+		}
+		else {
 			LOG_CTRL_ETW(L"ConfigureBootStartService: RegOpenKeyExW failed for %s : %lu\n", regPath.c_str(), rc);
 		}
 
 		// Start service if not running
-		
-		
-		 SC_HANDLE svc2 = OpenServiceW(scm, svcName, SERVICE_QUERY_STATUS | SERVICE_START);
-		 if (svc2) {
-		 	SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0;
-		 	if (QueryServiceStatusEx(svc2, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
-		 		if (ssp.dwCurrentState != SERVICE_RUNNING) {
-		 			StartServiceW(svc2, 0, NULL);
-		 		}
-		 	}
-		 	CloseServiceHandle(svc2);
-		 }
 
-	} else {
+
+		SC_HANDLE svc2 = OpenServiceW(scm, svcName, SERVICE_QUERY_STATUS | SERVICE_START);
+		if (svc2) {
+			SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0;
+			if (QueryServiceStatusEx(svc2, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+				if (ssp.dwCurrentState != SERVICE_RUNNING) {
+					StartServiceW(svc2, 0, NULL);
+				}
+			}
+			CloseServiceHandle(svc2);
+		}
+
+	}
+	else {
 		// Desired disabled: if service exists, stop it, delete the service, and
 		// remove the driver file from the system drivers directory.
 		if (svc) {
@@ -1063,7 +1142,8 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 			// Attempt to delete the service
 			if (!DeleteService(svc)) {
 				LOG_CTRL_ETW(L"ConfigureBootStartService: DeleteService failed for %s : %lu\n", svcName, GetLastError());
-			} else {
+			}
+			else {
 				LOG_CTRL_ETW(L"ConfigureBootStartService: service %s deleted\n", svcName);
 			}
 			CloseServiceHandle(svc);
@@ -1073,7 +1153,8 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 				wchar_t expanded[MAX_PATH];
 				if (ExpandEnvironmentStringsW(binPath.c_str(), expanded, _countof(expanded))) {
 					DeleteFileW(expanded);
-				} else {
+				}
+				else {
 					DeleteFileW(binPath.c_str());
 				}
 			}

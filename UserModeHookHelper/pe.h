@@ -30,7 +30,7 @@ PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName);
 //   function does not take or drop references; callers that pass an
 //   unreferenced PEPROCESS must ensure it remains valid for the call.
 BOOLEAN PE_IsProcessX86(IN PEPROCESS Process);
-
+PULONGLONG PE_GetSSDT();
 // Wrapper kept for compatibility; PE_GetExport auto-detects 32/64 images.
 // PE_GetExport auto-detects 32/64 images; PE_GetExport32 removed.
 

@@ -64,7 +64,8 @@ public:
 	// Optional: if callerHandle != NULL the caller-supplied HANDLE (from this process) will be sent so
 	// the driver can use/validate it instead of opening the target by PID. The callerHandle is only
 	// meaningful when it refers to the same target process PID and must have appropriate access rights.
-	bool FLTCOMM_CreateRemoteThread(DWORD pid, PVOID startRoutine, PVOID parameter, HANDLE* outThreadHandle, HANDLE callerHandle = NULL);
+	bool FLTCOMM_CreateRemoteThread(DWORD pid, PVOID startRoutine, PVOID parameter, PVOID ntCreateThreadExAddr,
+		PVOID extra, HANDLE* outThreadHandle, HANDLE callerHandle);
 	// Request kernel to resolve syscall number to kernel function address.
 	// Payload: ULONG syscallNumber. On success returns TRUE and sets outAddr.
 	bool FLTCOMM_GetSyscallAddr(ULONG syscallNumber, PVOID* outAddr);

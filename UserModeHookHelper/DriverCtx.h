@@ -27,6 +27,8 @@
 
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter);
 PFLT_FILTER DriverCtx_GetFilter(VOID);
+DWORD64 DriverCtx_GetSSDT();
+VOID DriverCtx_SetSSDT(DWORD64 ssdt);
 VOID DriverCtx_SetServerPort(PFLT_PORT ServerPort);
 PFLT_PORT DriverCtx_GetServerPort(VOID);
 VOID DriverCtx_ClearServerPort(VOID);

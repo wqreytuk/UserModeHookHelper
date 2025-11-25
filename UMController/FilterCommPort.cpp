@@ -620,11 +620,11 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE& outHandle) {
 	return true;
 }
 
-bool Filter::FLTCOMM_CreateRemoteThread(DWORD pid, PVOID startRoutine, PVOID parameter, HANDLE* outThreadHandle, HANDLE callerHandle) {
-	// Build message: DWORD pid + pointer-sized startRoutine + pointer-sized parameter + optional HANDLE
-	size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD) + sizeof(PVOID) + sizeof(PVOID);
-	bool includeHandle = (callerHandle != NULL);
-	if (includeHandle) msgSize += sizeof(HANDLE);
+bool Filter::FLTCOMM_CreateRemoteThread(DWORD pid, PVOID startRoutine, PVOID parameter, PVOID ntCreateThreadExAddr,
+	PVOID extra, HANDLE* outThreadHandle, HANDLE callerHandle) {
+	// Build message: DWORD pid + pointer-sized startRoutine + pointer-sized parameter + pointer ntCreateThreadExAddr + pointer extra + optional HANDLE
+	size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD) + sizeof(PVOID) + sizeof(PVOID) + sizeof(PVOID) + sizeof(PVOID);
+	msgSize += sizeof(HANDLE);
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
 	if (!msg) return false;
 	memset(msg, 0, msgSize);
@@ -633,9 +633,11 @@ bool Filter::FLTCOMM_CreateRemoteThread(DWORD pid, PVOID startRoutine, PVOID par
 	memcpy(msg->m_Data + off, &pid, sizeof(DWORD)); off += sizeof(DWORD);
 	memcpy(msg->m_Data + off, &startRoutine, sizeof(PVOID)); off += sizeof(PVOID);
 	memcpy(msg->m_Data + off, &parameter, sizeof(PVOID)); off += sizeof(PVOID);
-	if (includeHandle) {
-		memcpy(msg->m_Data + off, &callerHandle, sizeof(HANDLE)); off += sizeof(HANDLE);
-	}
+	memcpy(msg->m_Data + off, &ntCreateThreadExAddr, sizeof(PVOID)); off += sizeof(PVOID);
+	memcpy(msg->m_Data + off, &extra, sizeof(PVOID)); off += sizeof(PVOID);
+
+	memcpy(msg->m_Data + off, &callerHandle, sizeof(HANDLE)); off += sizeof(HANDLE);
+
 
 	SIZE_T replySize = outThreadHandle ? sizeof(HANDLE) : 0;
 	std::unique_ptr<BYTE[]> reply;

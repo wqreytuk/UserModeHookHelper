@@ -74,5 +74,10 @@ NTSTATUS HookList_EnumeratePaths(PVOID OutputBuffer, ULONG OutputBufferSize, PUL
 // STATUS_SUCCESS on success or an appropriate NTSTATUS on failure. This
 // function is safe to call during driver initialization.
 NTSTATUS HookList_LoadFromRegistry(VOID);
+// Persist current hook NT paths into the registry as REG_MULTI_SZ at
+// HKLM\SOFTWARE\<vendor>\UserModeHookHelper\HookPaths. The function
+// gathers current NtPath strings under the list lock and writes them.
+// Returns STATUS_SUCCESS on success.
+NTSTATUS HookList_SaveToRegistry(VOID);
 
 #endif

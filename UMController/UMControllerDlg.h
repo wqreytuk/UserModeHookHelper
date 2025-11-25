@@ -79,6 +79,7 @@ private:
 	CListCtrl m_ProcListCtrl;
 	std::wstring m_CurrentFilterString;
 	CProgressCtrl m_StartupProgress;
+	DWORD m_NtCreateThreadExSyscallNum;
 	CStatic m_StartupPct;
 	CMenu m_Menu;
 	HMODULE m_hHookUiDll = NULL; // dynamic HookUI DLL handle

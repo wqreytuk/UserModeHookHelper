@@ -340,6 +340,80 @@ NTSTATUS HookList_EnumeratePaths(PVOID OutputBuffer, ULONG OutputBufferSize, PUL
     return STATUS_SUCCESS;
 }
 
+// Persist the current NT paths into the registry as REG_MULTI_SZ at
+// REG_PERSIST_REGPATH\HookPaths. This function builds a multi-sz block
+// under the list lock and writes it atomically by creating/opening the
+// key and setting the value.
+NTSTATUS HookList_SaveToRegistry(VOID) {
+    NTSTATUS status = STATUS_SUCCESS;
+    // First compute required size
+    ULONG totalBytes = 0;
+    ExAcquireResourceSharedLite(&s_HookListLock, TRUE);
+    PLIST_ENTRY entry = s_HookList.Flink;
+    while (entry != &s_HookList) {
+        PHOOK_ENTRY p = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+        if (p && p->NtPath.Buffer && p->NtPath.Length > 0) {
+            totalBytes += p->NtPath.Length + sizeof(WCHAR);
+        } else {
+            totalBytes += sizeof(WCHAR);
+        }
+        entry = entry->Flink;
+    }
+    ExReleaseResourceLite(&s_HookListLock);
+
+    // Ensure space for final terminator
+    totalBytes += sizeof(WCHAR);
+
+    PUCHAR buffer = ExAllocatePoolWithTag(NonPagedPool, totalBytes, tag_hlst);
+    if (!buffer) return STATUS_INSUFFICIENT_RESOURCES;
+    RtlZeroMemory(buffer, totalBytes);
+
+    // Fill buffer under shared lock
+    PUCHAR dest = buffer;
+    SIZE_T remain = totalBytes;
+    ExAcquireResourceSharedLite(&s_HookListLock, TRUE);
+    entry = s_HookList.Flink;
+    while (entry != &s_HookList) {
+        PHOOK_ENTRY p = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+        if (p && p->NtPath.Buffer && p->NtPath.Length > 0) {
+            SIZE_T bytes = p->NtPath.Length;
+            RtlCopyMemory(dest, p->NtPath.Buffer, bytes);
+            // append terminator
+            ((WCHAR*)dest)[bytes / sizeof(WCHAR)] = L'\0';
+            dest += bytes + sizeof(WCHAR);
+            remain -= (bytes + sizeof(WCHAR));
+        } else {
+            // empty string
+            ((WCHAR*)dest)[0] = L'\0';
+            dest += sizeof(WCHAR);
+            remain -= sizeof(WCHAR);
+        }
+        entry = entry->Flink;
+    }
+    ExReleaseResourceLite(&s_HookListLock);
+
+    // Write to registry key
+    UNICODE_STRING uKeyName;
+    OBJECT_ATTRIBUTES oa;
+    RtlInitUnicodeString(&uKeyName, REG_PERSIST_REGPATH);
+    InitializeObjectAttributes(&oa, &uKeyName, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+    HANDLE hKey = NULL;
+    status = ZwCreateKey(&hKey, KEY_WRITE, &oa, 0, NULL, 0, NULL);
+    if (!NT_SUCCESS(status)) {
+        ExFreePoolWithTag(buffer, tag_hlst);
+        return status;
+    }
+
+    UNICODE_STRING valueName;
+    RtlInitUnicodeString(&valueName, L"HookPaths");
+
+    status = ZwSetValueKey(hKey, &valueName, 0, REG_MULTI_SZ, buffer, totalBytes - sizeof(WCHAR));
+    ZwClose(hKey);
+    ExFreePoolWithTag(buffer, tag_hlst);
+    return status;
+}
+
 // Helper context for RtlQueryRegistryValues call
 typedef struct _RL_CONTEXT {
     PUNICODE_STRING Buffer; // receives REG_MULTI_SZ block

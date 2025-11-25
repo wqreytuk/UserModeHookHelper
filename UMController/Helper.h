@@ -50,6 +50,7 @@ public:
 	// Set the Filter instance used by Helper for kernel queries. The caller
 	// should set this once during initialization (e.g., from the dialog).
 	static void SetFilterInstance(class Filter* f);
+	static   void SetNtCreateThreadExSyscallNum(DWORD num);
 	// craete a file that require nearly no privilege, every can operate
 	static bool CreateLowPrivReqFile(wchar_t* filePath,PHANDLE outFileHandle);
 	// Check if a module with the given (case-insensitive) base name is loaded
@@ -78,6 +79,7 @@ private:
 	static size_t m_sharedBufCap;
 	static std::mutex m_bufMutex;	// Optional pointer to the Filter instance owned by the UI. May be NULL.
 	static Filter* m_filterInstance;
+	static DWORD m_NtCreateThreadExSyscallNum;
    
 
 };

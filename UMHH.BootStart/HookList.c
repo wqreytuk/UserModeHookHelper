@@ -446,3 +446,63 @@ NTSTATUS HookList_LoadFromRegistry(VOID) {
 	ZwClose(hKey);
 	return STATUS_SUCCESS;
 }
+
+NTSTATUS HookList_SaveToRegistry(VOID) {
+	NTSTATUS status = STATUS_SUCCESS;
+	ULONG totalBytes = 0;
+	ExAcquireResourceSharedLite(&s_HookListLock, TRUE);
+	PLIST_ENTRY entry = s_HookList.Flink;
+	while (entry != &s_HookList) {
+		PHOOK_ENTRY p = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+		if (p && p->NtPath.Buffer && p->NtPath.Length > 0) {
+			totalBytes += p->NtPath.Length + sizeof(WCHAR);
+		} else {
+			totalBytes += sizeof(WCHAR);
+		}
+		entry = entry->Flink;
+	}
+	ExReleaseResourceLite(&s_HookListLock);
+
+	totalBytes += sizeof(WCHAR);
+	PUCHAR buffer = ExAllocatePoolWithTag(NonPagedPool, totalBytes, tag_hlst);
+	if (!buffer) return STATUS_INSUFFICIENT_RESOURCES;
+	RtlZeroMemory(buffer, totalBytes);
+
+	PUCHAR dest = buffer;
+	ExAcquireResourceSharedLite(&s_HookListLock, TRUE);
+	entry = s_HookList.Flink;
+	while (entry != &s_HookList) {
+		PHOOK_ENTRY p = CONTAINING_RECORD(entry, HOOK_ENTRY, ListEntry);
+		if (p && p->NtPath.Buffer && p->NtPath.Length > 0) {
+			SIZE_T bytes = p->NtPath.Length;
+			RtlCopyMemory(dest, p->NtPath.Buffer, bytes);
+			((WCHAR*)dest)[bytes / sizeof(WCHAR)] = L'\0';
+			dest += bytes + sizeof(WCHAR);
+		} else {
+			((WCHAR*)dest)[0] = L'\0';
+			dest += sizeof(WCHAR);
+		}
+		entry = entry->Flink;
+	}
+	ExReleaseResourceLite(&s_HookListLock);
+
+	UNICODE_STRING uKeyName;
+	OBJECT_ATTRIBUTES oa;
+	RtlInitUnicodeString(&uKeyName, REG_PERSIST_REGPATH);
+	InitializeObjectAttributes(&oa, &uKeyName, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+	HANDLE hKey = NULL;
+	status = ZwCreateKey(&hKey, KEY_WRITE, &oa, 0, NULL, 0, NULL);
+	if (!NT_SUCCESS(status)) {
+		ExFreePoolWithTag(buffer, tag_hlst);
+		return status;
+	}
+
+	UNICODE_STRING valueName;
+	RtlInitUnicodeString(&valueName, L"HookPaths");
+
+	status = ZwSetValueKey(hKey, &valueName, 0, REG_MULTI_SZ, buffer, totalBytes - sizeof(WCHAR));
+	ZwClose(hKey);
+	ExFreePoolWithTag(buffer, tag_hlst);
+	return status;
+}

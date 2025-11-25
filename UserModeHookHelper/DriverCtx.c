@@ -4,12 +4,18 @@ static PFLT_FILTER s_Filter = NULL;
 static PFLT_PORT s_ServerPort = NULL;
 static PWSTR s_UserDir = NULL;
 static BOOLEAN s_GlobalHookMode = FALSE;
-
+static DWORD64 s_ssdt;
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter) {
     s_Filter = Filter;
 }
 PFLT_FILTER DriverCtx_GetFilter(VOID) {
     return s_Filter;
+}
+DWORD64 DriverCtx_GetSSDT() {
+	return s_ssdt;
+}
+VOID DriverCtx_SetSSDT(DWORD64 ssdt) {
+	s_ssdt = ssdt;
 }
 VOID DriverCtx_SetServerPort(PFLT_PORT ServerPort) {
     s_ServerPort = ServerPort;
