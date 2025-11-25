@@ -1353,8 +1353,12 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 		// Get snapshot
 		ProcessEntry e; int idx = -1;
 		if (!PM_GetEntryCopyByPid(pid, e, &idx)) return 0;
+		bool gh = false; RegistryStore::ReadGlobalHookMode(gh);
 		bool inHook = e.bInHookList;
-		inHook = m_Filter.FLTCOMM_CheckHookList(e.path);
+		if (gh)
+			inHook = true;
+		else
+			inHook = m_Filter.FLTCOMM_CheckHookList(e.path);
 		std::wstring path = e.path;
 		std::wstring cmdline = e.cmdline;
 

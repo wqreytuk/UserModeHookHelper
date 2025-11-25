@@ -340,7 +340,7 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 			std::wstring outNtPath;
 			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
 				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
-			Log(L"TargetPID=%u arch=%s master dll not loaded, trying force injection\n",targetPid, is64 ? L"x64" : L"x86");
+			Log(L"TargetPID=%u arch=%s master dll not loaded\n",targetPid, is64 ? L"x64" : L"x86");
 			continue;
 			// my driver is not an early launch driver, so he can not possibly hook all processes
 			// some process such as lsass.exe is already started before my driver
