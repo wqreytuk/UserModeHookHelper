@@ -59,6 +59,15 @@ public:
 	bool FLTCOMM_GetProcessHandle(DWORD pid, HANDLE& outHandle);
 	// Ask kernel to log a simple hello-world message for diagnostics.
 	bool FLTCOMM_ForceInject(DWORD pid);
+	// Request kernel to create a remote thread in target process. Payload: DWORD pid, PVOID startRoutine, PVOID parameter.
+	// If outThreadHandle != NULL, kernel will return a duplicated HANDLE (valid in this process) in reply buffer.
+	// Optional: if callerHandle != NULL the caller-supplied HANDLE (from this process) will be sent so
+	// the driver can use/validate it instead of opening the target by PID. The callerHandle is only
+	// meaningful when it refers to the same target process PID and must have appropriate access rights.
+	bool FLTCOMM_CreateRemoteThread(DWORD pid, PVOID startRoutine, PVOID parameter, HANDLE* outThreadHandle, HANDLE callerHandle = NULL);
+	// Request kernel to resolve syscall number to kernel function address.
+	// Payload: ULONG syscallNumber. On success returns TRUE and sets outAddr.
+	bool FLTCOMM_GetSyscallAddr(ULONG syscallNumber, PVOID* outAddr);
 private:
 	HANDLE m_Port = INVALID_HANDLE_VALUE;
 	// listener state for async messages

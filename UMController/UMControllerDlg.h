@@ -66,6 +66,7 @@ public:
 	afx_msg void OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnMarkEarlyBreak();
 	afx_msg void OnUnmarkEarlyBreak();
+	afx_msg void OnForceInject();
 	afx_msg void OnDestroy();
     afx_msg LRESULT OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnSize(UINT nType, int cx, int cy);

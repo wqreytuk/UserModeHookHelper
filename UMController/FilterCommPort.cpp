@@ -620,6 +620,58 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE& outHandle) {
 	return true;
 }
 
+bool Filter::FLTCOMM_CreateRemoteThread(DWORD pid, PVOID startRoutine, PVOID parameter, HANDLE* outThreadHandle, HANDLE callerHandle) {
+	// Build message: DWORD pid + pointer-sized startRoutine + pointer-sized parameter + optional HANDLE
+	size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD) + sizeof(PVOID) + sizeof(PVOID);
+	bool includeHandle = (callerHandle != NULL);
+	if (includeHandle) msgSize += sizeof(HANDLE);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_CREATE_REMOTE_THREAD;
+	size_t off = 0;
+	memcpy(msg->m_Data + off, &pid, sizeof(DWORD)); off += sizeof(DWORD);
+	memcpy(msg->m_Data + off, &startRoutine, sizeof(PVOID)); off += sizeof(PVOID);
+	memcpy(msg->m_Data + off, &parameter, sizeof(PVOID)); off += sizeof(PVOID);
+	if (includeHandle) {
+		memcpy(msg->m_Data + off, &callerHandle, sizeof(HANDLE)); off += sizeof(HANDLE);
+	}
+
+	SIZE_T replySize = outThreadHandle ? sizeof(HANDLE) : 0;
+	std::unique_ptr<BYTE[]> reply;
+	if (replySize) reply.reset(new BYTE[replySize]);
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, replySize ? reply.get() : NULL, (DWORD)replySize, &bytesOut);
+	free(msg);
+	if (hr != S_OK) return false;
+	if (outThreadHandle) {
+		if (bytesOut < (DWORD)sizeof(HANDLE)) return false;
+		HANDLE h = NULL; RtlCopyMemory(&h, reply.get(), sizeof(HANDLE));
+		*outThreadHandle = h;
+	}
+	return true;
+}
+
+bool Filter::FLTCOMM_GetSyscallAddr(ULONG syscallNumber, PVOID* outAddr) {
+	if (!outAddr) return false;
+	size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(ULONG);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_GET_SYSCALL_ADDR;
+	memcpy(msg->m_Data, &syscallNumber, sizeof(ULONG));
+
+	SIZE_T replySize = sizeof(PVOID);
+	std::unique_ptr<BYTE[]> reply(new BYTE[replySize]);
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, reply.get(), (DWORD)replySize, &bytesOut);
+	free(msg);
+	if (hr != S_OK || bytesOut < (DWORD)replySize) return false;
+	PVOID addr = NULL; RtlCopyMemory(&addr, reply.get(), sizeof(PVOID));
+	*outAddr = addr;
+	return true;
+}
+
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	LOG_CTRL_ETW(L"FLTCOMM_RemoveHookByHash: request hash=0x%I64x\n", hash);
 	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1;

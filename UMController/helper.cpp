@@ -541,7 +541,16 @@ cleanup:
 	if (coInit) CoUninitialize();
 	return result;
 }
- 
+bool Helper::ResolveNtCreateThreadExSyscallNum(DWORD* sys_call_num) {
+	*sys_call_num = 0;
+	UCHAR out_buf[0x10] = { 0 };
+	if (!ReadExportFirstBytesFromFile(L"C:\\Windows\\System32\\ntdll.dll", "NtCreateThreadEx", out_buf)) {
+		LOG_CTRL_ETW(L"failed to call ReadExportFirstBytesFromFile\n");
+		return false;
+	}
+
+	return true;
+}
 bool Helper::ForceInject(DWORD pid) {
 	// I have an idea about foce inject, we get a process handle with 
 	// PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION
@@ -576,7 +585,7 @@ bool Helper::ForceInject(DWORD pid) {
 	const wchar_t* masterName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 	std::wstring dllnamepath = dir + L"\\" + masterName;
 	// write dll path
-	if (!WriteProcessMemory(hProc, baseaddress, (void*)dllnamepath.c_str(), dllnamepath.size(), NULL)) {
+	if (!WriteProcessMemory(hProc, baseaddress, (void*)dllnamepath.c_str(), sizeof(wchar_t)* dllnamepath.size(), NULL)) {
 		LOG_CTRL_ETW(L"WriteProcessMemory failed, error=0x%x\n", GetLastError());
 		goto CLEAN_UP;
 	}
@@ -585,14 +594,13 @@ bool Helper::ForceInject(DWORD pid) {
 		LOG_CTRL_ETW(L"GetModuleHandleA failed, error=0x%x\n", GetLastError());
 		goto CLEAN_UP;
 	}
-	void* pLoadLibraryA = GetProcAddress(hKernel32, "LoadLibraryA");
-	if (pLoadLibraryA == nullptr) {
-		LOG_CTRL_ETW(L"Get loadlibraryA ProcAddress failed, error=0x%x\n", GetLastError());
+	void* pLoadLibraryW = GetProcAddress(hKernel32, "LoadLibraryW");
+	if (pLoadLibraryW == nullptr) {
+		LOG_CTRL_ETW(L"Get loadlibraryW ProcAddress failed, error=0x%x\n", GetLastError());
 		goto CLEAN_UP;
 	}
-	HANDLE hThread = CreateRemoteThread(hProc, nullptr, NULL, (LPTHREAD_START_ROUTINE)pLoadLibraryA, baseaddress, NULL, nullptr);
-	if (hThread == NULL) {
-		LOG_CTRL_ETW(L"call CreateRemoteThread failed, error=0x%x\n", GetLastError());
+	if(!Helper::m_filterInstance->FLTCOMM_CreateRemoteThread(pid, pLoadLibraryW, baseaddress, NULL)){
+		LOG_CTRL_ETW(L"call FLTCOMM_CreateRemoteThread failed\n");
 		goto CLEAN_UP;
 	}
 	CloseHandle(hProc);
@@ -818,6 +826,82 @@ std::wstring Helper::ToHex(ULONGLONG value) {
 		out.push_back(digits[v]);
 	}
 	return out;
+}
+
+// Read first 16 bytes of an export directly from DLL file on disk.
+bool Helper::ReadExportFirstBytesFromFile(const wchar_t* dllPath, const char* exportName, unsigned char outBuf[16]) {
+	if (!dllPath || !exportName || !outBuf) return false;
+
+	HANDLE hFile = CreateFileW(dllPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		LOG_CTRL_ETW(L"ReadExportFirstBytesFromFile: CreateFileW failed for %s err=%u\n", dllPath, GetLastError());
+		return false;
+	}
+
+	HANDLE hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+	if (!hMap) { CloseHandle(hFile); return false; }
+	LPVOID base = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
+	if (!base) { CloseHandle(hMap); CloseHandle(hFile); return false; }
+
+	__try {
+		IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
+		if (dos->e_magic != IMAGE_DOS_SIGNATURE) { __leave; }
+		IMAGE_NT_HEADERS64* nth64 = (IMAGE_NT_HEADERS64*)((PBYTE)base + dos->e_lfanew);
+		if (nth64->Signature != IMAGE_NT_SIGNATURE) { __leave; }
+
+		// Only support x64 images. Fail fast for non-x64.
+		if (nth64->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) __leave;
+
+		if (nth64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress == 0) __leave;
+		IMAGE_EXPORT_DIRECTORY* exp = (IMAGE_EXPORT_DIRECTORY*)((PBYTE)base + RvaToOffset(base, nth64, nth64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress));
+		if (!exp) __leave;
+
+		DWORD* names = (DWORD*)((PBYTE)base + RvaToOffset(base, nth64, exp->AddressOfNames));
+		WORD* ords = (WORD*)((PBYTE)base + RvaToOffset(base, nth64, exp->AddressOfNameOrdinals));
+		DWORD* funcs = (DWORD*)((PBYTE)base + RvaToOffset(base, nth64, exp->AddressOfFunctions));
+
+		// Find export (ASCII comparison)
+		DWORD funcRva = 0; BOOL found = FALSE;
+		for (DWORD i = 0; i < exp->NumberOfNames; ++i) {
+			const char* name = (const char*)((PBYTE)base + RvaToOffset(base, nth64, names[i]));
+			if (_stricmp(name, exportName) == 0) {
+				WORD ord = ords[i];
+				if (ord < exp->NumberOfFunctions) { funcRva = funcs[ord]; found = TRUE; break; }
+			}
+		}
+		if (!found) __leave;
+
+		// Convert RVA to file offset then read 16 bytes
+		SIZE_T offset = RvaToOffset(base, nth64, funcRva);
+		if (offset == (SIZE_T)-1) __leave;
+		memcpy(outBuf, (PBYTE)base + offset, 16);
+		UnmapViewOfFile(base); CloseHandle(hMap); CloseHandle(hFile);
+		return true;
+	}
+	__finally {
+		// If not returned above, unmap/close
+		if (base) { UnmapViewOfFile(base); }
+		if (hMap) CloseHandle(hMap);
+		if (hFile) CloseHandle(hFile);
+	}
+	return false;
+}
+
+// Helper: convert an RVA to a raw file offset for the mapped image.
+// `base` is the mapped file base. `nth` may be 32- or 64-bit header pointer;
+// we treat it as 64-bit for offsets since layouts are compatible for section table location.
+SIZE_T Helper::RvaToOffset(void* base, IMAGE_NT_HEADERS64* nth, DWORD rva) {
+	IMAGE_SECTION_HEADER* sections = (IMAGE_SECTION_HEADER*)((PBYTE)&nth->OptionalHeader + nth->FileHeader.SizeOfOptionalHeader);
+	WORD number = nth->FileHeader.NumberOfSections;
+	for (WORD i = 0; i < number; ++i) {
+		DWORD va = sections[i].VirtualAddress;
+		DWORD vs = sections[i].Misc.VirtualSize ? sections[i].Misc.VirtualSize : sections[i].SizeOfRawData;
+		if (rva >= va && rva < va + vs) {
+			DWORD delta = rva - va;
+			return (SIZE_T)sections[i].PointerToRawData + delta;
+		}
+	}
+	return (SIZE_T)-1;
 }
 
 // Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)

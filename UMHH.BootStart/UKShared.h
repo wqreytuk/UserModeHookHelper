@@ -33,6 +33,12 @@
 // Request the kernel duplicate a process handle for a given PID into the
 // caller process. Payload: DWORD pid. Reply: HANDLE (duplicated into caller).
 #define CMD_GET_PROCESS_HANDLE 11
+// Create remote thread via NtCreateThreadEx semantics. Payload: DWORD pid; PVOID startRoutine; PVOID parameter
+#define CMD_CREATE_REMOTE_THREAD 12
+// Request kernel to return the kernel address (function pointer) for a
+// given syscall number. Payload: ULONG syscallNumber. Reply: pointer-sized
+// kernel address (if available).
+#define CMD_GET_SYSCALL_ADDR 13
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {

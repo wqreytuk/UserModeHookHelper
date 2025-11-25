@@ -19,6 +19,7 @@ public:
 	// Overload: reuse an already opened PROCESS_QUERY_LIMITED_INFORMATION handle
 	// to avoid a second OpenProcess. Caller retains ownership of hProcess.
 	static bool GetFullImageNtPathFromHandle(HANDLE hProcess, std::wstring& outNtPath);
+	static bool ReadExportFirstBytesFromFile(const wchar_t* dllPath, const char* exportName, unsigned char outBuf[16]);
 
 	// Resolve NT path: try user-mode then kernel fallback via Filter.
 	static bool ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& outNtPath);
@@ -39,6 +40,7 @@ public:
 	// return quickly. If not set, Fatal() will log and return.
 	static void SetFatalHandler(FatalHandlerType handler);
 	static void Fatal(const wchar_t* message);
+	static bool ResolveNtCreateThreadExSyscallNum(DWORD* sys_call_num);
 	static bool ForceInject(DWORD pid);
 	// Determine whether the target process is 64-bit. Returns true on success
 	// and sets outIs64. On failure returns false and leaves outIs64 unchanged.
@@ -57,6 +59,7 @@ public:
 	// Convert an integer value to uppercase hexadecimal without leading zeros.
 	// Returns L"0" when value==0. Does NOT include any prefix like 0x.
 	static std::wstring ToHex(ULONGLONG value);
+	static SIZE_T RvaToOffset(void* base, IMAGE_NT_HEADERS64* nth, DWORD rva);
     // Enable or disable the SeDebugPrivilege for the current process/token.
     // Returns true on success.
     static bool EnableDebugPrivilege(bool enable);

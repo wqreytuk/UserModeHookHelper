@@ -335,6 +335,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_MENU_OPEN_ETW_LOG, &CUMControllerDlg::OnOpenEtwLog)
 	ON_COMMAND(ID_MENU_MARK_EARLY_BREAK, &CUMControllerDlg::OnMarkEarlyBreak)
 	ON_COMMAND(ID_MENU_UNMARK_EARLY_BREAK, &CUMControllerDlg::OnUnmarkEarlyBreak)
+	ON_COMMAND(ID_MENU_FORCE_INJECT, &CUMControllerDlg::OnForceInject)
 	ON_MESSAGE(WM_APP_FATAL, &CUMControllerDlg::OnFatalMessage)
 	// Hook dialog destruction message now supplied by DLL (numeric constant)
 	ON_MESSAGE(WM_APP + 0x701, &CUMControllerDlg::OnHookDlgDestroyed)
@@ -1608,6 +1609,9 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	menu.AppendMenu(MF_STRING, ID_MENU_MARK_EARLY_BREAK, L"Mark Early Break");
 	menu.AppendMenu(MF_STRING, ID_MENU_UNMARK_EARLY_BREAK, L"Unmark Early Break");
 
+	// Add Force Inject menu for entries that are not in hook list and master DLL not loaded
+	menu.AppendMenu(MF_STRING, ID_MENU_FORCE_INJECT, L"Force Inject");
+
 	// grey out certai menu based on bInHookList
 	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
 	bool inHook = (flags & PF_IN_HOOK_LIST) != 0;
@@ -1635,6 +1639,9 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	// Only one of these should be enabled at a time
 	menu.EnableMenuItem(ID_MENU_MARK_EARLY_BREAK, marked ? MF_GRAYED : MF_ENABLED);
 	menu.EnableMenuItem(ID_MENU_UNMARK_EARLY_BREAK, marked ? MF_ENABLED : MF_GRAYED);
+
+	// Force inject enabled only when NOT in hook list and master DLL is NOT loaded
+	menu.EnableMenuItem(ID_MENU_FORCE_INJECT, (!inHook && !dllLoaded) ? MF_ENABLED : MF_GRAYED);
 
 	// Ensure UI reflects persisted mark (some update paths may not have applied the persisted bit).
 	if (marked) {
@@ -1826,6 +1833,30 @@ void CUMControllerDlg::OnUnmarkEarlyBreak()
 	WCHAR pathBuf[MAX_PATH] = { 0 };
 	_snwprintf_s(pathBuf, RTL_NUMBER_OF(pathBuf), USER_MODE_EARLY_BREAK_SIGNAL_FILE_FMT, (void*)hval);
 	DeleteFile(pathBuf);
+}
+
+void CUMControllerDlg::OnForceInject()
+{
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) return;
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
+	bool inHook = (flags & PF_IN_HOOK_LIST) != 0;
+	bool dllLoaded = (flags & PF_MASTER_DLL_LOADED) != 0;
+	// Only allow when NOT in hook list and master DLL not loaded
+	if (inHook || dllLoaded) {
+		this->MessageBoxW(L"Force Inject is only available for processes not in the hook list and without the master DLL loaded.", L"Not Allowed", MB_ICONWARNING | MB_OK);
+		return;
+	}
+
+	// Ask Helper to force an injection
+	if (!Helper::ForceInject(pid)) {
+		this->MessageBoxW(L"Force Inject failed. Check permissions and driver state.", L"Error", MB_ICONERROR | MB_OK);
+	} else {
+		// Optionally notify user of queued injection
+		this->MessageBoxW(L"Force Inject request sent.", L"Info", MB_ICONINFORMATION | MB_OK);
+	}
 }
 
 LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {

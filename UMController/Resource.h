@@ -15,6 +15,8 @@
 #define ID_MENU_ADD_HOOK       40001
 #define ID_MENU_REMOVE_HOOK    40002
 #define ID_MENU_INJECT_DLL     40003
+// Force Inject context menu (invokes Helper::ForceInject when allowed)
+#define ID_MENU_FORCE_INJECT   40010
 // Early-break marking context menu
 #define ID_MENU_MARK_EARLY_BREAK 40008
 #define ID_MENU_UNMARK_EARLY_BREAK 40009

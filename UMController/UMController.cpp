@@ -67,6 +67,11 @@ BOOL CUMControllerApp::InitInstance()
 	}
 	Helper::UMHH_DriverCheck();
 
+	// resolve NtCreateThreadEx syscal number
+	if (!Helper::ResolveNtCreateThreadExSyscallNum()) {
+		Helper::Fatal(L"ResolveNtCreateThreadExSyscallNum failed\n");
+	}
+
 	AfxEnableControlContainer();
 
 	// (Removed) Shell manager creation: not needed since dialog has no shell controls.
