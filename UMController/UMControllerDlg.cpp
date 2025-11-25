@@ -1427,7 +1427,12 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 		// mark in item data; updates must not clear that bit.
 		DWORD existingData = (DWORD)m_ProcListCtrl.GetItemData(item);
 		// bool earlyMarkedNow = (FLAGS_FROM_ITEMDATA(existingData) & PF_EARLY_BREAK_MARKED) != 0;
-		bool earlyMarkedNow = e.early_break;
+		bool earlyMarkedNow = false;
+		if (!e.path.empty()) {
+			std::wstring low = e.path;
+			for (wchar_t &c : low) c = towlower(c);
+			if (m_EarlyBreakSet.find(low) != m_EarlyBreakSet.end()) earlyMarkedNow = true;
+		}
 		PROC_ITEMDATA mergedPacked = MAKE_ITEMDATA(pid, flags);
 		if (earlyMarkedNow) {
 			DWORD mergedFlags = FLAGS_FROM_ITEMDATA(mergedPacked) | PF_EARLY_BREAK_MARKED;

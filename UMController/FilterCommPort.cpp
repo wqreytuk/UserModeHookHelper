@@ -580,6 +580,8 @@ bool Filter::FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64) {
 	free(msg);
 
 	if (hr != S_OK) {
+		if (0x80070057 == hr)
+			return false;
 		LOG_CTRL_ETW(L"FLTCOMM_IsProcessWow64: FilterSendMessage failed hr=0x%08x pid=%u\n", hr, pid);
 		return false;
 	}

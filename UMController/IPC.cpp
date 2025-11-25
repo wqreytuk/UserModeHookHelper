@@ -8,6 +8,7 @@
 #include "Helper.h" // for app.GetETW()
 #include "../Shared/LogMacros.h"
 #include <sddl.h>
+#include "../Shared/SharedMacroDef.h"
 
 
 // Helper to format named object name into buffer
@@ -104,33 +105,18 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	}
 
 	CloseHandle(hFile);
+	delete[] asciiBuf;
 
-	WCHAR eventFilePath[MAX_PATH];
-	FormatObjectName(eventFilePath, RTL_NUMBER_OF(eventFilePath), USER_IPC_EVENT_FILE_FMT, (unsigned)pid);
-	while (Helper::IsFileExists(eventFilePath))
-	{
-		DeleteFile(eventFilePath);
-		Sleep(500);
-	}
-
-	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-		sddl, SDDL_REVISION_1, &pSD, NULL)) {
-		LOG_CTRL_ETW(L"ConvertStringSecurityDescriptorToSecurityDescriptorW failed: 0x%x\n", GetLastError());
-		Helper::Fatal(L"ConvertStringSecurityDescriptorToSecurityDescriptorW function call failed\n");
-		return FALSE;
-	}
-
-	hFile = CreateFile(eventFilePath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (hFile == INVALID_HANDLE_VALUE) {
-		LocalFree(pSD);
-		LOG_CTRL_ETW(L"failed to create event file: %ws, error=0x%x\n", eventFilePath, GetLastError());
-		Helper::Fatal(L"failed to create event file\n");
+	WCHAR event_name[MAX_PATH];
+	FormatObjectName(event_name, RTL_NUMBER_OF(event_name), USER_MODE_INJECTION_SIGNAL_EVENT L"%d", (unsigned)pid);
+	HANDLE h = OpenEventW(EVENT_MODIFY_STATE, FALSE, event_name);
+	if (h) {
+		SetEvent(h);
+		LOG_CTRL_ETW(L"event=%s signaled, notifying injected dll to process injection request\n", event_name);
 	}
 	else {
-		CloseHandle(hFile);
-		LocalFree(pSD);
-		LOG_CTRL_ETW(L"event file is created; notifying injected dll to process injection request\n");
+		LOG_CTRL_ETW(L"failed to open event==%s, error=0x%x\n", event_name, GetLastError());
+		return FALSE;
 	}
-	delete[] asciiBuf;
 	return TRUE;
 }

@@ -18,7 +18,7 @@
 #define WFILE WIDEN(__FILE__)
 
 
-
+HANDLE g_EventHandle;
 
 
 typedef NTSTATUS(NTAPI *PFN_NtQueryInformationProcess)(
@@ -398,32 +398,10 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 	_snwprintf(eventFile, RTL_NUMBER_OF(eventFile), DLL_IPC_EVENT_FILE_FMT, NtCurrentProcessId());
 	// Server loop: wait on event, read WCHAR path from section, load, zero buffer
 	for (;;) {
+		// wait for injection signal event, if signaled, we proceed
+		NtWaitForSingleObject(g_EventHandle, FALSE, NULL);
+
 		
-
-		//pNtWaitForSingleObject(hEvent, FALSE, NULL);
-		while (!FileExistsViaNtOpenFile(eventFile)) {
-
-
-			LARGE_INTEGER li;
-			li.QuadPart = -(LONGLONG)500 * 10000LL;
-
-			pNtDelay((BOOLEAN)0, &li);
-		}
-		while (FileExistsViaNtOpenFile(eventFile)) {
-
-			UNICODE_STRING uPath;
-			RtlInitUnicodeString(&uPath, eventFile);
-
-			OBJECT_ATTRIBUTES objAttr;
-			InitializeObjectAttributes(&objAttr, &uPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
-
-			pNtDeleteFile(&objAttr);
-			LARGE_INTEGER li;
-			li.QuadPart = -(LONGLONG)500 * 10000LL;
-
-			pNtDelay((BOOLEAN)0, &li);
-		}
-
 		EtwLog(L"current process is signaled to inject a dll\n");
 		char dllPath[256] = { 0 };
 		int pid = ReadFileParsePidAndDllPath(pathBuf, dllPath);
@@ -462,7 +440,7 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 			pLdrLoadDll(0, 0, ustr, (PHANDLE)dllPath);
 		}
-
+		NtResetEvent(g_EventHandle, NULL);
 	}
 
 
@@ -586,36 +564,78 @@ OnProcessAttach(
 
 
 	// we should create an event to signal that we have master dll loaded
-	
+	{
+		WCHAR event_name[1100];
+		_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_NT_MASTER_LOAD_EVENT L"%d", NtCurrentProcessId());
 
-	WCHAR event_name[1100];
-	_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_NT_MASTER_LOAD_EVENT L"%d", NtCurrentProcessId());
-	
-	UNICODE_STRING name;
-	RtlInitUnicodeString(&name, event_name);
+		UNICODE_STRING name;
+		RtlInitUnicodeString(&name, event_name);
 
-	OBJECT_ATTRIBUTES oa;
-	InitializeObjectAttributes(
-		&oa,
-		&name,
-		OBJ_CASE_INSENSITIVE,
-		NULL,
-		NULL
-	);
+		OBJECT_ATTRIBUTES oa;
+		InitializeObjectAttributes(
+			&oa,
+			&name,
+			OBJ_CASE_INSENSITIVE,
+			NULL,
+			NULL
+		);
 
-	HANDLE hEvent = NULL;
+		HANDLE hEvent = NULL;
 
-	NTSTATUS status = NtCreateEvent(
-		&hEvent,
-		EVENT_ALL_ACCESS,
-		&oa,
-		NotificationEvent,   // or SynchronizationEvent
-		FALSE                // Initial state
-	);
+		NTSTATUS status = NtCreateEvent(
+			&hEvent,
+			EVENT_ALL_ACCESS,
+			&oa,
+			NotificationEvent,   // or SynchronizationEvent
+			FALSE                // Initial state
+		);
 
-	if (status != 0) {
-		EtwLog(L"failed to call NtCreateEvent, status=0x%x\n", status);
+		if (status != 0) {
+			EtwLog(L"failed to call NtCreateEvent to create master loaded signal Event=%wZ, status=0x%x\n", &name, status);
+		}
 	}
+
+	// create injection signal event
+	{
+		WCHAR event_name[1100];
+		_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_NT_INJECTION_SIGNAL_EVENT L"%d", NtCurrentProcessId());
+
+		UNICODE_STRING name;
+		RtlInitUnicodeString(&name, event_name);
+
+		
+		g_EventHandle = NULL;
+		SECURITY_DESCRIPTOR sd = { 0 };
+
+		// Use revision 1
+		sd.Revision = 1;
+
+		// Set control flags (SE_DACL_PRESENT = 0x04)
+		sd.Control = SE_DACL_PRESENT;
+
+		// Set a NULL DACL (everyone full access)
+		sd.Dacl = NULL;
+		OBJECT_ATTRIBUTES oa;
+		InitializeObjectAttributes(
+			&oa,
+			&name,
+			OBJ_CASE_INSENSITIVE,
+			NULL,
+			&sd
+		);
+		NTSTATUS status = NtCreateEvent(
+			&g_EventHandle,
+			EVENT_ALL_ACCESS,
+			&oa,
+			NotificationEvent,   // or SynchronizationEvent
+			FALSE                // Initial state
+		);
+
+		if (status != 0) {
+			EtwLog(L"failed to call NtCreateEvent to create injection signal Event=%wZ, status=0x%x\n", &name, status);
+		}
+	}
+
 	EventRegister(&ProviderGUID,
 		NULL,
 		NULL,
