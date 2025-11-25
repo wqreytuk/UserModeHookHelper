@@ -21,6 +21,7 @@
 #include "../UserModeHookHelper/UKShared.h"
 #include <psapi.h>
 #include "../Shared/SharedMacroDef.h"
+#include "ProcFlags.h"
 #pragma comment(lib, "wbemuuid.lib")
 
 // Simple process-wide fatal handler. Stored as an atomic pointer so it can be
@@ -542,12 +543,64 @@ cleanup:
 }
  
 bool Helper::ForceInject(DWORD pid) {
+	// I have an idea about foce inject, we get a process handle with 
+	// PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION
+	// access
+	HANDLE hProc = NULL;
 	if (Helper::m_filterInstance) {
-		return Helper::m_filterInstance->FLTCOMM_ForceInject(pid);
+		if (!Helper::m_filterInstance->FLTCOMM_GetProcessHandle(pid, hProc)) {
+			LOG_CTRL_ETW(L"failed to call FLTCOMM_GetProcessHandle\n");
+			return false;
+		}
 	}
-	
-	LOG_CTRL_ETW(L"can't perform force injection because Helper::m_filterInstance is NULL\n");
-	Fatal(L"can't perform force injection because Helper::m_filterInstance is NULL\n");
+	else {
+		Fatal(L"Helper::m_filterInstance=NULL\n");
+		return false;
+	}
+	LOG_CTRL_ETW(L"get process handle=0x%x from kernel\n", hProc);
+	void* baseaddress = VirtualAllocEx(hProc, NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (baseaddress == nullptr) {
+		LOG_CTRL_ETW(L"virtualloc failed, error=0x%x\n", GetLastError());
+		CloseHandle(hProc);
+		return false;
+	}
+	std::wstring exe = Helper::GetCurrentModulePath(L"");
+	size_t pos = exe.find_last_of(L"/\\");
+	std::wstring dir = (pos == std::wstring::npos) ? exe : exe.substr(0, pos);
+	bool is64;
+	if (!IsProcess64(pid, is64)) {
+		LOG_CTRL_ETW(L"failed to call IsProcess64 PID=%u\n", pid);
+		CloseHandle(hProc);
+		return false;
+	}
+	const wchar_t* masterName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+	std::wstring dllnamepath = dir + L"\\" + masterName;
+	// write dll path
+	if (!WriteProcessMemory(hProc, baseaddress, (void*)dllnamepath.c_str(), dllnamepath.size(), NULL)) {
+		LOG_CTRL_ETW(L"WriteProcessMemory failed, error=0x%x\n", GetLastError());
+		goto CLEAN_UP;
+	}
+	HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
+	if (hKernel32 == NULL) {
+		LOG_CTRL_ETW(L"GetModuleHandleA failed, error=0x%x\n", GetLastError());
+		goto CLEAN_UP;
+	}
+	void* pLoadLibraryA = GetProcAddress(hKernel32, "LoadLibraryA");
+	if (pLoadLibraryA == nullptr) {
+		LOG_CTRL_ETW(L"Get loadlibraryA ProcAddress failed, error=0x%x\n", GetLastError());
+		goto CLEAN_UP;
+	}
+	HANDLE hThread = CreateRemoteThread(hProc, nullptr, NULL, (LPTHREAD_START_ROUTINE)pLoadLibraryA, baseaddress, NULL, nullptr);
+	if (hThread == NULL) {
+		LOG_CTRL_ETW(L"call CreateRemoteThread failed, error=0x%x\n", GetLastError());
+		goto CLEAN_UP;
+	}
+	CloseHandle(hProc);
+	return true;
+
+CLEAN_UP:
+	VirtualFreeEx(hProc, baseaddress, 0x0, MEM_RELEASE);
+	CloseHandle(hProc);
 	return false;
 }
 

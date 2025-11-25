@@ -16,6 +16,7 @@ static NTSTATUS Handle_RemoveHook(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSi
 static NTSTATUS Handle_CheckHookList(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_GetImagePathByPid(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_GetHookSection(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_GetProcessHandle(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -247,6 +248,10 @@ Comm_MessageNotify(
 		break;
 	case CMD_GET_HOOK_SECTION:
 		status = Handle_GetHookSection(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_GET_PROCESS_HANDLE:
+		status = Handle_GetProcessHandle(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
 		break;
 	case CMD_SET_GLOBAL_HOOK_MODE:
 		status = Handle_SetGlobalHookMode(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
@@ -795,4 +800,100 @@ Handle_GetHookSection(
 	}
 	ObDereferenceObject(proc);
 	return status;
+}
+
+static NTSTATUS
+Handle_GetProcessHandle(
+	PCOMM_CONTEXT CallerCtx,
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	UNREFERENCED_PARAMETER(msg);
+	UNREFERENCED_PARAMETER(InputBufferSize);
+	if (!OutputBuffer || OutputBufferSize < sizeof(HANDLE)) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	if (!CallerCtx) return STATUS_INVALID_PARAMETER;
+
+	// Caller target process is the client that sent the message
+	DWORD callerPid = (DWORD)(ULONG_PTR)CallerCtx->m_UserProcessId;
+
+	// Extract requested PID from message payload
+	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	DWORD targetPid = 0;
+	RtlCopyMemory(&targetPid, msg->m_Data, sizeof(DWORD));
+
+	// Look up PEPROCESS for target
+	PEPROCESS targetProc = NULL;
+	NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)targetPid, &targetProc);
+	if (!NT_SUCCESS(st) || targetProc == NULL) {
+		Log(L"can not located EPROCESS for target PID=%u", targetPid);
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return st;
+	}
+
+	// Open a handle to the target process in kernel (kernel handle in our process)
+	HANDLE hTarget = NULL;
+	st = ObOpenObjectByPointer(targetProc, OBJ_KERNEL_HANDLE, NULL, PROCESS_DUP_HANDLE, *PsProcessType, KernelMode, &hTarget);
+	if (!NT_SUCCESS(st)) {
+		ObDereferenceObject(targetProc);
+		Log(L"can not reference target EPROCESS=0x%p object, Status=0x%x\n", targetProc, st);
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return st;
+	}
+
+	// Now open a handle to the caller process so we can duplicate into it
+	PEPROCESS callerProc = NULL;
+	st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)callerPid, &callerProc);
+	if (!NT_SUCCESS(st) || callerProc == NULL) {
+		ZwClose(hTarget);
+		ObDereferenceObject(targetProc);
+		Log(L"can not located EPROCESS for caller PID=%u", callerPid);
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return st;
+	}
+
+	HANDLE hCallerProc = NULL;
+	st = ObOpenObjectByPointer(callerProc, OBJ_KERNEL_HANDLE, NULL, PROCESS_DUP_HANDLE, *PsProcessType, KernelMode, &hCallerProc);
+	if (!NT_SUCCESS(st)) {
+		ZwClose(hTarget);
+		ObDereferenceObject(targetProc);
+		ObDereferenceObject(callerProc);
+		Log(L"can not reference caller EPROCESS=0x%p object, Status=0x%x\n", callerProc, st);
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return st;
+	}
+
+	// Duplicate the target process handle into the caller process with desired access.
+	HANDLE dup = NULL;
+	// Desired access: PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION
+	// Use DUPLICATE_SAME_ACCESS to preserve current access of section handle; instead request specific rights by passing AccessMask.
+	// PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION;
+	// -> 0n1082
+	ACCESS_MASK DesiredAccess = 0x43A;
+	st = ZwDuplicateObject(ZwCurrentProcess(), hTarget, hCallerProc, &dup, DesiredAccess, 0, 0);
+
+	// Cleanup kernel handles and object refs
+	ZwClose(hTarget);
+	ZwClose(hCallerProc);
+	ObDereferenceObject(targetProc);
+	ObDereferenceObject(callerProc);
+
+	if (!NT_SUCCESS(st)) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return st;
+	}
+
+	// Return duplicated handle value to caller (handle is valid in caller process)
+	RtlCopyMemory(OutputBuffer, &dup, sizeof(HANDLE));
+	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(HANDLE);
+	return STATUS_SUCCESS;
 }

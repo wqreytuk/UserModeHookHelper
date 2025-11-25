@@ -598,6 +598,28 @@ bool Filter::FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64) {
 	return true;
 }
 
+bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE& outHandle) {
+	outHandle = NULL;
+	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_GET_PROCESS_HANDLE;
+	memcpy(msg->m_Data, &pid, sizeof(DWORD));
+
+	SIZE_T replySize = sizeof(HANDLE);
+	std::unique_ptr<BYTE[]> reply(new BYTE[replySize]);
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, reply.get(), (DWORD)replySize, &bytesOut);
+	free(msg);
+	if (hr != S_OK || bytesOut < (DWORD)replySize) return false;
+	HANDLE h = NULL;
+	RtlCopyMemory(&h, reply.get(), sizeof(HANDLE));
+	if (!h) return false;
+	outHandle = h;
+	return true;
+}
+
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	LOG_CTRL_ETW(L"FLTCOMM_RemoveHookByHash: request hash=0x%I64x\n", hash);
 	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1;

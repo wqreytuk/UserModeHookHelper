@@ -32,6 +32,9 @@
 #define CMD_SET_GLOBAL_HOOK_MODE 10
 // Signal the driver to emit a simple HelloWorld log message (no payload)
 #define CMD_FORCE_INJECT 11
+// Request the kernel duplicate a process handle for a given PID into the
+// caller process. Payload: DWORD pid. Reply: HANDLE (duplicated into caller).
+#define CMD_GET_PROCESS_HANDLE 12
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {

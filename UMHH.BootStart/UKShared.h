@@ -30,6 +30,9 @@
 #define CMD_IS_PROCESS_WOW64 9
 // Set global hook mode on/off. Payload: BOOLEAN enabled (1 = enabled, 0 = disabled)
 #define CMD_SET_GLOBAL_HOOK_MODE 10
+// Request the kernel duplicate a process handle for a given PID into the
+// caller process. Payload: DWORD pid. Reply: HANDLE (duplicated into caller).
+#define CMD_GET_PROCESS_HANDLE 11
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {

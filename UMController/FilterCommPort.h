@@ -53,6 +53,10 @@ public:
 	// true on success and sets outIsWow64 accordingly.
 	bool FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64);
 	bool FLTCOMM_SetGlobalHookMode(bool enabled);
+	// Request kernel to duplicate a process handle for a given PID into this
+	// process. Returns true on success and sets outHandle to the duplicated
+	// handle (caller must CloseHandle when done). Requires caller privileges.
+	bool FLTCOMM_GetProcessHandle(DWORD pid, HANDLE& outHandle);
 	// Ask kernel to log a simple hello-world message for diagnostics.
 	bool FLTCOMM_ForceInject(DWORD pid);
 private:
