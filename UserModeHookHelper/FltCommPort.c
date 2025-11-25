@@ -19,6 +19,7 @@ static NTSTATUS Handle_GetHookSection(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MES
 static NTSTATUS Handle_GetProcessHandle(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_CreateRemoteThread(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_GetSyscallAddr(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_WriteDllPathToTargetProcess(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -259,6 +260,9 @@ Comm_MessageNotify(
 		break;
 	case CMD_CREATE_REMOTE_THREAD:
 		status = Handle_CreateRemoteThread(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_WRITE_DLL_PATH:
+		status = Handle_WriteDllPathToTargetProcess(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
 		break;
 	case CMD_SET_GLOBAL_HOOK_MODE:
@@ -860,7 +864,7 @@ Handle_GetProcessHandle(
 
 	// Open a handle to the target process in kernel (kernel handle in our process)
 	HANDLE hTarget = NULL;
-	st = ObOpenObjectByPointer(targetProc, OBJ_KERNEL_HANDLE, NULL, PROCESS_DUP_HANDLE, *PsProcessType, KernelMode, &hTarget);
+	st = ObOpenObjectByPointer(targetProc, OBJ_KERNEL_HANDLE, NULL, PROCESS_ALL_ACCESS, *PsProcessType, KernelMode, &hTarget);
 	if (!NT_SUCCESS(st)) {
 		ObDereferenceObject(targetProc);
 		Log(L"can not reference target EPROCESS=0x%p object, Status=0x%x\n", targetProc, st);
@@ -880,7 +884,7 @@ Handle_GetProcessHandle(
 	}
 
 	HANDLE hCallerProc = NULL;
-	st = ObOpenObjectByPointer(callerProc, OBJ_KERNEL_HANDLE, NULL, PROCESS_DUP_HANDLE, *PsProcessType, KernelMode, &hCallerProc);
+	st = ObOpenObjectByPointer(callerProc, OBJ_KERNEL_HANDLE, NULL, PROCESS_ALL_ACCESS, *PsProcessType, KernelMode, &hCallerProc);
 	if (!NT_SUCCESS(st)) {
 		ZwClose(hTarget);
 		ObDereferenceObject(targetProc);
@@ -896,9 +900,14 @@ Handle_GetProcessHandle(
 	// Use DUPLICATE_SAME_ACCESS to preserve current access of section handle; instead request specific rights by passing AccessMask.
 	// PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION;
 	// -> 0n1082
-	ACCESS_MASK DesiredAccess = 0x43A;
-	st = ZwDuplicateObject(ZwCurrentProcess(), hTarget, hCallerProc, &dup, DesiredAccess, 0, 0);
+	// ACCESS_MASK DesiredAccess = 0x43A;
+	HANDLE src_proc_handle = ZwCurrentProcess();
 
+		 KAPC_STATE apc ;
+		 KeStackAttachProcess(targetProc, &apc);
+		 st = ZwDuplicateObject(src_proc_handle, hTarget, hCallerProc, &dup, PROCESS_ALL_ACCESS, 0, 0);
+		 KeUnstackDetachProcess(&apc);
+	
 	// Cleanup kernel handles and object refs
 	ZwClose(hTarget);
 	ZwClose(hCallerProc);
@@ -1050,4 +1059,126 @@ Handle_CreateRemoteThread(
 	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 	Log(L"successfully created thread in target process PID=%u\n", targetPid);
 	return STATUS_SUCCESS;
+}
+
+// Handler stub: write a user-mode wide string (DLL path) into the target process.
+// Payload: DWORD pid; PVOID userWideStringPtr
+// Reply: PVOID (placeholder NULL). This function performs sanity checks and
+// looks up the target process; the actual write-into-target logic should be
+// implemented by the user and may replace the placeholder reply value.
+static NTSTATUS
+Handle_WriteDllPathToTargetProcess(
+	PCOMM_CONTEXT CallerCtx,
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	UNREFERENCED_PARAMETER(CallerCtx);
+	if (InputBufferSize < (UMHH_MSG_HEADER_SIZE + sizeof(DWORD) + sizeof(PVOID))) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	DWORD pid = 0;
+	PVOID userPtr = NULL;
+	RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+	RtlCopyMemory(&userPtr, msg->m_Data + sizeof(DWORD), sizeof(PVOID));
+
+	if (!userPtr) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Basic process lookup to validate PID
+	PEPROCESS proc = NULL;
+	NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &proc);
+	if (!NT_SUCCESS(st) || proc == NULL) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return st;
+	}
+	// MAP CODE BEGIN
+
+	// resource tracking - initialize early so CLEAN_UP can safely release
+	HANDLE SectionHandle = NULL;
+	PVOID SectionMemoryAddress = NULL;
+	PVOID local_SectionMemoryAddress = NULL;
+	SIZE_T SectionSize = PAGE_SIZE;
+	LARGE_INTEGER MaximumSize;
+	MaximumSize.QuadPart = SectionSize;
+	OBJECT_ATTRIBUTES   ObjectAttributes;
+	InitializeObjectAttributes(&ObjectAttributes,
+		NULL,
+		OBJ_KERNEL_HANDLE,
+		NULL,
+		NULL);
+
+	 st = ZwCreateSection(&SectionHandle,
+		GENERIC_READ | GENERIC_WRITE,
+		&ObjectAttributes,
+		&MaximumSize,
+		PAGE_READWRITE,
+		SEC_COMMIT,
+		NULL);
+	if (!NT_SUCCESS(st)) {
+		Log(L"Handle_WriteDllPathToTargetProcess: failed to call ZwCreateSection: 0x%x Line=%d\n", st, __LINE__);
+		goto CLEAN_UP;
+	}
+	st = ZwMapViewOfSection(SectionHandle,
+		ZwCurrentProcess(),
+		&local_SectionMemoryAddress,
+		0,
+		PAGE_SIZE,
+		NULL,
+		&SectionSize,
+		ViewUnmap,
+		0,
+		PAGE_READWRITE);
+	if (!NT_SUCCESS(st)) {
+		Log(L"Handle_WriteDllPathToTargetProcessL: failed to call ZwMapViewOfSection for local map: 0x%x Line=%d\n", st, __LINE__);
+		goto CLEAN_UP;
+	}
+	KAPC_STATE apc;
+
+	// Attach to the target process
+	KeStackAttachProcess(proc, &apc);
+	st = ZwMapViewOfSection(SectionHandle,
+	ZwCurrentProcess(),
+		&SectionMemoryAddress,
+		0,
+		PAGE_SIZE,
+		NULL,
+		&SectionSize,
+		ViewUnmap,
+		0,
+		PAGE_READWRITE);
+	KeUnstackDetachProcess(&apc);
+	if (!NT_SUCCESS(st)) {
+		Log(L"Handle_WriteDllPathToTargetProcessL: failed to call ZwMapViewOfSection for remote map: 0x%x Line=%d\n", st,__LINE__);
+		goto CLEAN_UP;
+	}
+	RtlCopyMemory(local_SectionMemoryAddress, userPtr, sizeof(WCHAR)*wcslen(userPtr));
+	// MAP CODE END
+
+	if (OutputBuffer && OutputBufferSize >= sizeof(PVOID)) {
+		RtlCopyMemory(OutputBuffer, &SectionMemoryAddress, sizeof(PVOID));
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(PVOID);
+	} else {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		st = STATUS_BUFFER_TOO_SMALL;
+	}
+CLEAN_UP:
+	if (local_SectionMemoryAddress) {
+		NTSTATUS _ = ZwUnmapViewOfSection(
+			ZwCurrentProcess(),
+			local_SectionMemoryAddress);
+		if (!NT_SUCCESS(_)) {
+			Log(L"Handle_WriteDllPathToTargetProcessL: failed to call ZwUnmapViewOfSection for local map: 0x%x Line=%d\n", _, __LINE__);
+		}
+	}
+	if (SectionHandle)
+		ZwClose(SectionHandle);
+	ObDereferenceObject(proc);
+	return st;
 }

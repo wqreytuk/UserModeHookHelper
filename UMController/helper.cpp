@@ -632,12 +632,10 @@ bool Helper::ForceInject(DWORD pid) {
 		return false;
 	}
 	LOG_CTRL_ETW(L"get process handle=0x%x from kernel\n", hProc);
-	void* baseaddress = VirtualAllocEx(hProc, NULL, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-	if (baseaddress == nullptr) {
-		LOG_CTRL_ETW(L"virtualloc failed, error=0x%x\n", GetLastError());
-		CloseHandle(hProc);
-		return false;
-	}
+
+
+	// this operation can be done by driver code, we only need to pass the dll path to it
+	// and it should return an address back to us
 	std::wstring exe = Helper::GetCurrentModulePath(L"");
 	size_t pos = exe.find_last_of(L"/\\");
 	std::wstring dir = (pos == std::wstring::npos) ? exe : exe.substr(0, pos);
@@ -650,10 +648,15 @@ bool Helper::ForceInject(DWORD pid) {
 	const wchar_t* masterName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 	std::wstring dllnamepath = dir + L"\\" + masterName;
 	// write dll path
-	if (!WriteProcessMemory(hProc, baseaddress, (void*)dllnamepath.c_str(), sizeof(wchar_t)* dllnamepath.size(), NULL)) {
-		LOG_CTRL_ETW(L"WriteProcessMemory failed, error=0x%x\n", GetLastError());
-		goto CLEAN_UP;
+	PVOID dll_path_addr = NULL;
+	if (!Helper::m_filterInstance->FLTCOMM_WriteDllPathToTargetProcess(pid, (PVOID)dllnamepath.c_str(), &dll_path_addr)) {
+		LOG_CTRL_ETW(L"failed to call FLTCOMM_WriteDllPathToTargetProcess\n");
+		CloseHandle(hProc);
+		return false;
 	}
+
+
+
 	HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
 	if (hKernel32 == NULL) {
 		LOG_CTRL_ETW(L"GetModuleHandleA failed, error=0x%x\n", GetLastError());
@@ -671,15 +674,14 @@ bool Helper::ForceInject(DWORD pid) {
 		goto CLEAN_UP;
 	}
 	HANDLE thread_handle = 0;
-	if (!Helper::m_filterInstance->FLTCOMM_CreateRemoteThread(pid, pLoadLibraryW, baseaddress, syscall_addr,&thread_handle, NULL,hProc)) {
+	if (!Helper::m_filterInstance->FLTCOMM_CreateRemoteThread(pid, pLoadLibraryW, dll_path_addr, syscall_addr,&thread_handle, NULL,hProc)) {
 		LOG_CTRL_ETW(L"call FLTCOMM_CreateRemoteThread failed\n");
 		goto CLEAN_UP;
 	}
 	CloseHandle(hProc);
 	return true;
 
-CLEAN_UP:
-	VirtualFreeEx(hProc, baseaddress, 0x0, MEM_RELEASE);
+CLEAN_UP:;
 	CloseHandle(hProc);
 	return false;
 }

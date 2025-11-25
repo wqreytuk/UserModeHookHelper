@@ -69,6 +69,10 @@ public:
 	// Request kernel to resolve syscall number to kernel function address.
 	// Payload: ULONG syscallNumber. On success returns TRUE and sets outAddr.
 	bool FLTCOMM_GetSyscallAddr(ULONG syscallNumber, PVOID* outAddr);
+	// Request driver to write a DLL path pointer into target process.
+	// Payload: DWORD pid; PVOID userWideStringPtr
+	// Reply: PVOID returned in reply buffer (placeholder NULL until implemented).
+	bool FLTCOMM_WriteDllPathToTargetProcess(DWORD pid, PVOID userWideStringPtr, PVOID* outValue);
 private:
 	HANDLE m_Port = INVALID_HANDLE_VALUE;
 	// listener state for async messages

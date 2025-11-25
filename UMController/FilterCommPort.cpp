@@ -673,6 +673,27 @@ bool Filter::FLTCOMM_GetSyscallAddr(ULONG syscallNumber, PVOID* outAddr) {
 	*outAddr = addr;
 	return true;
 }
+bool Filter::FLTCOMM_WriteDllPathToTargetProcess(DWORD pid, PVOID userWideStringPtr, PVOID* outValue) {
+	if (!outValue) return false;
+	size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD) + sizeof(PVOID);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_WRITE_DLL_PATH;
+	size_t off = 0;
+	memcpy(msg->m_Data + off, &pid, sizeof(DWORD)); off += sizeof(DWORD);
+	memcpy(msg->m_Data + off, &userWideStringPtr, sizeof(PVOID)); off += sizeof(PVOID);
+
+	SIZE_T replySize = sizeof(PVOID);
+	std::unique_ptr<BYTE[]> reply(new BYTE[replySize]);
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, reply.get(), (DWORD)replySize, &bytesOut);
+	free(msg);
+	if (hr != S_OK || bytesOut < (DWORD)replySize) return false;
+	PVOID v = NULL; RtlCopyMemory(&v, reply.get(), sizeof(PVOID));
+	*outValue = v;
+	return true;
+}
 
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	LOG_CTRL_ETW(L"FLTCOMM_RemoveHookByHash: request hash=0x%I64x\n", hash);

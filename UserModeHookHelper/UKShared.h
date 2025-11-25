@@ -36,6 +36,11 @@
 // caller process. Payload: DWORD pid. Reply: HANDLE (duplicated into caller).
 #define CMD_GET_PROCESS_HANDLE 12
 #define CMD_CREATE_REMOTE_THREAD 13
+// Request the driver to write a DLL path string into the target process.
+// Payload: DWORD pid; PVOID userModeWideStringPtr
+// Reply: pointer-sized PVOID value written back into the reply buffer (caller-visible);
+// the driver currently returns a placeholder NULL until user logic is implemented.
+#define CMD_WRITE_DLL_PATH 15
 // Create remote thread via NtCreateThreadEx semantics.
 // Payload: DWORD pid; PVOID startRoutine; PVOID parameter; PVOID ntCreateThreadExAddr; PVOID extra
 // All fields are required. The `ntCreateThreadExAddr` must be a pointer-sized value
