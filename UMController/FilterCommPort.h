@@ -57,8 +57,7 @@ public:
 	// process. Returns true on success and sets outHandle to the duplicated
 	// handle (caller must CloseHandle when done). Requires caller privileges.
 	bool FLTCOMM_GetProcessHandle(DWORD pid, HANDLE& outHandle);
-	// Ask kernel to log a simple hello-world message for diagnostics.
-	bool FLTCOMM_ForceInject(DWORD pid);
+	// Ask kernel to log a simple hello-world message for diagnostics. 
 	// Request kernel to create a remote thread in target process. Payload: DWORD pid, PVOID startRoutine, PVOID parameter.
 	// If outThreadHandle != NULL, kernel will return a duplicated HANDLE (valid in this process) in reply buffer.
 	// Optional: if callerHandle != NULL the caller-supplied HANDLE (from this process) will be sent so

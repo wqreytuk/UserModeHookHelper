@@ -267,10 +267,7 @@ Comm_MessageNotify(
 		break;
 	case CMD_SET_GLOBAL_HOOK_MODE:
 		status = Handle_SetGlobalHookMode(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
-		break;
-	case CMD_FORCE_INJECT:
-		status = Handle_ForceInject(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
-		break;
+		break; 
 	default:
 		break;
 	}

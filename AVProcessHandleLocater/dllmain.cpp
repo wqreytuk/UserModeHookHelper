@@ -8,7 +8,8 @@
 #include <string>
 #include "../UMController/ProcFlags.h"
 #include "../UMController/Helper.h"
- 
+#include <sddl.h>
+#include "../Shared/SharedMacroDef.h"
 
 #define AVPHL_X64_DLL L"AvProcessHandleLocater.x64.dll"
 #define AVPHL_X86_DLL L"AvProcessHandleLocater.Win32.dll"
@@ -219,13 +220,9 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 		// Build timestamped filename
 		SYSTEMTIME st; GetLocalTime(&st);
 		wchar_t ts[64];
-		swprintf(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
+		swprintf_s(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
 			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-		std::wstring new_dll_name = L"";
-		new_dll_name = new_dll_name + ts + L"_" + hook_code_dll_name;
-		temp_hook_code_dll_name = (wchar_t*)malloc(2 * (new_dll_name.length() + 1));
-		ZeroMemory(temp_hook_code_dll_name, 2 * (new_dll_name.length() + 1));
-		memcpy(temp_hook_code_dll_name, new_dll_name.c_str(), 2 * new_dll_name.length());
+		
 		std::wstring dest = folder + L"\\" + ts + L"_" + hook_code_dll_name;
 		std::wstring src = base_folder +std::wstring(L"\\")+ hook_code_dll_name;
 		if (CopyFileW(src.c_str(), dest.c_str(), FALSE)) {
@@ -272,13 +269,9 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 		// Build timestamped filename
 		SYSTEMTIME st; GetLocalTime(&st);
 		wchar_t ts[64];
-		swprintf(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
+		swprintf_s(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
 			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-		std::wstring new_dll_name = L"";
-		new_dll_name = new_dll_name + ts + L"_" + hook_code_dll_name;
-		temp_hook_code_dll_name = (wchar_t*)malloc(2 * (new_dll_name.length() + 1));
-		ZeroMemory(temp_hook_code_dll_name, 2 * (new_dll_name.length() + 1));
-		memcpy(temp_hook_code_dll_name, new_dll_name.c_str(), 2 * new_dll_name.length());
+		
 		std::wstring dest = folder + L"\\" + ts + L"_" + hook_code_dll_name;
 		std::wstring src = base_folder + std::wstring(L"\\") +hook_code_dll_name;
 		if (CopyFileW(src.c_str(), dest.c_str(), FALSE)) {
@@ -312,7 +305,7 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 		
 		// check if I can open this process and try allocate and write
 		if (!CheckMyself(targetPid)) {
-			Log(L"CheckMyself failed, I can't open PID=%u\n", targetPid);
+			Log(L"CheckMyself failed, I can't operate process PID=%u\n", targetPid);
 			continue;
 		}
 
@@ -340,33 +333,66 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 			std::wstring outNtPath;
 			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
 				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
-			Log(L"TargetPID=%u arch=%s master dll not loaded\n",targetPid, is64 ? L"x64" : L"x86");
-			continue;
-			// my driver is not an early launch driver, so he can not possibly hook all processes
-			// some process such as lsass.exe is already started before my driver
+			Log(L"TargetPID=%u arch=%s master dll not loaded, try force injection\n",targetPid, is64 ? L"x64" : L"x86");
+			// if we check, there would be a dealy that can't be ignored
+			// if we don't check, the master dll may not be loaded in by the time calling InjectTrampoline
+			// I can create an event whose name is suffixed with pid, and modify umhh.dll to set this event
+			// when its dllmain is called
+			HANDLE hEvent = NULL;
+			{
+				SECURITY_ATTRIBUTES sa = { 0 };
+				PSECURITY_DESCRIPTOR pSD = NULL;
+
+				// Create a DACL that allows Everyone full access
+				if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+					L"D:(A;;GA;;;WD)",  // DACL: Allow Generic All to Everyone
+					SDDL_REVISION_1,
+					&pSD,
+					NULL)) {
+					Log(L"SDDL conversion failed: Error=0x%x\n", GetLastError());
+					continue;
+				}
+
+				sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+				sa.lpSecurityDescriptor = pSD;
+				sa.bInheritHandle = FALSE;
+
+				WCHAR event_name[100];
+				FormatObjectName(event_name, RTL_NUMBER_OF(event_name), HOOK_DLL_UM_MASTER_LOADED_SIGNAL_BACK_EVENT L"%d", (unsigned)targetPid);
+
+
+				// Create manual-reset named event
+				hEvent = CreateEventW(
+					&sa,              // security attributes
+					TRUE,              // manual reset
+					FALSE,             // initial state
+					event_name // named event
+				);
+
+				if (!hEvent) {
+					Log(L"CreateEvent failed: Error=0x%x\n", GetLastError());
+					LocalFree(pSD);
+					continue;
+				}
+
+				Log(L"Event=%s created successfully.\n", event_name);
+			}
 			if (!services->ForceInject(targetPid)) {
 				Log(L"TargetPID=%u arch=%s, failed to perform force injection, skip\n", targetPid, is64 ? L"x64" : L"x86");
 				continue;
 			}
-			// check again
-			// only give 500 ms response time
-			const int maxIterations = 5; bool loaded = false;
-			for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
-				services->IsModuleLoaded(pid, masterName, loaded);
-				if (loaded)
-					break;
-				Sleep(100);
-			}
-			if (!loaded) {
-				Log(L"TargetPID=%u arch=%s, driver report injection success, but user mode can't detect master dll\n", targetPid, is64 ? L"x64" : L"x86");
-				continue;
+			// time out set to 2 seconds
+			DWORD ret=WaitForSingleObject(hEvent, 2000);
+			if (ret == WAIT_TIMEOUT) {
+				Log(L"Master dll loaded event timed out, likely not injected, you should investigate later\n");
 			}
 		}
 
 		// Log candidate target and chosen trampoline path (no injection performed)
 		Log(L"Candidate PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str());
-
+	
 		// create signal file
+		// don't confuse this with dll injection signal file, this file is mean to tell which PID is going to be tested by our plugin
 		WCHAR signalPath[MAX_PATH];
 		FormatObjectName(signalPath, RTL_NUMBER_OF(signalPath), SIGNAL_FILENAME, (unsigned)targetPid);
 		if (!WriteSignalFile(services, signalPath, pid)) {
@@ -386,19 +412,6 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 			Log(L"failed to call InjectTrampoline PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str());
 			continue;
 		}
-		// check if dll injected
-		// const int maxIterations = 50; bool loaded = false;
-		// for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
-		// 	services->IsModuleLoaded(pid, is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL, loaded);
-		// 	if (loaded)
-		// 		break;
-		// 	Sleep(100);
-		// }
-		// 
-		// if (!loaded) {
-		// 	Log(L"failed to inject %s\n", is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL);
-		// 	continue;
-		// }
 
 	} while (Process32NextW(snap, &pe));
 

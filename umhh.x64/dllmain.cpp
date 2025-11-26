@@ -562,11 +562,43 @@ OnProcessAttach(
 
 	RtlInitAnsiString(&RoutineName, (PSTR)"_vsnwprintf");
 	LdrGetProcedureAddress(NtdllHandle, &RoutineName, 0, (PVOID*)&_vsnwprintf);
+	EventRegister(&ProviderGUID,
+		NULL,
+		NULL,
+		&ProviderHandle);
+	// we need to open and set an event to signal we're loaded
+	// this is used for time-sensitive operation, such as the force injection called by our AVProcessHandleLocater
+	{
+
+		WCHAR event_name[100];
+		_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_NT_MASTER_LOADED_SIGNAL_BACK_EVENT L"%d", NtCurrentProcessId());
+
+		UNICODE_STRING uName;
+		RtlInitUnicodeString(&uName, event_name);
+
+		OBJECT_ATTRIBUTES oa;
+		InitializeObjectAttributes(&oa, &uName, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+		HANDLE hEvent = NULL;
+		NTSTATUS status = NtOpenEvent(&hEvent, EVENT_MODIFY_STATE | SYNCHRONIZE, &oa);
+		if (!NT_SUCCESS(status)) {
+			EtwLog(L"failed to open event, Name=%wZ\n", uName);
+		}
+		else {
+			// Signal event
+			NtSetEvent(hEvent, NULL);
+
+			EtwLog(L"Signal back master dll loaded\n");
+			// close event handle
+			NtClose(hEvent);
+		}
+	}
 
 
 	// we should create an event to signal that we have master dll loaded
+	// this event is used for MasterLoaded attribute polling by UMController
 	{
-		WCHAR event_name[1100];
+		WCHAR event_name[100];
 		_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_NT_MASTER_LOAD_EVENT L"%d", NtCurrentProcessId());
 
 		UNICODE_STRING name;
@@ -597,8 +629,9 @@ OnProcessAttach(
 	}
 
 	// create injection signal event
+	// this event is used to receive signal from UMController when loading extra dll by master dll
 	{
-		WCHAR event_name[1100];
+		WCHAR event_name[100];
 		_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_NT_INJECTION_SIGNAL_EVENT L"%d", NtCurrentProcessId());
 
 		UNICODE_STRING name;
@@ -637,10 +670,7 @@ OnProcessAttach(
 		}
 	}
 
-	EventRegister(&ProviderGUID,
-		NULL,
-		NULL,
-		&ProviderHandle);
+	
 	
 	// early break check code
 	 wchar_t ntPath[MAX_PATH * 4] = { 0 };

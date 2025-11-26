@@ -29,9 +29,7 @@
 // Reply: BOOLEAN (1 = Wow64 / 0 = not Wow64)
 #define CMD_IS_PROCESS_WOW64 9
 // Set global hook mode on/off. Payload: BOOLEAN enabled (1 = enabled, 0 = disabled)
-#define CMD_SET_GLOBAL_HOOK_MODE 10
-// Signal the driver to emit a simple HelloWorld log message (no payload)
-#define CMD_FORCE_INJECT 11
+#define CMD_SET_GLOBAL_HOOK_MODE 10 
 // Request the kernel duplicate a process handle for a given PID into the
 // caller process. Payload: DWORD pid. Reply: HANDLE (duplicated into caller).
 #define CMD_GET_PROCESS_HANDLE 12
