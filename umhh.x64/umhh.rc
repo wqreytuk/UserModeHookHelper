@@ -1,0 +1,35 @@
+// Resource script for umhh.dll
+#include "verrsrc.h"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x2L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "GIAO"
+            VALUE "FileDescription", "user mode hook helper master dll component"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "umhh.dll"
+            VALUE "LegalCopyright", "(c) 2025 GIAO. All rights reserved."
+            VALUE "OriginalFilename", "umhh.dll"
+            VALUE "ProductName", "UserModeHookHelper"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

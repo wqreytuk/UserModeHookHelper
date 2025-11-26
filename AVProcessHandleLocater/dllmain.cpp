@@ -338,6 +338,8 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 			// if we don't check, the master dll may not be loaded in by the time calling InjectTrampoline
 			// I can create an event whose name is suffixed with pid, and modify umhh.dll to set this event
 			// when its dllmain is called
+			// there do exist some unprotect windows system process forbid anyone to loaded dll that is not in KnownDLL path into it
+			// such as C:\Windows\System32\fontdrvhost.exe, we should add a file path list to explicitly exclude these files in the furure
 			HANDLE hEvent = NULL;
 			{
 				SECURITY_ATTRIBUTES sa = { 0 };
