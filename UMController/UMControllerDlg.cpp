@@ -762,16 +762,8 @@ BOOL CUMControllerDlg::OnInitDialog()
 				w |= PROCESS_NOTIFY_CREATE_FLAG;
 				LPARAM l = 0;
 				if (name) {
-					// Extract basename from NT path (last component after '\\' or '/') so
-					// the UI displays just the executable name like Process32 snapshot.
-					const wchar_t* p = name;
-					const wchar_t* last = NULL;
-					for (const wchar_t* q = p; *q; ++q) {
-						if (*q == L'\\' || *q == L'/') last = q;
-					}
-					const wchar_t* base = last ? (last + 1) : p;
-					// Duplicate the base name for the UI thread to own
-					wchar_t* dup = _wcsdup(base);
+
+					wchar_t* dup = _wcsdup(name);
 					l = (LPARAM)dup;
 				}
 				::PostMessage(hwnd, WM_APP_UPDATE_PROCESS, w, l);
@@ -1299,7 +1291,17 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 		if (lParam) {
 			wchar_t* dup = (wchar_t*)lParam;
 			if (dup) {
-				entry.name.assign(dup);
+				entry.path.assign(dup);
+				// Extract basename from NT path (last component after '\\' or '/') so
+					// the UI displays just the executable name like Process32 snapshot.
+				const wchar_t* p = dup;
+				const wchar_t* last = NULL;
+				for (const wchar_t* q = p; *q; ++q) {
+					if (*q == L'\\' || *q == L'/') last = q;
+				}
+				const wchar_t* base = last ? (last + 1) : p;
+
+				entry.name.assign(base);
 				// free duplicated string allocated by _wcsdup
 				free(dup);
 			}
@@ -1983,7 +1985,7 @@ void CUMControllerDlg::FinishStartupIfDone() {
 			if (ldr) {
 				Helper::SetSysWOW64LdrLoadDllFuncAddr(ldr);
 			}
-			else 
+			else
 				LOG_CTRL_ETW(L"get LdrLoadDll function addr=NULL from ipc file, Path=%s\n", LOCATOR_IPC_FILE_PATH);
 		}
 		else {
