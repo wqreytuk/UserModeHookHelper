@@ -12,6 +12,7 @@
 #include "../UMController/Helper.h"
 #include "../UMController/RegistryStore.h"
 #include "../Shared/HookRow.h"
+#include "../Shared/SharedMacroDef.h"
 static std::wstring Hex64(ULONGLONG v) {
     wchar_t buf[32];
     _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%llX", v);
@@ -522,33 +523,23 @@ void HookProcDlg::OnBnClickedApplyHook() {
     }
     CString selectedPath = fd.GetPathName();
 	CString hook_code_dll_name = selectedPath.Mid(selectedPath.ReverseFind('\\') + 1);
-	// first we load it into ourself to check if required export function exist
-	HMODULE hook_code_dll_module = LoadLibrary(selectedPath.GetString());
-	if (!hook_code_dll_module) {
-		if (m_services) {
-			LOG_UI(m_services, "faile to call LoadLibrary target %s, erorr : 0x%x\n", selectedPath.GetString(),
-				GetLastError());
-		}
+	// we can not use LoadLibrary to check if required export function exist
+	// because we can only load x64 hookcode.dll, if user is trying to hook SysWOW64 process
+	// I can do shit about it
+	// we need to mannuly check it from file
+	bool is64 = false;
+	m_services->IsProcess64(m_pid, is64);
+	DWORD hook_code_offset = 0;
+	if (!m_services->CheckExportFromFile(selectedPath.GetString(), is64 ? HOOK_CODE_EXPORT_X64 : HOOK_CODE_EXPORT_X86, &hook_code_offset)) {
+		; LOG_UI(m_services, L"failed to call CheckExportFromFile, PE_Path=%s, CPU=%s\n", selectedPath.GetString(), is64 ? L"x64" : L"x86");
+		MessageBox(L"failed to call CheckExportFromFile", L"Hook", MB_OK | MB_ICONERROR); 
 		return;
 	}
-	bool is64 = false;
-	
-	m_services->IsProcess64(m_pid, is64);
-	PVOID export_func_addr = 0;
-	if (is64)
-		export_func_addr = (PVOID)GetProcAddress(hook_code_dll_module, "HookCodeX64");
-	else
-		export_func_addr = (PVOID)GetProcAddress(hook_code_dll_module, "HookCodeWin32");
-	if (!export_func_addr) {
-		if (is64) 
-			LOG_UI(m_services, L"failed to get required export function: HookCodeX64\n");
-		else
-			LOG_UI(m_services, L"failed to get required export function: HookCodeWin32\n");
+	if (!hook_code_offset) {
+		LOG_UI(m_services, L"failed to get required export function: %s\n", is64 ? HOOK_CODE_EXPORT_X64 : HOOK_CODE_EXPORT_X86);
 		MessageBox(L"failed to get required export function from HookCode dll", L"Hook", MB_OK | MB_ICONERROR);
 		return;
 	}
-	DWORD hook_code_offset = (DWORD64)export_func_addr - (DWORD64)hook_code_dll_module;
-	FreeLibrary(hook_code_dll_module);
     // Copy the selected DLL to a local temp folder beside this module so the
     // master DLL can reliably open it. Use a timestamped filename to avoid
     // collisions. If the copy fails, fall back to the original selected path.
@@ -559,12 +550,12 @@ void HookProcDlg::OnBnClickedApplyHook() {
         DWORD modLen = GetModuleFileNameW(AfxGetInstanceHandle(), modPathBuf, _countof(modPathBuf));
         std::wstring folder;
         if (modLen == 0) {
-            folder = L".\\hookcode_dll_temp";
+            folder = L".\\" HOOK_CODE_TEMP_DIR_NAME;
         } else {
             std::wstring modPath(modPathBuf);
             size_t p = modPath.find_last_of(L"\\/");
-            if (p == std::wstring::npos) folder = L".\\hookcode_dll_temp";
-            else folder = modPath.substr(0, p) + L"\\hookcode_dll_temp";
+			if (p == std::wstring::npos) folder = L".\\" HOOK_CODE_TEMP_DIR_NAME;
+            else folder = modPath.substr(0, p) + L"\\" HOOK_CODE_TEMP_DIR_NAME;
         }
         // Ensure directory exists (CreateDirectoryW is fine if already exists)
         if (!CreateDirectoryW(folder.c_str(), NULL)) {

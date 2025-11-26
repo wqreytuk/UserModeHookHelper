@@ -926,10 +926,105 @@ std::wstring Helper::ToHex(ULONGLONG value) {
 	}
 	return out;
 }
+bool Helper::CheckExportFromFile(const wchar_t* dllPath, const char* exportName,DWORD* out_func_offset) {
+	if (!dllPath || !exportName) {
+		LOG_CTRL_ETW(L"Parameter sanity check failed\n");
+		return false;
+	}
+	HANDLE hFile = CreateFileW(dllPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 
+		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		LOG_CTRL_ETW(L"CheckExportFromFile: CreateFileW failed for %s err=%u\n", dllPath, GetLastError());
+		return false;
+	}
+
+	HANDLE hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+	if (!hMap) { CloseHandle(hFile); return false; }
+	LPVOID base = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
+	if (!base) { CloseHandle(hMap); CloseHandle(hFile); return false; }
+
+	__try {
+		IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
+		if (dos->e_magic != IMAGE_DOS_SIGNATURE) { __leave; }
+
+		// Point to NT headers (works for both 32- and 64-bit when cast appropriately)
+		PIMAGE_NT_HEADERS pNth = (PIMAGE_NT_HEADERS)((PBYTE)base + dos->e_lfanew);
+		if (pNth->Signature != IMAGE_NT_SIGNATURE) { __leave; }
+
+		// Generic helper to convert RVA -> file offset using IMAGE_FIRST_SECTION
+		auto RvaToOffsetGeneric = [&](PIMAGE_NT_HEADERS anyNth, DWORD rva) -> SIZE_T {
+			PIMAGE_SECTION_HEADER sections = IMAGE_FIRST_SECTION(anyNth);
+			WORD number = anyNth->FileHeader.NumberOfSections;
+			for (WORD i = 0; i < number; ++i) {
+				DWORD va = sections[i].VirtualAddress;
+				DWORD vs = sections[i].Misc.VirtualSize ? sections[i].Misc.VirtualSize : sections[i].SizeOfRawData;
+				if (rva >= va && rva < va + vs) {
+					DWORD delta = rva - va;
+					return (SIZE_T)sections[i].PointerToRawData + delta;
+				}
+			}
+			return (SIZE_T)-1;
+		};
+
+		// Determine whether image is 32-bit or 64-bit by OptionalHeader.Magic
+		WORD magic = pNth->OptionalHeader.Magic;
+		bool is64 = false;
+		if (magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) is64 = true;
+		else if (magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) is64 = false;
+		else __leave;
+
+		DWORD exportRva = 0;
+		if (is64) {
+			PIMAGE_NT_HEADERS64 nth64 = (PIMAGE_NT_HEADERS64)pNth;
+			exportRva = nth64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+		}
+		else {
+			PIMAGE_NT_HEADERS32 nth32 = (PIMAGE_NT_HEADERS32)pNth;
+			exportRva = nth32->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+		}
+		if (exportRva == 0) __leave;
+
+		SIZE_T expOff = RvaToOffsetGeneric(pNth, exportRva);
+		if (expOff == (SIZE_T)-1) __leave;
+		IMAGE_EXPORT_DIRECTORY* exp = (IMAGE_EXPORT_DIRECTORY*)((PBYTE)base + expOff);
+
+		DWORD* names = (DWORD*)((PBYTE)base + RvaToOffsetGeneric(pNth, exp->AddressOfNames));
+		WORD* ords = (WORD*)((PBYTE)base + RvaToOffsetGeneric(pNth, exp->AddressOfNameOrdinals));
+		DWORD* funcs = (DWORD*)((PBYTE)base + RvaToOffsetGeneric(pNth, exp->AddressOfFunctions));
+
+		// Find export (ASCII comparison)
+		DWORD funcRva = 0; BOOL found = FALSE;
+		for (DWORD i = 0; i < exp->NumberOfNames; ++i) {
+			SIZE_T nameOff = RvaToOffsetGeneric(pNth, names[i]);
+			if (nameOff == (SIZE_T)-1) continue;
+			const char* name = (const char*)((PBYTE)base + nameOff);
+			if (_stricmp(name, exportName) == 0) {
+				WORD ord = ords[i];
+				if (ord < exp->NumberOfFunctions) { funcRva = funcs[ord]; *out_func_offset = funcRva; found = TRUE; break; }
+			}
+		}
+		if (!found) __leave;
+		UnmapViewOfFile(base); CloseHandle(hMap); CloseHandle(hFile);
+		base = NULL;
+		hMap = NULL;
+		hFile = NULL;
+		return true;
+	}
+	__finally {
+		// If not returned above, unmap/close
+		if (base) { UnmapViewOfFile(base); }
+		if (hMap) CloseHandle(hMap);
+		if (hFile) CloseHandle(hFile);
+	}
+	return false;
+}
 
 // Read first 16 bytes of an export directly from DLL file on disk.
 bool Helper::ReadExportFirstBytesFromFile(const wchar_t* dllPath, const char* exportName, unsigned char outBuf[16]) {
-	if (!dllPath || !exportName || !outBuf) return false;
+	if (!dllPath || !exportName || !outBuf) {
+		LOG_CTRL_ETW(L"Parameter sanity check failed\n");
+		return false;
+	}
 
 	HANDLE hFile = CreateFileW(dllPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
@@ -945,24 +1040,54 @@ bool Helper::ReadExportFirstBytesFromFile(const wchar_t* dllPath, const char* ex
 	__try {
 		IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
 		if (dos->e_magic != IMAGE_DOS_SIGNATURE) { __leave; }
-		IMAGE_NT_HEADERS64* nth64 = (IMAGE_NT_HEADERS64*)((PBYTE)base + dos->e_lfanew);
-		if (nth64->Signature != IMAGE_NT_SIGNATURE) { __leave; }
 
-		// Only support x64 images. Fail fast for non-x64.
-		if (nth64->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) __leave;
+		PIMAGE_NT_HEADERS pNth = (PIMAGE_NT_HEADERS)((PBYTE)base + dos->e_lfanew);
+		if (pNth->Signature != IMAGE_NT_SIGNATURE) { __leave; }
 
-		if (nth64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress == 0) __leave;
-		IMAGE_EXPORT_DIRECTORY* exp = (IMAGE_EXPORT_DIRECTORY*)((PBYTE)base + RvaToOffset(base, nth64, nth64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress));
-		if (!exp) __leave;
+		auto RvaToOffsetGeneric = [&](PIMAGE_NT_HEADERS anyNth, DWORD rva) -> SIZE_T {
+			PIMAGE_SECTION_HEADER sections = IMAGE_FIRST_SECTION(anyNth);
+			WORD number = anyNth->FileHeader.NumberOfSections;
+			for (WORD i = 0; i < number; ++i) {
+				DWORD va = sections[i].VirtualAddress;
+				DWORD vs = sections[i].Misc.VirtualSize ? sections[i].Misc.VirtualSize : sections[i].SizeOfRawData;
+				if (rva >= va && rva < va + vs) {
+					DWORD delta = rva - va;
+					return (SIZE_T)sections[i].PointerToRawData + delta;
+				}
+			}
+			return (SIZE_T)-1;
+		};
 
-		DWORD* names = (DWORD*)((PBYTE)base + RvaToOffset(base, nth64, exp->AddressOfNames));
-		WORD* ords = (WORD*)((PBYTE)base + RvaToOffset(base, nth64, exp->AddressOfNameOrdinals));
-		DWORD* funcs = (DWORD*)((PBYTE)base + RvaToOffset(base, nth64, exp->AddressOfFunctions));
+		WORD magic = pNth->OptionalHeader.Magic;
+		bool is64 = false;
+		if (magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) is64 = true;
+		else if (magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) is64 = false;
+		else __leave;
 
-		// Find export (ASCII comparison)
+		DWORD exportRva = 0;
+		if (is64) {
+			PIMAGE_NT_HEADERS64 nth64 = (PIMAGE_NT_HEADERS64)pNth;
+			exportRva = nth64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+		}
+		else {
+			PIMAGE_NT_HEADERS32 nth32 = (PIMAGE_NT_HEADERS32)pNth;
+			exportRva = nth32->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+		}
+		if (exportRva == 0) __leave;
+
+		SIZE_T expOff = RvaToOffsetGeneric(pNth, exportRva);
+		if (expOff == (SIZE_T)-1) __leave;
+		IMAGE_EXPORT_DIRECTORY* exp = (IMAGE_EXPORT_DIRECTORY*)((PBYTE)base + expOff);
+
+		DWORD* names = (DWORD*)((PBYTE)base + RvaToOffsetGeneric(pNth, exp->AddressOfNames));
+		WORD* ords = (WORD*)((PBYTE)base + RvaToOffsetGeneric(pNth, exp->AddressOfNameOrdinals));
+		DWORD* funcs = (DWORD*)((PBYTE)base + RvaToOffsetGeneric(pNth, exp->AddressOfFunctions));
+
 		DWORD funcRva = 0; BOOL found = FALSE;
 		for (DWORD i = 0; i < exp->NumberOfNames; ++i) {
-			const char* name = (const char*)((PBYTE)base + RvaToOffset(base, nth64, names[i]));
+			SIZE_T nameOff = RvaToOffsetGeneric(pNth, names[i]);
+			if (nameOff == (SIZE_T)-1) continue;
+			const char* name = (const char*)((PBYTE)base + nameOff);
 			if (_stricmp(name, exportName) == 0) {
 				WORD ord = ords[i];
 				if (ord < exp->NumberOfFunctions) { funcRva = funcs[ord]; found = TRUE; break; }
@@ -970,8 +1095,7 @@ bool Helper::ReadExportFirstBytesFromFile(const wchar_t* dllPath, const char* ex
 		}
 		if (!found) __leave;
 
-		// Convert RVA to file offset then read 16 bytes
-		SIZE_T offset = RvaToOffset(base, nth64, funcRva);
+		SIZE_T offset = RvaToOffsetGeneric(pNth, funcRva);
 		if (offset == (SIZE_T)-1) __leave;
 		memcpy(outBuf, (PBYTE)base + offset, 16);
 		UnmapViewOfFile(base); CloseHandle(hMap); CloseHandle(hFile);

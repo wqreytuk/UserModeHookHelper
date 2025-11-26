@@ -21,6 +21,9 @@ void Log(_In_ PCWSTR Format, ...) {
 	EventWriteString(g_ProviderHandle, 0, 0, Prefixed);
 }
 
+extern "C" __declspec(dllexport) VOID HookCodeWin32() {
+	return;
+}
 extern "C" __declspec(dllexport) VOID HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8, PVOID r9, PVOID rsp) {
 	PVOID r15 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x0);
 	PVOID r14 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x8);

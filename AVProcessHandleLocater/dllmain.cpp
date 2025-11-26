@@ -168,258 +168,233 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 		return FALSE;
 	}
 	Log(L"Plugin: user entered PID=%u\n", pid);
+	// Spawn worker thread to perform heavy work asynchronously so UI remains responsive.
+	struct PLUGIN_WORKER_ARGS { HWND hwnd; IHookServices* services; DWORD pid; };
+	PLUGIN_WORKER_ARGS* args = new PLUGIN_WORKER_ARGS();
+	args->hwnd = hwnd; args->services = services; args->pid = pid;
 
+	auto Worker = [](LPVOID param) -> DWORD {
+		PLUGIN_WORKER_ARGS* a = (PLUGIN_WORKER_ARGS*)param;
+		HWND hwndLocal = a->hwnd;
+		IHookServices* servicesLocal = a->services;
+		DWORD pidLocal = a->pid;
+		delete a;
 
-	// Determine this DLL's directory so we can construct the trampoline DLL paths
-	HMODULE hThis = NULL;
-	if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-		reinterpret_cast<LPCWSTR>(&PluginMain), &hThis)) {
-		Log(L"GetModuleHandleExW failed: %lu\n", GetLastError());
-	}
-
-	wchar_t mePath[MAX_PATH] = { 0 };
-	if (hThis) GetModuleFileNameW(hThis, mePath, _countof(mePath));
-	std::wstring meDir = L".";
-	if (mePath[0]) {
-		std::wstring s(mePath);
-		size_t p = s.find_last_of(L"/\\");
-		if (p != std::wstring::npos) meDir = s.substr(0, p);
-		else meDir = s;
-	}
-
-	std::wstring pathToInjectX64;
-	wchar_t* temp_hook_code_dll_name = 0;
-	{
-		wchar_t modPathBuf[MAX_PATH];
-		DWORD modLen = GetModuleFileNameW(hThis, modPathBuf, _countof(modPathBuf));
-		std::wstring folder;
-		std::wstring base_folder;
-		if (modLen == 0) {
-			folder = L".\\plugins_dll_temp";
+		// Determine this DLL's directory so we can construct the trampoline DLL paths
+		HMODULE hThis = NULL;
+		if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			reinterpret_cast<LPCWSTR>(&PluginMain), &hThis)) {
+			Log(L"GetModuleHandleExW failed: %lu\n", GetLastError());
 		}
-		else {
-			std::wstring modPath(modPathBuf);
-			size_t p = modPath.find_last_of(L"\\/");
-			if (p == std::wstring::npos) folder = L".\\plugins_dll_temp";
+
+		wchar_t mePath[MAX_PATH] = { 0 };
+		if (hThis) GetModuleFileNameW(hThis, mePath, _countof(mePath));
+		std::wstring meDir = L".";
+		if (mePath[0]) {
+			std::wstring s(mePath);
+			size_t p = s.find_last_of(L"/\\");
+			if (p != std::wstring::npos) meDir = s.substr(0, p);
+			else meDir = s;
+		}
+
+		std::wstring pathToInjectX64;
+		{
+			wchar_t modPathBuf[MAX_PATH];
+			DWORD modLen = GetModuleFileNameW(hThis, modPathBuf, _countof(modPathBuf));
+			std::wstring folder;
+			std::wstring base_folder;
+			if (modLen == 0) {
+				folder = L".\\plugins_dll_temp";
+			}
 			else {
-				base_folder = modPath.substr(0, p);
-				folder = modPath.substr(0, p) + L"\\plugins_dll_temp";
+				std::wstring modPath(modPathBuf);
+				size_t p = modPath.find_last_of(L"/\\");
+				if (p == std::wstring::npos) folder = L".\\plugins_dll_temp";
+				else {
+					base_folder = modPath.substr(0, p);
+					folder = modPath.substr(0, p) + L"\\plugins_dll_temp";
+				}
 			}
-		}
-		// Ensure directory exists (CreateDirectoryW is fine if already exists)
-		if (!CreateDirectoryW(folder.c_str(), NULL)) {
-			DWORD err = GetLastError();
-			if (err != ERROR_ALREADY_EXISTS) {
-				Log(L"CreateDirectoryW failed for %s err=%u\n", folder.c_str(), err);
+			if (!CreateDirectoryW(folder.c_str(), NULL)) {
+				DWORD err = GetLastError();
+				if (err != ERROR_ALREADY_EXISTS) {
+					Log(L"CreateDirectoryW failed for %s err=%u\n", folder.c_str(), err);
+				}
 			}
-		}
-
-		// Construct trampoline path (do not perform injection here)
-		// std::wstring hook_code_dll_name = is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL;
-		std::wstring hook_code_dll_name = AVPHL_X64_DLL;
-		// Build timestamped filename
-		SYSTEMTIME st; GetLocalTime(&st);
-		wchar_t ts[64];
-		swprintf_s(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
-			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-		
-		std::wstring dest = folder + L"\\" + ts + L"_" + hook_code_dll_name;
-		std::wstring src = base_folder +std::wstring(L"\\")+ hook_code_dll_name;
-		if (CopyFileW(src.c_str(), dest.c_str(), FALSE)) {
-			pathToInjectX64 = dest; // use copied file
-			Log(L"Copied hook DLL to %s\n", dest.c_str());
-		}
-		else {
-			DWORD err = GetLastError();
-			Log(L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", src.c_str(), dest.c_str(), err);
-			// keep pathToInject as original selectedPath
-		}
-	}
-
-	std::wstring pathToInjectX86;
-	 temp_hook_code_dll_name = 0;
-	{
-		wchar_t modPathBuf[MAX_PATH];
-		DWORD modLen = GetModuleFileNameW(hThis, modPathBuf, _countof(modPathBuf));
-		std::wstring folder;
-		std::wstring base_folder;
-		if (modLen == 0) {
-			folder = L".\\plugins_dll_temp";
-		}
-		else {
-			std::wstring modPath(modPathBuf);
-			size_t p = modPath.find_last_of(L"\\/");
-			if (p == std::wstring::npos) folder = L".\\plugins_dll_temp";
+			std::wstring hook_code_dll_name = AVPHL_X64_DLL;
+			SYSTEMTIME st; GetLocalTime(&st);
+			wchar_t ts[64];
+			swprintf_s(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
+				st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+			std::wstring dest = folder + L"\\" + ts + L"_" + hook_code_dll_name;
+			std::wstring src = base_folder + std::wstring(L"\\") + hook_code_dll_name;
+			if (CopyFileW(src.c_str(), dest.c_str(), FALSE)) {
+				pathToInjectX64 = dest; // use copied file
+				Log(L"Copied hook DLL to %s\n", dest.c_str());
+			}
 			else {
-				base_folder = modPath.substr(0, p);
-				folder = modPath.substr(0, p) + L"\\plugins_dll_temp";
-			}
-		}
-		// Ensure directory exists (CreateDirectoryW is fine if already exists)
-		if (!CreateDirectoryW(folder.c_str(), NULL)) {
-			DWORD err = GetLastError();
-			if (err != ERROR_ALREADY_EXISTS) {
-				Log(L"CreateDirectoryW failed for %s err=%u\n", folder.c_str(), err);
+				DWORD err = GetLastError();
+				Log(L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", src.c_str(), dest.c_str(), err);
 			}
 		}
 
-		// Construct trampoline path (do not perform injection here)
-		// std::wstring hook_code_dll_name = is64 ? AVPHL_X64_DLL : AVPHL_X86_DLL;
-		std::wstring hook_code_dll_name = AVPHL_X86_DLL;
-		// Build timestamped filename
-		SYSTEMTIME st; GetLocalTime(&st);
-		wchar_t ts[64];
-		swprintf_s(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
-			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-		
-		std::wstring dest = folder + L"\\" + ts + L"_" + hook_code_dll_name;
-		std::wstring src = base_folder + std::wstring(L"\\") +hook_code_dll_name;
-		if (CopyFileW(src.c_str(), dest.c_str(), FALSE)) {
-			pathToInjectX86 = dest; // use copied file
-			Log(L"Copied hook DLL to %s\n", dest.c_str());
-		}
-		else {
-			DWORD err = GetLastError();
-			Log(L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", src.c_str(), dest.c_str(), err);
-			// keep pathToInject as original selectedPath
-		}
-	}
-
-	// Enumerate all processes and find those with the master DLL loaded
-	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (snap == INVALID_HANDLE_VALUE) {
-		Log(L"CreateToolhelp32Snapshot failed: %lu\n", GetLastError());
-		return TRUE; // nothing to do
-	}
-
-	PROCESSENTRY32W pe = { 0 };
-	pe.dwSize = sizeof(pe);
-	if (!Process32FirstW(snap, &pe)) {
-		CloseHandle(snap);
-		return TRUE;
-	}
-
-	do {
-		DWORD targetPid = pe.th32ProcessID;
-		if (targetPid == 0 || targetPid == 4) continue;
-		
-		// check if I can open this process and try allocate and write
-		if (!CheckMyself(targetPid)) {
-			Log(L"CheckMyself failed, I can't operate process PID=%u\n", targetPid);
-			continue;
-		}
-
-		bool is64 = false;
-		if (!services->IsProcess64(targetPid, is64)) {
-			std::wstring outNtPath;
-			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
-				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
-			// Could not determine arch; skip
-			Log(L"failed to call IsProcess64, this is should not happen in normal circumstance\n");
-			continue;
-		}
-
-		const wchar_t* masterName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
-		bool dllLoaded = false;
-		// Helper::IsModuleLoaded is available in the host; call via implementation here
-		if (!services->IsModuleLoaded(targetPid, masterName, dllLoaded)) { 
-			std::wstring outNtPath;
-			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
-				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
-			Log(L"failed to call IsModuleLoaded target PID=%u, this is should not happen in normal circumstance\n", targetPid);
-			continue; 
-		}
-		if (!dllLoaded) {
-			std::wstring outNtPath;
-			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
-				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
-			Log(L"TargetPID=%u arch=%s master dll not loaded, try force injection\n",targetPid, is64 ? L"x64" : L"x86");
-			// if we check, there would be a dealy that can't be ignored
-			// if we don't check, the master dll may not be loaded in by the time calling InjectTrampoline
-			// I can create an event whose name is suffixed with pid, and modify umhh.dll to set this event
-			// when its dllmain is called
-			// there do exist some unprotect windows system process forbid anyone to loaded dll that is not in KnownDLL path into it
-			// such as C:\Windows\System32\fontdrvhost.exe, we should add a file path list to explicitly exclude these files in the furure
-			HANDLE hEvent = NULL;
-			{
-				SECURITY_ATTRIBUTES sa = { 0 };
-				PSECURITY_DESCRIPTOR pSD = NULL;
-
-				// Create a DACL that allows Everyone full access
-				if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-					L"D:(A;;GA;;;WD)",  // DACL: Allow Generic All to Everyone
-					SDDL_REVISION_1,
-					&pSD,
-					NULL)) {
-					Log(L"SDDL conversion failed: Error=0x%x\n", GetLastError());
-					continue;
+		std::wstring pathToInjectX86;
+		{
+			wchar_t modPathBuf[MAX_PATH];
+			DWORD modLen = GetModuleFileNameW(hThis, modPathBuf, _countof(modPathBuf));
+			std::wstring folder;
+			std::wstring base_folder;
+			if (modLen == 0) {
+				folder = L".\\plugins_dll_temp";
+			}
+			else {
+				std::wstring modPath(modPathBuf);
+				size_t p = modPath.find_last_of(L"/\\");
+				if (p == std::wstring::npos) folder = L".\\plugins_dll_temp";
+				else {
+					base_folder = modPath.substr(0, p);
+					folder = modPath.substr(0, p) + L"\\plugins_dll_temp";
 				}
-
-				sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-				sa.lpSecurityDescriptor = pSD;
-				sa.bInheritHandle = FALSE;
-
-				WCHAR event_name[100];
-				FormatObjectName(event_name, RTL_NUMBER_OF(event_name), HOOK_DLL_UM_MASTER_LOADED_SIGNAL_BACK_EVENT L"%d", (unsigned)targetPid);
-
-
-				// Create manual-reset named event
-				hEvent = CreateEventW(
-					&sa,              // security attributes
-					TRUE,              // manual reset
-					FALSE,             // initial state
-					event_name // named event
-				);
-
-				if (!hEvent) {
-					Log(L"CreateEvent failed: Error=0x%x\n", GetLastError());
-					LocalFree(pSD);
-					continue;
-				}
-
-				Log(L"Event=%s created successfully.\n", event_name);
 			}
-			if (!services->ForceInject(targetPid)) {
-				Log(L"TargetPID=%u arch=%s, failed to perform force injection, skip\n", targetPid, is64 ? L"x64" : L"x86");
+			if (!CreateDirectoryW(folder.c_str(), NULL)) {
+				DWORD err = GetLastError();
+				if (err != ERROR_ALREADY_EXISTS) {
+					Log(L"CreateDirectoryW failed for %s err=%u\n", folder.c_str(), err);
+				}
+			}
+			std::wstring hook_code_dll_name = AVPHL_X86_DLL;
+			SYSTEMTIME st; GetLocalTime(&st);
+			wchar_t ts[64];
+			swprintf_s(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
+				st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+			std::wstring dest = folder + L"\\" + ts + L"_" + hook_code_dll_name;
+			std::wstring src = base_folder + std::wstring(L"\\") + hook_code_dll_name;
+			if (CopyFileW(src.c_str(), dest.c_str(), FALSE)) {
+				pathToInjectX86 = dest; // use copied file
+				Log(L"Copied hook DLL to %s\n", dest.c_str());
+			}
+			else {
+				DWORD err = GetLastError();
+				Log(L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", src.c_str(), dest.c_str(), err);
+			}
+		}
+
+		// Enumerate all processes and find those with the master DLL loaded
+		HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+		if (snap == INVALID_HANDLE_VALUE) {
+			Log(L"CreateToolhelp32Snapshot failed: %lu\n", GetLastError());
+			return 1; // nothing to do
+		}
+
+		PROCESSENTRY32W pe = { 0 };
+		pe.dwSize = sizeof(pe);
+		if (!Process32FirstW(snap, &pe)) {
+			CloseHandle(snap);
+			return 1;
+		}
+
+		do {
+			DWORD targetPid = pe.th32ProcessID;
+			if (targetPid == 0 || targetPid == 4) continue;
+			if (!CheckMyself(targetPid)) {
+				Log(L"CheckMyself failed, I can't operate process PID=%u\n", targetPid);
 				continue;
 			}
-			// time out set to 2 seconds
-			DWORD ret=WaitForSingleObject(hEvent, 2000);
-			if (ret == WAIT_TIMEOUT) {
-				Log(L"Master dll loaded event timed out, likely not injected, you should investigate later\n");
+
+			bool is64 = false;
+			if (!servicesLocal->IsProcess64(targetPid, is64)) {
+				std::wstring outNtPath;
+				if (servicesLocal->GetFullImageNtPathByPID(targetPid, outNtPath))
+					Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
+				Log(L"failed to call IsProcess64, this is should not happen in normal circumstance\n");
+				continue;
 			}
-		}
 
-		// Log candidate target and chosen trampoline path (no injection performed)
-		Log(L"Candidate PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str());
-	
-		// create signal file
-		// don't confuse this with dll injection signal file, this file is mean to tell which PID is going to be tested by our plugin
-		WCHAR signalPath[MAX_PATH];
-		FormatObjectName(signalPath, RTL_NUMBER_OF(signalPath), SIGNAL_FILENAME, (unsigned)targetPid);
-		if (!WriteSignalFile(services, signalPath, pid)) {
-			DeleteFile(signalPath);
-			std::wstring outNtPath;
-			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
-				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
-			Log(L"failed to call WriteSignalFile\n");
-			continue;
-		}
+			const wchar_t* masterName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
+			bool dllLoaded = false;
+			if (!servicesLocal->IsModuleLoaded(targetPid, masterName, dllLoaded)) {
+				std::wstring outNtPath;
+				if (servicesLocal->GetFullImageNtPathByPID(targetPid, outNtPath))
+					Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
+				Log(L"failed to call IsModuleLoaded target PID=%u, this is should not happen in normal circumstance\n", targetPid);
+				continue;
+			}
+			if (!dllLoaded) {
+				std::wstring outNtPath;
+				if (servicesLocal->GetFullImageNtPathByPID(targetPid, outNtPath))
+					Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
+				Log(L"TargetPID=%u arch=%s master dll not loaded, try force injection\n",targetPid, is64 ? L"x64" : L"x86");
+				HANDLE hEvent = NULL;
+				{
+					SECURITY_ATTRIBUTES sa = { 0 };
+					PSECURITY_DESCRIPTOR pSD = NULL;
 
-		if (!services->InjectTrampoline(targetPid, is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str())) {
-			DeleteFile(signalPath);
-			std::wstring outNtPath;
-			if (services->GetFullImageNtPathByPID(targetPid, outNtPath))
-				Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
-			Log(L"failed to call InjectTrampoline PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str());
-			continue;
-		}
+					if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+						L"D:(A;;GA;;;WD)",
+						SDDL_REVISION_1,
+						&pSD,
+						NULL)) {
+						Log(L"SDDL conversion failed: Error=0x%x\n", GetLastError());
+						continue;
+					}
 
-	} while (Process32NextW(snap, &pe));
+					sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+					sa.lpSecurityDescriptor = pSD;
+					sa.bInheritHandle = FALSE;
 
+					WCHAR event_name[100];
+					FormatObjectName(event_name, RTL_NUMBER_OF(event_name), HOOK_DLL_UM_MASTER_LOADED_SIGNAL_BACK_EVENT L"%d", (unsigned)targetPid);
 
-	CloseHandle(snap);
-	MessageBoxW(hwnd, L"search finished\n", L"AVPHL", MB_OK);
+					hEvent = CreateEventW(&sa, TRUE, FALSE, event_name);
+					if (!hEvent) {
+						Log(L"CreateEvent failed: Error=0x%x\n", GetLastError());
+						LocalFree(pSD);
+						continue;
+					}
+
+					Log(L"Event=%s created successfully.\n", event_name);
+				}
+				if (!servicesLocal->ForceInject(targetPid)) {
+					Log(L"TargetPID=%u arch=%s, failed to perform force injection, skip\n", targetPid, is64 ? L"x64" : L"x86");
+					continue;
+				}
+				DWORD ret=WaitForSingleObject(hEvent, 2000);
+				if (ret == WAIT_TIMEOUT) {
+					Log(L"Master dll loaded event timed out, likely not injected, you should investigate later\n");
+				}
+			}
+
+			Log(L"Candidate PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str());
+
+			WCHAR signalPath[MAX_PATH];
+			FormatObjectName(signalPath, RTL_NUMBER_OF(signalPath), SIGNAL_FILENAME, (unsigned)targetPid);
+			if (!WriteSignalFile(servicesLocal, signalPath, pidLocal)) {
+				DeleteFile(signalPath);
+				std::wstring outNtPath;
+				if (servicesLocal->GetFullImageNtPathByPID(targetPid, outNtPath))
+					Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
+				Log(L"failed to call WriteSignalFile\n");
+				continue;
+			}
+
+			if (!servicesLocal->InjectTrampoline(targetPid, is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str())) {
+				DeleteFile(signalPath);
+				std::wstring outNtPath;
+				if (servicesLocal->GetFullImageNtPathByPID(targetPid, outNtPath))
+					Log(L"Miss process PID=%u Path=%s\n", targetPid, outNtPath.c_str());
+				Log(L"failed to call InjectTrampoline PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str());
+				continue;
+			}
+
+		} while (Process32NextW(snap, &pe));
+
+		CloseHandle(snap);
+		MessageBoxW(hwndLocal, L"search finished\n", L"AVPHL", MB_OK);
+		return 0;
+	};
+
+	HANDLE h = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)Worker, args, 0, NULL);
+	if (h) CloseHandle(h);
 	return TRUE;
 }
 

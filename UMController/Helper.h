@@ -13,6 +13,8 @@ public:
 	// rely on zero bytes within UTF-16LE strings as a terminator for byte
 	// buffers.
 	static DWORD64 GetNtPathHash(const UCHAR* buf, size_t byteLen);
+
+	static bool CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset);
 	// NEW: get NT (native) image path for a PID. Returns true on success and
 	// fills outNtPath with an NT-style path (e.g. "\Device\HarddiskVolume2\...").
 	static bool GetFullImageNtPathByPID(DWORD pid, std::wstring& outNtPath);

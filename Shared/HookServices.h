@@ -21,6 +21,7 @@ struct IHookServices {
     // caller supplies the absolute path to the trampoline DLL that should be
     // loaded inside the target process.
     virtual bool InjectTrampoline(DWORD targetPid, const wchar_t* fullDllPath) = 0;
+	virtual bool CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset) = 0;
 	virtual bool IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) = 0;
 	virtual bool  CreateLowPrivReqFile(wchar_t* filePath, PHANDLE outFileHandle) = 0;
     // Query whether the target process is 64-bit. When successful, returns

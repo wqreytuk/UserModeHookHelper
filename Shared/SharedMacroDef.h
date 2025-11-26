@@ -38,3 +38,8 @@
 
 #define LOCATOR_SIGNAL_EVENT L"Global\\LOCATOR_SIGNAL_EVENT"
 #define LOCATOR_IPC_FILE_PATH L"C:\\Users\\Public\\locator.bin"
+
+#define HOOK_CODE_EXPORT_X86 "HookCodeWin32"
+#define HOOK_CODE_EXPORT_X64 "HookCodeX64"
+
+#define HOOK_CODE_TEMP_DIR_NAME L"hookcode_dll_temp"

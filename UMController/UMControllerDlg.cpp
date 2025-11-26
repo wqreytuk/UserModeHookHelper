@@ -379,6 +379,9 @@ public:
 	bool IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) override {
 		return Helper::IsModuleLoaded(pid, baseName, outPresent);
 	}
+	bool CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset) override {
+		return Helper::CheckExportFromFile(dllPath, exportName, out_func_offset);
+	}
 	bool InjectTrampoline(DWORD targetPid, const wchar_t* fullDllPath) override {
 		if (targetPid == 0 || !fullDllPath || *fullDllPath == L'\0') {
 			app.GetETW().Log(L"[UMCtrl]     InjectTrampoline: invalid args pid=%u path=%s\n", targetPid, fullDllPath ? fullDllPath : L"(null)");
