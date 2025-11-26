@@ -128,12 +128,13 @@ private:
 	bool m_CachePersisted = false; // composite cache written this session
 	// persisted toggle
 	bool m_globalHookMode = false;
-
 	// Master DLL scanner guard: ensure scanner started only once
 	bool m_MasterDllScannerStarted = false;
 
 	// Cached Early Break marks (lowercased NT paths) to avoid registry hits
 	std::unordered_set<std::wstring> m_EarlyBreakSet;
+	// Cached forced marks (PID:HIGH:LOW) compacted into 64-bit keys
+	std::unordered_set<unsigned long long> m_ForcedSet;
 
 	// Plugin system
 	CMenu m_PluginsSubMenu; // submenu showing discovered plugins

@@ -42,7 +42,7 @@ ETW::~ETW() {
 void ETW::StartTracer() {
 	SHELLEXECUTEINFO sei = { sizeof(sei) };
 	sei.fMask = SEE_MASK_NOCLOSEPROCESS; 
-	auto s = Helper::GetCurrentModulePath(TEXT("EtwTracer.exe"));
+	auto s = Helper::GetCurrentDirFilePath(TEXT("EtwTracer.exe"));
 	sei.lpFile = s.c_str();
 	sei.nShow = SW_SHOW;
 

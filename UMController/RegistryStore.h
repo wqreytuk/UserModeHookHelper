@@ -48,4 +48,10 @@ namespace RegistryStore {
     bool ReadEarlyBreakMarks(std::vector<std::wstring>& outNtPaths);
     bool AddEarlyBreakMark(const std::wstring& ntPath);
     bool RemoveEarlyBreakMark(const std::wstring& ntPath);
+    // Persist forced injection marks keyed by PID + startTime. Value name: ForcedList (REG_MULTI_SZ)
+    // Each entry formatted as: PID:HIGH:LOW
+    bool ReadForcedMarks(std::vector<std::tuple<DWORD, DWORD, DWORD>>& outEntries);
+    bool WriteForcedMarks(const std::vector<std::tuple<DWORD, DWORD, DWORD>>& entries);
+    bool AddForcedMark(DWORD pid, DWORD hi, DWORD lo);
+    bool RemoveForcedMark(DWORD pid, DWORD hi, DWORD lo);
 }

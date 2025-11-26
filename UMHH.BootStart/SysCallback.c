@@ -5,9 +5,9 @@
 #include "Inject.h"
 #include "StrLib.h"
 #include "DriverCtx.h"
+#include "../Shared/SharedMacroDef.h"
 
 
-#define DRIVER_STOP_SIGNAL_FILE_PATH L"\\??\\C:\\Users\\Public\\stop_umhh_boot_start"
 
 NTSTATUS SetSysNotifiers() {
 	NTSTATUS status;

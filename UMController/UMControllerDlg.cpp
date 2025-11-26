@@ -24,6 +24,8 @@
 #include "RegistryStore.h"
 #include "HookInterfaces.h" // services adapter remains local; dialog now in HookUI DLL
 #include "Resource.h" // ensure menu ID definitions (IDR_MAIN_MENU) visible
+#include <sddl.h> 
+#include "../Shared/SharedMacroDef.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -258,9 +260,10 @@ int CALLBACK CUMControllerDlg::ProcListCompareFunc(LPARAM lParam1, LPARAM lParam
 		bool mb = isMarkedCached(pDlg, b.path);
 		if (ma == mb) {
 			res = 0;
-		} else if (ma) res = -1; else res = 1;
+		}
+		else if (ma) res = -1; else res = 1;
 	}
-		break;
+	break;
 	case 3: // InHookList/HookState
 		// If Global Hook Mode is enabled, every process is effectively
 		// considered 'in hook list' so comparing by bInHookList is meaningless.
@@ -447,7 +450,7 @@ void CUMControllerDlg::ScanAndPopulatePlugins() {
 	m_PluginsSubMenu.CreatePopupMenu();
 
 	// Use the controller executable directory as the authoritative UserDir
-	std::wstring exe = Helper::GetCurrentModulePath(L"");
+	std::wstring exe = Helper::GetCurrentDirFilePath(L"");
 	size_t pos = exe.find_last_of(L"/\\");
 	std::wstring dir = (pos == std::wstring::npos) ? exe : exe.substr(0, pos);
 	std::wstring pluginsPath = dir + L"\\plugins";
@@ -682,20 +685,20 @@ BOOL CUMControllerDlg::OnInitDialog()
 		TRACE("[Startup] Failed to read composite process cache; continuing without it.\n");
 		m_CompositeRegistryCache.clear();
 	}
-	LoadProcessList(); // inline resolution attempts (does not auto-complete all)
-
-	// Load persisted Early Break marks into memory so UI rendering and menus
-	// don't need to hit the registry repeatedly.
-	{
-		std::vector<std::wstring> marks;
-		if (RegistryStore::ReadEarlyBreakMarks(marks)) {
-			for (auto &m : marks) {
-				std::wstring low = m;
-				for (wchar_t &c : low) c = towlower(c);
-				m_EarlyBreakSet.insert(low);
+	// Load persisted forced marks into compact set for quick lookup
+	try {
+		std::vector<std::tuple<DWORD, DWORD, DWORD>> forced;
+		if (RegistryStore::ReadForcedMarks(forced)) {
+			for (auto &t : forced) {
+				DWORD pid = std::get<0>(t); DWORD hi = std::get<1>(t); DWORD lo = std::get<2>(t);
+				unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+				m_ForcedSet.insert(key);
 			}
 		}
 	}
+	catch (...) {}
+	LoadProcessList(); // inline resolution attempts (does not auto-complete all)
+
 	// Launch background cleanup to remove duplicates / exited processes shortly after enumeration
 	{
 		auto hwnd = this->GetSafeHwnd();
@@ -855,10 +858,8 @@ BOOL CUMControllerDlg::OnInitDialog()
 			}
 		}
 	}
-	std::thread([this]() {
-		FilterProcessList(L"");
-	}).detach();
-	
+
+
 	// Populate Plugins menu from UserDir\plugins
 	ScanAndPopulatePlugins();
 
@@ -1098,6 +1099,7 @@ void CUMControllerDlg::FilterProcessList(const std::wstring& filter) {
 			if (all[idx].bInHookList) flags |= PF_IN_HOOK_LIST;
 			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
 			if (is64) flags |= PF_IS_64BIT;
+			if (all[idx].forced) flags |= PF_FORCED;
 			// Apply persisted EarlyBreak mark if present (by NT path) from cache
 			const std::wstring &nt = all[idx].path;
 			if (!nt.empty()) {
@@ -1186,6 +1188,9 @@ void CUMControllerDlg::LoadProcessList() {
 						else
 							entry.early_break = false;
 					}
+					// check forced set by pid+startTime (hi/lo)
+					unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(entry.startTime.dwHighDateTime) << 24) ^ static_cast<unsigned long long>(entry.startTime.dwLowDateTime);
+					if (m_ForcedSet.find(key) != m_ForcedSet.end()) entry.forced = true; else entry.forced = false;
 					entry.path = ntPath;
 					// std::wstring cmdline; Helper::GetProcessCommandLineByPID(pid, cmdline); entry.cmdline = cmdline;
 					std::wstring cmdline = L"N/A"; entry.cmdline = cmdline;
@@ -1199,8 +1204,11 @@ void CUMControllerDlg::LoadProcessList() {
 					else {
 						inHook = m_Filter.FLTCOMM_CheckHookList(ntPath);
 					}
-					entry.bInHookList = inHook;
-					m_SessionNtPathCache.emplace(key, ntPath);
+					// if forced enabled, we treat it as in hook list
+					entry.bInHookList = entry.forced ? true : inHook;
+					// store by composite ProcKey (pid + creation time)
+					ProcKey pkey{ pid, createTime };
+					m_SessionNtPathCache.emplace(pkey, ntPath);
 					// prepare for persistence (dedupe by key)
 					bool have = false; for (auto &t : m_PersistSnapshotEntries) { if (std::get<0>(t) == pid && std::get<1>(t) == createTime.dwHighDateTime && std::get<2>(t) == createTime.dwLowDateTime) { have = true; break; } }
 					if (!have) m_PersistSnapshotEntries.emplace_back(pid, createTime.dwHighDateTime, createTime.dwLowDateTime, ntPath);
@@ -1242,6 +1250,7 @@ void CUMControllerDlg::LoadProcessList() {
 			if (dllLoaded) flags |= PF_MASTER_DLL_LOADED;
 			if (is64) flags |= PF_IS_64BIT;
 			flags |= PF_IN_HOOK_LIST;
+			if (all[idx].forced) flags |= PF_FORCED;
 		}
 		PROC_ITEMDATA packed = MAKE_ITEMDATA(all[idx].pid, flags);
 		// m_ProcListCtrl.SetItemText(nIndex, 2, (FLAGS_FROM_ITEMDATA(packed) & PF_EARLY_BREAK_MARKED) ? L"★" : L"");
@@ -1370,6 +1379,8 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			inHook = true;
 		else
 			inHook = m_Filter.FLTCOMM_CheckHookList(e.path);
+		if (e.forced)
+			inHook = true;
 		std::wstring path = e.path;
 		std::wstring cmdline = e.cmdline;
 
@@ -1431,6 +1442,7 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			flags |= PF_IN_HOOK_LIST;
 			if (dllLoadedNow) flags |= PF_MASTER_DLL_LOADED;
 			if (is64Now) flags |= PF_IS_64BIT;
+			if (e.forced) flags |= PF_FORCED;
 		}
 		// Preserve the Early Break mark if the UI already had it set. The
 		// mergedPacked value computed here includes runtime flags (in-hook,
@@ -1507,10 +1519,10 @@ LRESULT CUMControllerDlg::OnUpdateProcess(WPARAM wParam, LPARAM lParam) {
 			}
 			if (item != -1) {
 				m_ProcListCtrl.SetItemText(item, 0, L"(resolving)");
-					//m_ProcListCtrl.SetItemText(item, 2, L"");
-					m_ProcListCtrl.SetItemText(item, 3, L"No");
-					m_ProcListCtrl.SetItemText(item, 4, L"");
-					m_ProcListCtrl.SetItemText(item, 5, L"");
+				//m_ProcListCtrl.SetItemText(item, 2, L"");
+				m_ProcListCtrl.SetItemText(item, 3, L"No");
+				m_ProcListCtrl.SetItemText(item, 4, L"");
+				m_ProcListCtrl.SetItemText(item, 5, L"");
 			}
 
 			// Start resolver for this PID using ProcessResolver helper
@@ -1650,8 +1662,8 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	menu.EnableMenuItem(ID_MENU_MARK_EARLY_BREAK, marked ? MF_GRAYED : MF_ENABLED);
 	menu.EnableMenuItem(ID_MENU_UNMARK_EARLY_BREAK, marked ? MF_ENABLED : MF_GRAYED);
 
-	// Force inject enabled only when NOT in hook list and master DLL is NOT loaded
-	menu.EnableMenuItem(ID_MENU_FORCE_INJECT, (!inHook && !dllLoaded) ? MF_ENABLED : MF_GRAYED);
+	// Force inject enabled whenever the master DLL is NOT loaded (inHook irrelevant)
+	menu.EnableMenuItem(ID_MENU_FORCE_INJECT, (!dllLoaded) ? MF_ENABLED : MF_GRAYED);
 
 	// Ensure UI reflects persisted mark (some update paths may not have applied the persisted bit).
 	if (marked) {
@@ -1854,17 +1866,52 @@ void CUMControllerDlg::OnForceInject()
 	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
 	bool inHook = (flags & PF_IN_HOOK_LIST) != 0;
 	bool dllLoaded = (flags & PF_MASTER_DLL_LOADED) != 0;
-	// Only allow when NOT in hook list and master DLL not loaded
-	if (inHook || dllLoaded) {
-		this->MessageBoxW(L"Force Inject is only available for processes not in the hook list and without the master DLL loaded.", L"Not Allowed", MB_ICONWARNING | MB_OK);
+	// Only allow when master DLL is not loaded
+	if (dllLoaded) {
+		this->MessageBoxW(L"Force Inject is only available when the master DLL is not loaded.", L"Not Allowed", MB_ICONWARNING | MB_OK);
 		return;
 	}
 
 	// Ask Helper to force an injection
 	if (!Helper::ForceInject(pid)) {
 		this->MessageBoxW(L"Force Inject failed. Check permissions and driver state.", L"Error", MB_ICONERROR | MB_OK);
-	} else {
-		// Optionally notify user of queued injection
+	}
+	else {
+		// Mark entry as Forced, treat as in-hook and master DLL loaded for UI
+		ProcessEntry e; int idx = -1;
+		if (PM_GetEntryCopyByPid(pid, e, &idx)) {
+			// Set forced in ProcessManager
+			PM_MarkForced(pid, true);
+			// Mark as in hook list and master DLL loaded for UI
+			PM_UpdateEntryModuleState(pid, e.is64, true);
+			PM_UpdateEntryFields(pid, e.path, true, e.cmdline);
+			// Persist forced mark using PID + startTime
+			DWORD hi = e.startTime.dwHighDateTime;
+			DWORD lo = e.startTime.dwLowDateTime;
+			if (!RegistryStore::AddForcedMark(pid, hi, lo)) {
+				LOG_CTRL_ETW(L"Failed to persist forced mark for pid=%u\n", pid);
+			}
+			else {
+				unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+				m_ForcedSet.insert(key);
+			}
+			// Update UI row if present
+			int item = m_ProcListCtrl.GetNextItem(-1, LVNI_ALL);
+			while (item != -1) {
+				if ((DWORD)m_ProcListCtrl.GetItemData(item) == pid) break;
+				item = m_ProcListCtrl.GetNextItem(item, LVNI_ALL);
+			}
+			if (item != -1) {
+				// Build flags: in hook + master dll + arch
+				DWORD flags = PF_IN_HOOK_LIST | PF_MASTER_DLL_LOADED;
+				if (e.is64) flags |= PF_IS_64BIT;
+				// Also set Forced marker in displayed flags
+				flags |= PF_FORCED;
+				PROC_ITEMDATA newPacked = MAKE_ITEMDATA(pid, flags);
+				m_ProcListCtrl.SetItemData(item, (DWORD_PTR)newPacked);
+				m_ProcListCtrl.SetItemText(item, 3, FormatHookColumn(newPacked).c_str());
+			}
+		}
 		this->MessageBoxW(L"Force Inject request sent.", L"Info", MB_ICONINFORMATION | MB_OK);
 	}
 }
@@ -1879,6 +1926,75 @@ LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {
 // Removed resolution-based progress tracking.
 
 void CUMControllerDlg::FinishStartupIfDone() {
+	// create a ackground to resolve SysWOW64 process LdrLoadDll func addr
+	std::thread([this]() {
+		// create an event that every prcess can open
+		SECURITY_ATTRIBUTES sa = { 0 };
+		PSECURITY_DESCRIPTOR pSD = NULL;
+
+		// Create a DACL that allows Everyone full access
+		if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+			L"D:(A;;GA;;;WD)",  // DACL: Allow Generic All to Everyone
+			SDDL_REVISION_1,
+			&pSD,
+			NULL)) {
+			LOG_CTRL_ETW(L"SDDL conversion failed: Error=0x%x\n", GetLastError());
+			return 0;
+		}
+
+		sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+		sa.lpSecurityDescriptor = pSD;
+		sa.bInheritHandle = FALSE;
+
+		// Create manual-reset named event
+		HANDLE hEvent = CreateEventW(
+			&sa,              // security attributes
+			TRUE,              // manual reset
+			FALSE,             // initial state
+			LOCATOR_SIGNAL_EVENT // named event
+		);
+
+		if (!hEvent) {
+			LOG_CTRL_ETW(L"CreateEvent failed: Error=0x%x\n", GetLastError());
+			LocalFree(pSD);
+			return 0;
+		}
+
+		LOG_CTRL_ETW(L"Event created successfully.\n");
+
+		// launch x86 SysWOW64 LdrLoadDll function address locator
+		SHELLEXECUTEINFO sei = { sizeof(sei) };
+		auto s = Helper::GetCurrentDirFilePath(TEXT("x86LdrLoadDllAddrLocator.exe"));
+		sei.lpFile = s.c_str();
+		sei.nShow = SW_HIDE;
+		BOOL ok = ShellExecuteEx(&sei);
+		if (!ok) {
+			LOG_CTRL_ETW(L"failed to call ShellExecuteEx to launch syswow64 ldrloaddll locator, Path=%s, Error=%s\n",
+				s.c_str(), GetLastError());
+			return 0;
+		}
+		// Wait or do work...
+		WaitForSingleObject(hEvent, INFINITE);
+		FILE* fp = NULL;
+		_wfopen_s(&fp, LOCATOR_IPC_FILE_PATH, L"r");
+		if (fp) {
+			DWORD ldr = 0;
+			fread_s(&ldr, sizeof(DWORD), sizeof(DWORD), 1, fp);
+			if (ldr) {
+				Helper::SetSysWOW64LdrLoadDllFuncAddr(ldr);
+			}
+			else 
+				LOG_CTRL_ETW(L"get LdrLoadDll function addr=NULL from ipc file, Path=%s\n", LOCATOR_IPC_FILE_PATH);
+		}
+		else {
+			LOG_CTRL_ETW(L"can not open locator ipc file, Path=%s, Error=0x%x\n", LOCATOR_IPC_FILE_PATH, GetLastError());
+		}
+		CloseHandle(hEvent);
+		LocalFree(pSD);
+		return 0;
+	}).detach();
+
+
 	if (m_CachePersisted) return; // already persisted once
 	if (!m_PersistSnapshotEntries.empty()) {
 		std::vector<std::tuple<DWORD, DWORD, DWORD, std::wstring>> dedup;
@@ -1946,6 +2062,53 @@ void CUMControllerDlg::FinishStartupIfDone() {
 						RegistryStore::RemoveProcHookEntry(pid, hi, lo, std::get<3>(h));
 					}
 				}
+
+				// Purge ForcedList entries whose PID:HI:LO not in knownKeys
+				try {
+					std::vector<std::tuple<DWORD, DWORD, DWORD>> forced;
+					if (RegistryStore::ReadForcedMarks(forced)) {
+						std::vector<std::tuple<DWORD, DWORD, DWORD>> keptForced;
+						for (auto &f : forced) {
+							DWORD pid = std::get<0>(f); DWORD hi = std::get<1>(f); DWORD lo = std::get<2>(f);
+							unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+							if (knownKeys.find(key) != knownKeys.end()) {
+								keptForced.emplace_back(pid, hi, lo);
+							}
+							else {
+								LOG_CTRL_ETW(L"Purging stale ForcedList entry for pid=%u hi=%08X lo=%08X\n", pid, hi, lo);
+							}
+						}
+						// Rewrite forced marks with only kept entries
+						if (!RegistryStore::WriteForcedMarks(keptForced)) {
+							LOG_CTRL_ETW(L"Background purge: failed to write filtered ForcedList\n");
+						}
+						// Note: do not modify in-memory caches here; registry purge is sufficient
+					}
+				}
+				catch (...) { LOG_CTRL_ETW(L"Background purge: failed while purging ForcedList\n"); }
+
+				// Purge composite process cache (NtProcCache) entries not in knownKeys
+				try {
+					std::vector<std::tuple<DWORD, DWORD, DWORD, std::wstring>> comp;
+					if (RegistryStore::ReadCompositeProcCache(comp)) {
+						std::vector<std::tuple<DWORD, DWORD, DWORD, std::wstring>> keptComp;
+						for (auto &c : comp) {
+							DWORD pid = std::get<0>(c); DWORD hi = std::get<1>(c); DWORD lo = std::get<2>(c);
+							unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+							if (knownKeys.find(key) != knownKeys.end()) {
+								keptComp.emplace_back(c);
+							}
+							else {
+								LOG_CTRL_ETW(L"Purging stale NtProcCache entry for pid=%u hi=%08X lo=%08X\n", pid, hi, lo);
+							}
+						}
+						if (!RegistryStore::WriteCompositeProcCache(keptComp)) {
+							LOG_CTRL_ETW(L"Background purge: failed to write filtered NtProcCache\n");
+						}
+						// Note: do not modify in-memory caches here; registry purge is sufficient
+					}
+				}
+				catch (...) { LOG_CTRL_ETW(L"Background purge: failed while purging NtProcCache\n"); }
 			}
 			catch (...) {
 				LOG_CTRL_ETW(L"Background purge: failed to purge stale ProcHookList entries\n");
@@ -2033,7 +2196,7 @@ void CUMControllerDlg::OnClearEtwLog() {
 
 void CUMControllerDlg::OnOpenEtwLog() {
 	// Find newest EtwTracer_*.log (timestamped) or fallback to legacy EtwTracer.log
-	auto tracerExe = Helper::GetCurrentModulePath(L"EtwTracer.exe");
+	auto tracerExe = Helper::GetCurrentDirFilePath(L"EtwTracer.exe");
 	std::wstring folder; size_t pos = tracerExe.find_last_of(L"/\\");
 	folder = (pos != std::wstring::npos) ? tracerExe.substr(0, pos) : L".";
 	WIN32_FIND_DATAW fd{};

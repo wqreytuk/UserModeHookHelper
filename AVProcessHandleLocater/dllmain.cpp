@@ -349,7 +349,8 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 				continue;
 			}
 			// check again
-			const int maxIterations = 50; bool loaded = false;
+			// only give 500 ms response time
+			const int maxIterations = 5; bool loaded = false;
 			for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
 				services->IsModuleLoaded(pid, masterName, loaded);
 				if (loaded)

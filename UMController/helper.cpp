@@ -35,6 +35,7 @@ size_t Helper::m_sharedBufCap = 0;
 std::mutex Helper::m_bufMutex;
 // Filter instance pointer (nullable)
 Filter* Helper::m_filterInstance = nullptr;
+DWORD Helper::m_SysWOW64_ldr_load_dll_func_addr = 0;
 DWORD Helper::m_NtCreateThreadExSyscallNum = 0;
 
 
@@ -132,7 +133,7 @@ DWORD64 Helper::GetNtPathHash(const UCHAR* buf, size_t byteLen) {
 // kernel can be asked for process image NT paths via FLTCOMM_GetImagePathByPid.
 
 
-std::basic_string<TCHAR> Helper::GetCurrentModulePath(TCHAR* append)
+std::basic_string<TCHAR> Helper::GetCurrentDirFilePath(TCHAR* append)
 {
 	TCHAR path[MAX_PATH];
 	DWORD len = GetModuleFileName(NULL, path, MAX_PATH);
@@ -194,6 +195,7 @@ bool Helper::IsFileExists(TCHAR* szPath) {
 		!(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
 }
 bool Helper::UMHH_BS_DriverCheck() {
+	DeleteFileW(UM_STOP_SIGNAL_FILE_PATH);
 	// Determine service name macro to use
 #if defined(BS_SERVICE_NAME)
 	const wchar_t* svcName = BS_SERVICE_NAME;
@@ -281,7 +283,7 @@ bool Helper::UMHH_BS_DriverCheck() {
 
 	// Build source and destination paths for driver file
 	std::basic_string<TCHAR> drvName = std::basic_string<TCHAR>(svcName) + std::basic_string<TCHAR>(L".sys");
-	std::basic_string<TCHAR> srcPath = Helper::GetCurrentModulePath(const_cast<TCHAR*>(drvName.c_str()));
+	std::basic_string<TCHAR> srcPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(drvName.c_str()));
 	if (srcPath.empty()) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: could not determine module path for %s.sys\n", svcName); CloseServiceHandle(scm); return false; }
 	DWORD fa = GetFileAttributesW(srcPath.c_str()); if (fa == INVALID_FILE_ATTRIBUTES) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: source driver not found: %s\n", srcPath.c_str()); CloseServiceHandle(scm); return false; }
 	wchar_t sysDir[MAX_PATH]; if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: GetSystemDirectoryW failed: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
@@ -324,7 +326,7 @@ void Helper::UMHH_DriverCheck() {
 		// Try to install INF named SERVICE_NAME.inf from the executable directory
 		if (err == ERROR_SERVICE_DOES_NOT_EXIST) {
 			std::basic_string<TCHAR> infName = std::basic_string<TCHAR>(SERVICE_NAME) + std::basic_string<TCHAR>(L".inf");
-			std::basic_string<TCHAR> infPath = Helper::GetCurrentModulePath(const_cast<TCHAR*>(infName.c_str()));
+			std::basic_string<TCHAR> infPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(infName.c_str()));
 			if (infPath.empty()) {
 				LOG_CTRL_ETW(L"Could not determine module path to locate INF\n");
 				CloseServiceHandle(scm);
@@ -374,7 +376,7 @@ void Helper::UMHH_DriverCheck() {
 			// After service creation via INF, ensure the binary path points to the
 			// UserModeHookHelper.sys located next to the current executable.
 			std::basic_string<TCHAR> sysName = std::basic_string<TCHAR>(SERVICE_NAME) + std::basic_string<TCHAR>(L".sys");
-			std::basic_string<TCHAR> sysPath = Helper::GetCurrentModulePath(const_cast<TCHAR*>(sysName.c_str()));
+			std::basic_string<TCHAR> sysPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(sysName.c_str()));
 			if (!sysPath.empty()) {
 				if (!ChangeServiceConfigW(svc,
 					SERVICE_NO_CHANGE, // service type
@@ -636,7 +638,7 @@ bool Helper::ForceInject(DWORD pid) {
 
 	// this operation can be done by driver code, we only need to pass the dll path to it
 	// and it should return an address back to us
-	std::wstring exe = Helper::GetCurrentModulePath(L"");
+	std::wstring exe = Helper::GetCurrentDirFilePath(L"");
 	size_t pos = exe.find_last_of(L"/\\");
 	std::wstring dir = (pos == std::wstring::npos) ? exe : exe.substr(0, pos);
 	bool is64;
@@ -645,8 +647,20 @@ bool Helper::ForceInject(DWORD pid) {
 		CloseHandle(hProc);
 		return false;
 	}
+
+	if (!is64) {
+		if (!Helper::m_SysWOW64_ldr_load_dll_func_addr) {
+			LOG_CTRL_ETW(L"SysWOW64_ldr_load_dll_func_addr is not resolved, we can't force inject SysWOW64 process\n");
+			MessageBox(NULL, L"SysWOW64_ldr_load_dll_func_addr is not resolved, we can't force inject SysWOW64 process", L"Attention!",
+				MB_ICONERROR);
+			return false;
+		}
+	}
+
 	const wchar_t* masterName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 	std::wstring dllnamepath = dir + L"\\" + masterName;
+
+
 	// write dll path
 	PVOID dll_path_addr = NULL;
 	if (!Helper::m_filterInstance->FLTCOMM_WriteDllPathToTargetProcess(pid, (PVOID)dllnamepath.c_str(), &dll_path_addr)) {
@@ -654,27 +668,33 @@ bool Helper::ForceInject(DWORD pid) {
 		CloseHandle(hProc);
 		return false;
 	}
-
-
-
-	HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
-	if (hKernel32 == NULL) {
-		LOG_CTRL_ETW(L"GetModuleHandleA failed, error=0x%x\n", GetLastError());
-		goto CLEAN_UP;
-	}
-	void* pLoadLibraryW = GetProcAddress(hKernel32, "LoadLibraryW");
-	if (pLoadLibraryW == nullptr) {
-		LOG_CTRL_ETW(L"Get loadlibraryW ProcAddress failed, error=0x%x\n", GetLastError());
-		goto CLEAN_UP;
-	}
-	// get NtCreateThreadEx kernel function addr
+	LOG_CTRL_ETW(L"write dll Path=%s to target process Pid=%u memory Addr=0x%p\n",
+		dllnamepath.c_str(), pid, dll_path_addr);
 	PVOID syscall_addr = 0;
+	void* pLoadLibraryW = 0;
+
+	if (is64) {
+		HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
+		if (hKernel32 == NULL) {
+			LOG_CTRL_ETW(L"GetModuleHandleA failed, error=0x%x\n", GetLastError());
+			goto CLEAN_UP;
+		}
+		pLoadLibraryW = GetProcAddress(hKernel32, "LoadLibraryW");
+		if (pLoadLibraryW == nullptr) {
+			LOG_CTRL_ETW(L"Get loadlibraryW ProcAddress failed, error=0x%x\n", GetLastError());
+			goto CLEAN_UP;
+		}
+	}
+	else
+		pLoadLibraryW = (PVOID)(ULONG_PTR)Helper::m_SysWOW64_ldr_load_dll_func_addr;
+	// get NtCreateThreadEx kernel function addr
 	if (!Helper::m_filterInstance->FLTCOMM_GetSyscallAddr(Helper::m_NtCreateThreadExSyscallNum, &syscall_addr)) {
 		LOG_CTRL_ETW(L"call FLTCOMM_GetSyscallAddr failed\n");
 		goto CLEAN_UP;
 	}
+
 	HANDLE thread_handle = 0;
-	if (!Helper::m_filterInstance->FLTCOMM_CreateRemoteThread(pid, pLoadLibraryW, dll_path_addr, syscall_addr,&thread_handle, NULL,hProc)) {
+	if (!Helper::m_filterInstance->FLTCOMM_CreateRemoteThread(pid, pLoadLibraryW, dll_path_addr, syscall_addr, &thread_handle, NULL, hProc)) {
 		LOG_CTRL_ETW(L"call FLTCOMM_CreateRemoteThread failed\n");
 		goto CLEAN_UP;
 	}
@@ -771,6 +791,9 @@ bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 	CloseHandle(h);
 	outIs64 = is64;
 	return true;
+}
+void Helper::SetSysWOW64LdrLoadDllFuncAddr(DWORD ldr) {
+	Helper::m_SysWOW64_ldr_load_dll_func_addr = ldr;
 }
 void Helper::SetNtCreateThreadExSyscallNum(DWORD num) {
 	Helper::m_NtCreateThreadExSyscallNum = num;
@@ -983,6 +1006,7 @@ SIZE_T Helper::RvaToOffset(void* base, IMAGE_NT_HEADERS64* nth, DWORD rva) {
 	return (SIZE_T)-1;
 }
 
+
 // Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)
 bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 	// disable for now, seems like I fucked up file system when using global injection
@@ -1014,7 +1038,7 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 		DWORD fa = GetFileAttributesW(dstPath.c_str());
 		if (fa == INVALID_FILE_ATTRIBUTES) {
 			// try to locate next to exe
-			std::basic_string<TCHAR> srcPath = Helper::GetCurrentModulePath(const_cast<TCHAR*>(drvName.c_str()));
+			std::basic_string<TCHAR> srcPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(drvName.c_str()));
 			if (!srcPath.empty()) {
 				CopyFileW(srcPath.c_str(), dstPath.c_str(), FALSE);
 			}
@@ -1119,9 +1143,11 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 
 	}
 	else {
+		
 		// Desired disabled: if service exists, stop it, delete the service, and
 		// remove the driver file from the system drivers directory.
 		if (svc) {
+
 			SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0;
 			if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
 				if (ssp.dwCurrentState == SERVICE_RUNNING) {
@@ -1176,8 +1202,8 @@ bool Helper::CopyUmhhDllsToRoot() {
 	std::wstring x86Name = X86_DLL; // L"umhh.dll.Win32.dll"
 
 	// Get paths next to the current module
-	std::basic_string<TCHAR> srcX64 = Helper::GetCurrentModulePath(const_cast<TCHAR*>(x64Name.c_str()));
-	std::basic_string<TCHAR> srcX86 = Helper::GetCurrentModulePath(const_cast<TCHAR*>(x86Name.c_str()));
+	std::basic_string<TCHAR> srcX64 = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(x64Name.c_str()));
+	std::basic_string<TCHAR> srcX86 = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(x86Name.c_str()));
 
 	if (srcX64.empty() && srcX86.empty()) {
 		LOG_CTRL_ETW(L"CopyUmhhDllsToRoot: could not determine source paths for UMHH DLLs\n");

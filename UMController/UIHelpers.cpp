@@ -19,6 +19,11 @@ std::wstring FormatHookColumn(PROC_ITEMDATA packed) {
     bool dllLoaded = false; Helper::IsModuleLoaded(pid, dllName, dllLoaded);
 
     wchar_t buf[128];
-    swprintf_s(buf, _countof(buf), L"Yes (master=%s, %s)", dllLoaded ? L"Yes" : L"No", is64 ? L"x64" : L"x86");
+    bool forced = (flags & PF_FORCED) != 0;
+    if (forced) {
+        swprintf_s(buf, _countof(buf), L"Yes (master=%s, %s, forced)", dllLoaded ? L"Yes" : L"No", is64 ? L"x64" : L"x86");
+    } else {
+        swprintf_s(buf, _countof(buf), L"Yes (master=%s, %s)", dllLoaded ? L"Yes" : L"No", is64 ? L"x64" : L"x86");
+    }
     return std::wstring(buf);
 }

@@ -59,12 +59,8 @@ void PM_Clear() {
 void PM_AddEntry(const ProcessEntry& entry) {
     EnterCriticalSection(&g_lock);
     int idx = (int)g_list.size();
-    // Ensure new entries have default module flags set
-    ProcessEntry e = entry;
-    e.is64 = false;
-    e.masterDllLoaded = false;
-    e.pathHash = 0;
-    g_list.push_back(e);
+    // Preserve caller-provided fields; push a copy into the internal list
+    g_list.push_back(entry);
     g_index[entry.pid] = idx;
     LeaveCriticalSection(&g_lock);
 }
@@ -138,7 +134,11 @@ void PM_UpdateEntryFields(DWORD pid, const std::wstring& path, bool inHook, cons
             } else {
                 g_list[idx].pathHash = 0;
             }
-            g_list[idx].bInHookList = inHook;
+			g_list[idx].bInHookList = g_list[idx].forced ? true : inHook;
+            // preserve forced flag unless explicitly cleared elsewhere
+            if (!inHook && !g_list[idx].forced) {
+                // no change
+            }
             g_list[idx].cmdline = cmdline;
         }
     }
@@ -215,8 +215,22 @@ void PM_MarkAsNewProcess(DWORD pid, const FILETIME& newStartTime) {
 			g_list[idx].path.clear();
 			g_list[idx].cmdline.clear();
 			g_list[idx].bInHookList = false;
-			g_list[idx].startTime = newStartTime;
+            g_list[idx].startTime = newStartTime;
+            // Clear forced flag when PID is reused
+            g_list[idx].forced = false;
 		}
 	}
 	LeaveCriticalSection(&g_lock);
+}
+
+void PM_MarkForced(DWORD pid, bool forced) {
+    EnterCriticalSection(&g_lock);
+    auto it = g_index.find(pid);
+    if (it != g_index.end()) {
+        int idx = it->second;
+        if (idx >= 0 && idx < (int)g_list.size() && g_list[idx].pid == pid) {
+            g_list[idx].forced = forced;
+        }
+    }
+    LeaveCriticalSection(&g_lock);
 }

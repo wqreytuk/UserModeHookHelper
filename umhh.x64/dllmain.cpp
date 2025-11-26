@@ -405,7 +405,6 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 		EtwLog(L"current process is signaled to inject a dll\n");
 		char dllPath[256] = { 0 };
 		int pid = ReadFileParsePidAndDllPath(pathBuf, dllPath);
-		EtwLog(L"get to be injected dll path: %S\n", dllPath);
 		{
 			while (FileExistsViaNtOpenFile(pathBuf)) {
 				UNICODE_STRING uPath;
@@ -438,7 +437,9 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 			EtwLog(L"constructed unicode string for to be injected dll path: %wZ\n", ustr);
 
-			pLdrLoadDll(0, 0, ustr, (PHANDLE)dllPath);
+			NTSTATUS st=pLdrLoadDll(0, 0, ustr, (PHANDLE)dllPath);
+			if (st != 0)
+				EtwLog(L"LdrLoadDll call with DllPath=%wZ failed with Status=0x%x\n", dllPath, st);
 		}
 		NtResetEvent(g_EventHandle, NULL);
 	}

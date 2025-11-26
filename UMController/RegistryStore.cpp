@@ -11,6 +11,7 @@ static const wchar_t* VALUE_NAME = L"HookPaths";
 static const wchar_t* COMPOSITE_VALUE_NAME = L"NtProcCache"; // new composite key cache
 static const wchar_t* PROCHOOK_VALUE_NAME = L"ProcHookList"; // per-process hook list
 static const wchar_t* EARLYBREAK_VALUE_NAME = L"EarlyBreakList"; // per-process early-break marks (NT paths)
+static const wchar_t* FORCED_VALUE_NAME = L"ForcedList"; // per-process forced injection marks (PID:HI:LOW)
 
 bool RegistryStore::ReadHookPaths(std::vector<std::wstring>& outPaths) {
     outPaths.clear();
@@ -344,6 +345,84 @@ bool RegistryStore::RemoveEarlyBreakMark(const std::wstring& ntPath) {
     LONG rr = RegSetValueExW(hKey, EARLYBREAK_VALUE_NAME, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size()*sizeof(wchar_t)));
     RegCloseKey(hKey);
     return rr == ERROR_SUCCESS;
+}
+
+bool RegistryStore::ReadForcedMarks(std::vector<std::tuple<DWORD, DWORD, DWORD>>& outEntries) {
+    outEntries.clear();
+    HKEY hKey = NULL;
+    LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_READ, &hKey);
+    if (r != ERROR_SUCCESS) return true; // treat missing as empty
+    DWORD type=0, dataSize=0;
+    r = RegQueryValueExW(hKey, FORCED_VALUE_NAME, NULL, &type, NULL, &dataSize);
+    if (r != ERROR_SUCCESS) { RegCloseKey(hKey); if (r == ERROR_FILE_NOT_FOUND) return true; return false; }
+    if (type != REG_MULTI_SZ) { RegCloseKey(hKey); return false; }
+    if (dataSize == 0) { RegCloseKey(hKey); return true; }
+    std::vector<wchar_t> buf(dataSize/sizeof(wchar_t));
+    r = RegQueryValueExW(hKey, FORCED_VALUE_NAME, NULL, NULL, reinterpret_cast<LPBYTE>(buf.data()), &dataSize);
+    RegCloseKey(hKey);
+    if (r != ERROR_SUCCESS) return false;
+    size_t idx=0, wcCount=dataSize/sizeof(wchar_t);
+    while (idx < wcCount) {
+        if (buf[idx] == L'\0') { ++idx; continue; }
+        std::wstring line(&buf[idx]);
+        idx += line.size()+1;
+        // parse PID:HIGH:LOW
+        size_t c1 = line.find(L':'); if (c1==std::wstring::npos) continue;
+        size_t c2 = line.find(L':', c1+1); if (c2==std::wstring::npos) continue;
+        std::wstring pidPart = line.substr(0, c1);
+        std::wstring highPart = line.substr(c1+1, c2-c1-1);
+        std::wstring lowPart = line.substr(c2+1);
+        DWORD pid=0, hi=0, lo=0;
+        swscanf_s(pidPart.c_str(), L"%lx", &pid);
+        swscanf_s(highPart.c_str(), L"%lx", &hi);
+        swscanf_s(lowPart.c_str(), L"%lx", &lo);
+        outEntries.emplace_back(pid, hi, lo);
+    }
+    return true;
+}
+
+bool RegistryStore::WriteForcedMarks(const std::vector<std::tuple<DWORD, DWORD, DWORD>>& entries) {
+    std::vector<wchar_t> buf;
+    for (auto &t : entries) {
+        DWORD pid = std::get<0>(t);
+        DWORD hi = std::get<1>(t);
+        DWORD lo = std::get<2>(t);
+        wchar_t header[64]; _snwprintf_s(header, _TRUNCATE, L"%08lX:%08lX:%08lX", pid, hi, lo);
+        std::wstring line = header;
+        buf.insert(buf.end(), line.c_str(), line.c_str() + line.size());
+        buf.push_back(L'\0');
+    }
+    if (buf.empty() || buf.back() != L'\0') buf.push_back(L'\0');
+    buf.push_back(L'\0');
+    HKEY hKey = NULL; DWORD disp=0;
+    LONG r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &disp);
+    if (r != ERROR_SUCCESS) return false;
+    LONG rr = RegSetValueExW(hKey, FORCED_VALUE_NAME, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size()*sizeof(wchar_t)));
+    RegCloseKey(hKey);
+    return rr == ERROR_SUCCESS;
+}
+
+bool RegistryStore::AddForcedMark(DWORD pid, DWORD hi, DWORD lo) {
+    std::vector<std::tuple<DWORD, DWORD, DWORD>> entries;
+    if (!ReadForcedMarks(entries)) return false;
+    for (auto &t : entries) {
+        if (std::get<0>(t) == pid && std::get<1>(t) == hi && std::get<2>(t) == lo) return true;
+    }
+    entries.emplace_back(pid, hi, lo);
+    return WriteForcedMarks(entries);
+}
+
+bool RegistryStore::RemoveForcedMark(DWORD pid, DWORD hi, DWORD lo) {
+    std::vector<std::tuple<DWORD, DWORD, DWORD>> entries;
+    if (!ReadForcedMarks(entries)) return false;
+    std::vector<std::tuple<DWORD, DWORD, DWORD>> out;
+    bool removed = false;
+    for (auto &t : entries) {
+        if (!removed && std::get<0>(t) == pid && std::get<1>(t) == hi && std::get<2>(t) == lo) { removed = true; continue; }
+        out.push_back(t);
+    }
+    if (!removed) return true;
+    return WriteForcedMarks(out);
 }
 
 bool RegistryStore::RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) {

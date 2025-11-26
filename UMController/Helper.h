@@ -33,7 +33,7 @@ public:
 	static bool GetProcessCommandLineByPID(DWORD pid, std::wstring& outCmdLine);
 
 	static	bool IsFileExists(TCHAR* szPath);
-	static std::basic_string<TCHAR> GetCurrentModulePath(TCHAR* append);
+	static std::basic_string<TCHAR> GetCurrentDirFilePath(TCHAR* append);
 	// Call the configured fatal handler for unrecoverable errors. 
 	// New: set a process-wide fatal handler callable from any thread. The
 	// handler should perform minimal work (e.g. PostMessage to the UI) and
@@ -51,6 +51,7 @@ public:
 	// should set this once during initialization (e.g., from the dialog).
 	static void SetFilterInstance(class Filter* f);
 	static   void SetNtCreateThreadExSyscallNum(DWORD num);
+	static void SetSysWOW64LdrLoadDllFuncAddr(DWORD ldr);
 	// craete a file that require nearly no privilege, every can operate
 	static bool CreateLowPrivReqFile(wchar_t* filePath,PHANDLE outFileHandle);
 	// Check if a module with the given (case-insensitive) base name is loaded
@@ -79,6 +80,7 @@ private:
 	static size_t m_sharedBufCap;
 	static std::mutex m_bufMutex;	// Optional pointer to the Filter instance owned by the UI. May be NULL.
 	static Filter* m_filterInstance;
+	static DWORD m_SysWOW64_ldr_load_dll_func_addr;
 	static DWORD m_NtCreateThreadExSyscallNum;
    
 

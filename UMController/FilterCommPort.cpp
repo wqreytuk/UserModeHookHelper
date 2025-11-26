@@ -723,8 +723,6 @@ bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	}
 	// Any failure is fatal in user-mode policy
 	LOG_CTRL_ETW(L"FLTCOMM_RemoveHookByHash: failed hash=0x%I64x\n", hash);
-	SetLastError(21); // ERROR_NOT_READY as sentinel for fatal
-	Helper::Fatal(L"FLTCOMM_RemoveHookByHash: kernel or IPC failure while removing hook");
 	return false;
 }
 

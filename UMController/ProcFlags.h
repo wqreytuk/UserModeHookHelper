@@ -16,6 +16,8 @@
 #define PF_IS_64BIT          0x00000004u  // target process is 64-bit
 // Early-break mark: set when user marks this process for early break handling
 #define PF_EARLY_BREAK_MARKED 0x00000008u
+// Forced injection marker: set when an entry was Force-Injected by the user
+#define PF_FORCED             0x00000010u
 
 
     typedef unsigned long long PROC_ITEMDATA;

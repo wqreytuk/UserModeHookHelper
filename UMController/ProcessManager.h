@@ -9,12 +9,13 @@ struct ProcessEntry {
     DWORD pid;
     std::wstring name;
     std::wstring path;
-    unsigned long long pathHash;
+    unsigned long long pathHash = 0;
     std::wstring cmdline;
-    bool bInHookList;
-	bool is64;
-	bool early_break;
-    bool masterDllLoaded;
+    bool bInHookList = false;
+    bool is64 = false;
+    bool early_break = false;
+    bool forced = false;
+    bool masterDllLoaded = false;
     FILETIME startTime = {0,0};
 };
 
@@ -63,6 +64,8 @@ std::vector<ProcessEntry> PM_GetAll();
 // Mark an existing entry as a new process instance (PID reused): clear name/path/cmdline,
 // set bInHookList=false and update startTime.
 void PM_MarkAsNewProcess(DWORD pid, const FILETIME& newStartTime);
+// Mark or clear the Forced flag for a PID (and optionally persist externally)
+void PM_MarkForced(DWORD pid, bool forced);
 // Find PIDs matching given NT-path hash (returns empty vector if none).
 std::vector<DWORD> PM_FindPidsByHash(unsigned long long hash);
 // Hook-hash cache APIs: used to store a mapped snapshot of hook-list hashes
