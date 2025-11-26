@@ -335,7 +335,7 @@ VOID EtwLog(_In_ PCWSTR Format, ...)
 		else {
 			UNICODE_STRING u;
 			RtlInitUnicodeString(&u, Prefixed);
-			DbgPrint("%s\n", u);
+			DbgPrint("%wZ\n", u);
 		}
 	}
 }
@@ -435,11 +435,11 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 			ustr->Length = i * sizeof(WCHAR);
 			ustr->MaximumLength = (i + 1) * sizeof(WCHAR);
 
-			EtwLog(L"constructed unicode string for to be injected dll path: %wZ\n", ustr);
+			EtwLog(L"constructed to be injected dll path: %s\n", buffer);
 
 			NTSTATUS st=pLdrLoadDll(0, 0, ustr, (PHANDLE)dllPath);
 			if (st != 0)
-				EtwLog(L"LdrLoadDll call with DllPath=%wZ failed with Status=0x%x\n", dllPath, st);
+				EtwLog(L"LdrLoadDll call with DllPath=%s failed with Status=0x%x\n", buffer, st);
 		}
 		NtResetEvent(g_EventHandle, NULL);
 	}
@@ -582,7 +582,7 @@ OnProcessAttach(
 		HANDLE hEvent = NULL;
 		NTSTATUS status = NtOpenEvent(&hEvent, EVENT_MODIFY_STATE | SYNCHRONIZE, &oa);
 		if (!NT_SUCCESS(status)) {
-			EtwLog(L"failed to open event, Name=%wZ\n", uName);
+			EtwLog(L"failed to open event, Name=%s, Status=0x%x\n", event_name, status);
 		}
 		else {
 			// Signal event
@@ -624,7 +624,7 @@ OnProcessAttach(
 		);
 
 		if (status != 0) {
-			EtwLog(L"failed to call NtCreateEvent to create master loaded signal Event=%wZ, status=0x%x\n", &name, status);
+			EtwLog(L"failed to call NtCreateEvent to create master loaded signal Event=%s, status=0x%x\n", &event_name, status);
 		}
 	}
 
@@ -666,7 +666,7 @@ OnProcessAttach(
 		);
 
 		if (status != 0) {
-			EtwLog(L"failed to call NtCreateEvent to create injection signal Event=%wZ, status=0x%x\n", &name, status);
+			EtwLog(L"failed to call NtCreateEvent to create injection signal Event=%s, status=0x%x\n", &event_name, status);
 		}
 	}
 
