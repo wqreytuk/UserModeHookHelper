@@ -136,7 +136,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>$(SolutionDir)/lib/capstone.lib;fltlib.lib</AdditionalDependencies>
+      <AdditionalDependencies>$(SolutionDir)$(Platform)\$(Configuration)\ProcessHackerLib.lib;$(SolutionDir)/lib/capstone.lib;fltlib.lib</AdditionalDependencies>
       <AdditionalOptions>/MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <Midl>

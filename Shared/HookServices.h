@@ -13,9 +13,12 @@
 // Unified IHookServices interface shared by UMController, HookUI, and HookCoreLib.
 // Provides two logging channels: general (Log) and hook-core diagnostics (LogCore).
 struct IHookServices {
+	
     virtual void Log(const wchar_t* fmt, ...) = 0;
-    virtual void LogCore(const wchar_t* fmt, ...) = 0;
+	virtual void LogPhlib(const wchar_t* fmt, ...) = 0;
+	virtual void LogCore(const wchar_t* fmt, ...) = 0;
 	virtual bool EnableDebugPrivilege(bool enable) = 0;
+	virtual  bool wstrcasestr_check(const wchar_t* haystack, const wchar_t* needle) = 0;
     // Request the master injected DLL to load a trampoline DLL for the given
     // target process. Returns true if the signal was sent successfully. The
     // caller supplies the absolute path to the trampoline DLL that should be

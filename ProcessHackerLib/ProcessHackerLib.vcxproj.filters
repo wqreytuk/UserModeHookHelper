@@ -24,12 +24,18 @@
     <ClInclude Include="ProcessHackerLib.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="phlib_expose.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ProcessHackerLib.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="pch.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="phlib_expose.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

@@ -23,6 +23,7 @@
 #include <psapi.h>
 #include "../Shared/SharedMacroDef.h"
 #include "ProcFlags.h"
+#include "../ProcessHackerLib/phlib_expose.h"
 #pragma comment(lib, "wbemuuid.lib")
 
 // Simple process-wide fatal handler. Stored as an atomic pointer so it can be
@@ -643,10 +644,20 @@ bool Helper::ForceInject(DWORD pid) {
 	}
 
 	PVOID kernel32_base = NULL;
-	if (!GetModuleBaseWithPathEx(hProc, is64 ? KERNEL_32_X64 : KERNEL_32_X86, &kernel32_base)) {
-		LOG_CTRL_ETW(L"failed to call GetModuleBaseWithPathEx PID=%u\n", pid);
-		CloseHandle(hProc);
-		return false;
+	if (is64) {
+		if (!GetModuleBaseWithPathEx(hProc, is64 ? KERNEL_32_X64 : KERNEL_32_X86, &kernel32_base)) {
+			LOG_CTRL_ETW(L"failed to call GetModuleBaseWithPathEx PID=%u\n", pid);
+			CloseHandle(hProc);
+			return false;
+		}
+	}
+	else {
+		WCHAR _[] = WIDEN(KERNEL_32_X86);
+		if (0!=PHLIB::GetModuleBase((PVOID)hProc, (PVOID)_, (PVOID)&kernel32_base)) {
+			LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase PID=%u, CPU=x86\n", pid);
+			CloseHandle(hProc);
+			return false;
+		}
 	}
 
 	DWORD LoadLibraryW_func_offset = 0;
@@ -698,7 +709,21 @@ CLEAN_UP:;
 	CloseHandle(hProc);
 	return false;
 }
+bool Helper::wstrcasestr_check(const wchar_t* haystack, const wchar_t* needle) {
+	if (!haystack || !needle) return false;
+	if (*needle == L'\0') return true; // empty needle -> match
 
+	for (; *haystack != L'\0'; ++haystack) {
+		const wchar_t *h = haystack;
+		const wchar_t *n = needle;
+		while (*n != L'\0' && towlower((wint_t)*h) == towlower((wint_t)*n)) {
+			++h; ++n;
+		}
+		if (*n == L'\0') return true; /* matched whole needle */
+		if (*h == L'\0') return false; /* haystack ended */
+	}
+	return false;
+}
 bool Helper::strcasestr_check(const char *haystack, const char *needle) {
 	if (!haystack || !needle) return false;
 	if (*needle == '\0') return true; /* empty needle -> match */

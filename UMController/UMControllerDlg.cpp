@@ -26,6 +26,7 @@
 #include "Resource.h" // ensure menu ID definitions (IDR_MAIN_MENU) visible
 #include <sddl.h> 
 #include "../Shared/SharedMacroDef.h"
+#include "../ProcessHackerLib/phlib_expose.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -369,7 +370,18 @@ public:
 		// Keep legacy behavior to avoid refactoring existing LogCore call sites yet.
 		app.GetETW().Log(L"[HookCore]   %s", buffer);
 	}
-	bool CreateLowPrivReqFile(wchar_t* filePath, PHANDLE outFileHandle) {
+	void LogPhlib(const wchar_t* fmt, ...) override {
+		wchar_t buffer[1024];
+		va_list ap; va_start(ap, fmt);
+		_vsnwprintf_s(buffer, _countof(buffer), _TRUNCATE, fmt, ap);
+		va_end(ap);
+		// Keep legacy behavior to avoid refactoring existing LogCore call sites yet.
+		app.GetETW().Log(L"[PHLIB]      %s", buffer);
+	}
+	bool wstrcasestr_check(const wchar_t* haystack, const wchar_t* needle) override {
+	return  Helper::wstrcasestr_check(haystack, needle);
+	}
+	bool CreateLowPrivReqFile(wchar_t* filePath, PHANDLE outFileHandle) override {
 		return Helper::CreateLowPrivReqFile(filePath, outFileHandle);
 	}
 
@@ -641,6 +653,8 @@ BOOL CUMControllerDlg::OnInitDialog()
 		// Get the first two wide characters
 		Helper::SetSysDriverMark(str.substr(0, 2));
 	}
+	// set hookservice interface to PHLIB
+	PHLIB::SetHookServices(&g_HookServices);
 	// TODO: Add extra initialization here
 	PM_Init();
 	// Try to populate the in-process hook-hash cache by requesting and
