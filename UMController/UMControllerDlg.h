@@ -74,7 +74,7 @@ public:
 	afx_msg void OnToggleGlobalHookMode();
 	afx_msg LRESULT OnApplyGlobalHookMenu(WPARAM wParam, LPARAM lParam);
     
-private:
+private: 
 	Filter m_Filter;
 	CListCtrl m_ProcListCtrl;
 	std::wstring m_CurrentFilterString;

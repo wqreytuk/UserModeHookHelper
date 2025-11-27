@@ -43,3 +43,9 @@
 #define HOOK_CODE_EXPORT_X64 "HookCodeX64"
 
 #define HOOK_CODE_TEMP_DIR_NAME L"hookcode_dll_temp"
+
+#define KERNEL_32_X86 "\\Windows\\SysWOW64\\kernel32.dll"
+#define KERNEL_32_X64 "\\Windows\\System32\\kernel32.dll"
+
+#define WIDEN2(x) L##x
+#define WIDEN(x) WIDEN2(x)

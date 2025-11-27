@@ -629,6 +629,18 @@ BOOL CUMControllerDlg::OnInitDialog()
 	if (!Helper::ResolveNtCreateThreadExSyscallNum(&m_NtCreateThreadExSyscallNum)) {
 		Helper::Fatal(L"ResolveNtCreateThreadExSyscallNum failed\n");
 	}
+	// set system driver mark
+	{
+		wchar_t sysDir[MAX_PATH]; 
+		if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) {
+			LOG_CTRL_ETW(L"GetSystemDirectoryW failed, Error=0x%x\n", GetLastError());
+			Helper::Fatal(L"GetSystemDirectoryW failed, Error=0x%x\n");
+		}
+		std::wstring str = sysDir;
+
+		// Get the first two wide characters
+		Helper::SetSysDriverMark(str.substr(0, 2));
+	}
 	// TODO: Add extra initialization here
 	PM_Init();
 	// Try to populate the in-process hook-hash cache by requesting and
@@ -1931,75 +1943,7 @@ LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {
 // Removed resolution-based progress tracking.
 
 void CUMControllerDlg::FinishStartupIfDone() {
-	// create a ackground to resolve SysWOW64 process LdrLoadDll func addr
-	std::thread([this]() {
-		// create an event that every prcess can open
-		SECURITY_ATTRIBUTES sa = { 0 };
-		PSECURITY_DESCRIPTOR pSD = NULL;
-
-		// Create a DACL that allows Everyone full access
-		if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-			L"D:(A;;GA;;;WD)",  // DACL: Allow Generic All to Everyone
-			SDDL_REVISION_1,
-			&pSD,
-			NULL)) {
-			LOG_CTRL_ETW(L"SDDL conversion failed: Error=0x%x\n", GetLastError());
-			return 0;
-		}
-
-		sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-		sa.lpSecurityDescriptor = pSD;
-		sa.bInheritHandle = FALSE;
-
-		// Create manual-reset named event
-		HANDLE hEvent = CreateEventW(
-			&sa,              // security attributes
-			TRUE,              // manual reset
-			FALSE,             // initial state
-			LOCATOR_SIGNAL_EVENT // named event
-		);
-
-		if (!hEvent) {
-			LOG_CTRL_ETW(L"CreateEvent failed: Error=0x%x\n", GetLastError());
-			LocalFree(pSD);
-			return 0;
-		}
-
-		LOG_CTRL_ETW(L"Event created successfully.\n");
-
-		// launch x86 SysWOW64 LdrLoadDll function address locator
-		SHELLEXECUTEINFO sei = { sizeof(sei) };
-		auto s = Helper::GetCurrentDirFilePath(TEXT("x86LdrLoadDllAddrLocator.exe"));
-		sei.lpFile = s.c_str();
-		sei.nShow = SW_HIDE;
-		BOOL ok = ShellExecuteEx(&sei);
-		if (!ok) {
-			LOG_CTRL_ETW(L"failed to call ShellExecuteEx to launch syswow64 ldrloaddll locator, Path=%s, Error=%s\n",
-				s.c_str(), GetLastError());
-			return 0;
-		}
-		// Wait or do work...
-		WaitForSingleObject(hEvent, INFINITE);
-		FILE* fp = NULL;
-		_wfopen_s(&fp, LOCATOR_IPC_FILE_PATH, L"r");
-		if (fp) {
-			DWORD ldr = 0;
-			fread_s(&ldr, sizeof(DWORD), sizeof(DWORD), 1, fp);
-			if (ldr) {
-				Helper::SetSysWOW64LdrLoadDllFuncAddr(ldr);
-			}
-			else
-				LOG_CTRL_ETW(L"get LdrLoadDll function addr=NULL from ipc file, Path=%s\n", LOCATOR_IPC_FILE_PATH);
-		}
-		else {
-			LOG_CTRL_ETW(L"can not open locator ipc file, Path=%s, Error=0x%x\n", LOCATOR_IPC_FILE_PATH, GetLastError());
-		}
-		CloseHandle(hEvent);
-		LocalFree(pSD);
-		return 0;
-	}).detach();
-
-
+	
 	if (m_CachePersisted) return; // already persisted once
 	if (!m_PersistSnapshotEntries.empty()) {
 		std::vector<std::tuple<DWORD, DWORD, DWORD, std::wstring>> dedup;

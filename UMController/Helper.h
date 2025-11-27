@@ -47,19 +47,24 @@ public:
 	// Determine whether the target process is 64-bit. Returns true on success
 	// and sets outIs64. On failure returns false and leaves outIs64 unchanged.
 	static bool IsProcess64(DWORD pid, bool& outIs64);
-	static bool GetModuleBaseWithPath(DWORD pid, char* mPath, PVOID* base);
+	// Like GetModuleBaseWithPath but uses EnumProcessModulesEx with LIST_MODULES_ALL
+	static  bool GetModuleBaseWithPathEx(HANDLE hProcess, const char* mPath, PVOID* base);
 	static bool strcasestr_check(const char *haystack, const char *needle);
 	// Set the Filter instance used by Helper for kernel queries. The caller
 	// should set this once during initialization (e.g., from the dialog).
 	static void SetFilterInstance(class Filter* f);
 	static   void SetNtCreateThreadExSyscallNum(DWORD num);
-	static void SetSysWOW64LdrLoadDllFuncAddr(DWORD ldr);
+	static void SetSysDriverMark(std::wstring sysmark);
 	// craete a file that require nearly no privilege, every can operate
 	static bool CreateLowPrivReqFile(wchar_t* filePath,PHANDLE outFileHandle);
 	// Check if a module with the given (case-insensitive) base name is loaded
 	// in the target process. Returns true on success and sets outPresent.
 	// Fails (returns false) if the process cannot be opened or enumerated.
 	static bool IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent);
+	// Convert a multibyte `char*` string to wide `wchar_t*`.
+	// `dstChars` is the size of `dst` in wchar_t characters (including room for null).
+	// Returns true on success, false on failure or insufficient space.
+	static bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars);
 	// Convert an integer value to uppercase hexadecimal without leading zeros.
 	// Returns L"0" when value==0. Does NOT include any prefix like 0x.
 	static std::wstring ToHex(ULONGLONG value);
@@ -82,7 +87,7 @@ private:
 	static size_t m_sharedBufCap;
 	static std::mutex m_bufMutex;	// Optional pointer to the Filter instance owned by the UI. May be NULL.
 	static Filter* m_filterInstance;
-	static DWORD m_SysWOW64_ldr_load_dll_func_addr;
+	static std::wstring m_SysDriverMark;
 	static DWORD m_NtCreateThreadExSyscallNum;
    
 

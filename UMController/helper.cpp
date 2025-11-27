@@ -35,7 +35,7 @@ size_t Helper::m_sharedBufCap = 0;
 std::mutex Helper::m_bufMutex;
 // Filter instance pointer (nullable)
 Filter* Helper::m_filterInstance = nullptr;
-DWORD Helper::m_SysWOW64_ldr_load_dll_func_addr = 0;
+std::wstring Helper::m_SysDriverMark = L"";
 DWORD Helper::m_NtCreateThreadExSyscallNum = 0;
 
 
@@ -634,13 +634,7 @@ bool Helper::ForceInject(DWORD pid) {
 		return false;
 	}
 	LOG_CTRL_ETW(L"get process handle=0x%x from kernel\n", hProc);
-
-
-	// this operation can be done by driver code, we only need to pass the dll path to it
-	// and it should return an address back to us
-	std::wstring exe = Helper::GetCurrentDirFilePath(L"");
-	size_t pos = exe.find_last_of(L"/\\");
-	std::wstring dir = (pos == std::wstring::npos) ? exe : exe.substr(0, pos);
+	
 	bool is64;
 	if (!IsProcess64(pid, is64)) {
 		LOG_CTRL_ETW(L"failed to call IsProcess64 PID=%u\n", pid);
@@ -648,15 +642,30 @@ bool Helper::ForceInject(DWORD pid) {
 		return false;
 	}
 
-	if (!is64) {
-		if (!Helper::m_SysWOW64_ldr_load_dll_func_addr) {
-			LOG_CTRL_ETW(L"SysWOW64_ldr_load_dll_func_addr is not resolved, we can't force inject SysWOW64 process\n");
-			MessageBox(NULL, L"SysWOW64_ldr_load_dll_func_addr is not resolved, we can't force inject SysWOW64 process", L"Attention!",
-				MB_ICONERROR);
-			return false;
-		}
+	PVOID kernel32_base = NULL;
+	if (!GetModuleBaseWithPathEx(hProc, is64 ? KERNEL_32_X64 : KERNEL_32_X86, &kernel32_base)) {
+		LOG_CTRL_ETW(L"failed to call GetModuleBaseWithPathEx PID=%u\n", pid);
+		CloseHandle(hProc);
+		return false;
 	}
 
+	DWORD LoadLibraryW_func_offset = 0;
+	std::wstring dll_path = Helper::m_SysDriverMark + (is64 ? WIDEN(KERNEL_32_X64) : WIDEN(KERNEL_32_X86));
+	if (!CheckExportFromFile(dll_path.c_str(), "LoadLibraryW", &LoadLibraryW_func_offset)) {
+		LOG_CTRL_ETW(L"failed to call CheckExportFromFile PID=%u, dll_path=%s\n", pid, dll_path.c_str());
+		CloseHandle(hProc);
+		return false;
+	}
+
+	void* pLoadLibraryW = (PVOID)(ULONG_PTR)((DWORD64)kernel32_base + LoadLibraryW_func_offset);
+
+
+	// this operation can be done by driver code, we only need to pass the dll path to it
+	// and it should return an address back to us
+	std::wstring exe = Helper::GetCurrentDirFilePath(L"");
+	size_t pos = exe.find_last_of(L"/\\");
+	std::wstring dir = (pos == std::wstring::npos) ? exe : exe.substr(0, pos);
+	
 	const wchar_t* masterName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 	std::wstring dllnamepath = dir + L"\\" + masterName;
 
@@ -668,25 +677,9 @@ bool Helper::ForceInject(DWORD pid) {
 		CloseHandle(hProc);
 		return false;
 	}
-	LOG_CTRL_ETW(L"write dll Path=%s to target process Pid=%u memory Addr=0x%p\n",
-		dllnamepath.c_str(), pid, dll_path_addr);
+	LOG_CTRL_ETW(L"write dll Path=%s to target process Pid=%u memory Addr=0x%p\n", dllnamepath.c_str(), pid, dll_path_addr);
 	PVOID syscall_addr = 0;
-	void* pLoadLibraryW = 0;
-
-	if (is64) {
-		HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
-		if (hKernel32 == NULL) {
-			LOG_CTRL_ETW(L"GetModuleHandleA failed, error=0x%x\n", GetLastError());
-			goto CLEAN_UP;
-		}
-		pLoadLibraryW = GetProcAddress(hKernel32, "LoadLibraryW");
-		if (pLoadLibraryW == nullptr) {
-			LOG_CTRL_ETW(L"Get loadlibraryW ProcAddress failed, error=0x%x\n", GetLastError());
-			goto CLEAN_UP;
-		}
-	}
-	else
-		pLoadLibraryW = (PVOID)(ULONG_PTR)Helper::m_SysWOW64_ldr_load_dll_func_addr;
+	 
 	// get NtCreateThreadEx kernel function addr
 	if (!Helper::m_filterInstance->FLTCOMM_GetSyscallAddr(Helper::m_NtCreateThreadExSyscallNum, &syscall_addr)) {
 		LOG_CTRL_ETW(L"call FLTCOMM_GetSyscallAddr failed\n");
@@ -722,30 +715,36 @@ bool Helper::strcasestr_check(const char *haystack, const char *needle) {
 	}
 	return false;
 }
-bool Helper::GetModuleBaseWithPath(DWORD pid, char* mPath, PVOID* base) {
-	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-	if (!hProcess) {
-		LOG_CTRL_ETW(L"failed to open PID=%u with VM_READ access, error: 0x%x\n", pid, GetLastError());
+
+// Use EnumProcessModulesEx to handle different module lists and architectures
+bool Helper::GetModuleBaseWithPathEx(HANDLE hProcess, const char* mPath, PVOID* base) {
+	if (!mPath || !base || !hProcess) {
+		LOG_CTRL_ETW(L"GetModuleBaseWithPathEx parameter snanity check failed\n");
 		return false;
-	}
+}
+	*base = NULL;
+	
 
-	HMODULE hMods[1024];
-	DWORD cbNeeded;
-	DWORD64 kbase = 0;
-	if (EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded)) {
-		for (DWORD i = 0; i < cbNeeded / sizeof(HMODULE); i++) {
-			char szModName[MAX_PATH];
-			GetModuleFileNameExA(hProcess, hMods[i], szModName, MAX_PATH);
+	HMODULE hMods[4096];
+	DWORD cbNeeded = 0;
+	wchar_t wide[MAX_PATH] = { 0 };
+	// Use LIST_MODULES_ALL to be robust across WoW64 and different module visibility
+	if (EnumProcessModulesEx(hProcess, hMods, sizeof(hMods), &cbNeeded, LIST_MODULES_ALL)) {
+		DWORD count = cbNeeded / sizeof(HMODULE);
+		for (DWORD i = 0; i < count; ++i) {
+			char szModName[MAX_PATH] = { 0 };
+			if (GetModuleFileNameExA(hProcess, hMods[i], szModName, _countof(szModName))) {
 
-			if (strcasestr_check(szModName, mPath) == 1) {
-				*base = hMods[i];
-				break;
+				ConvertCharToWchar(szModName, wide, MAX_PATH);
+				LOG_CTRL_ETW(L"debug: SysWOW64 module: %s\n", wide);
+				if (strcasestr_check(szModName, mPath)) {
+					*base = (PVOID)hMods[i];
+					break;
+				}
 			}
 		}
 	}
-	if (*base)
-		return true;
-	return false;
+	return (*base != NULL);
 }
 bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 	// First attempt: if a Filter instance is available, ask the kernel
@@ -792,8 +791,8 @@ bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 	outIs64 = is64;
 	return true;
 }
-void Helper::SetSysWOW64LdrLoadDllFuncAddr(DWORD ldr) {
-	Helper::m_SysWOW64_ldr_load_dll_func_addr = ldr;
+void Helper::SetSysDriverMark(std::wstring sysmark){
+	Helper::m_SysDriverMark = sysmark;
 }
 void Helper::SetNtCreateThreadExSyscallNum(DWORD num) {
 	Helper::m_NtCreateThreadExSyscallNum = num;
@@ -907,6 +906,20 @@ bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent
 	CloseHandle(snap);
 	if (ok) outPresent = present;
 	return ok;
+}
+
+bool Helper::ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars) {
+	if (!src || !dst || dstChars == 0) return false;
+	// Simple byte->word expansion: copy each input byte into the low
+	// 16 bits of a wchar_t and append a null terminator. This avoids
+	// calling Win32 APIs and ignores code pages as requested.
+	size_t i = 0;
+	for (; i + 1 < dstChars && src[i] != '\0'; ++i) {
+		dst[i] = (wchar_t)(unsigned char)src[i];
+	}
+	if (i >= dstChars) return false; // no room for null terminator
+	dst[i] = L'\0';
+	return true;
 }
 
 
