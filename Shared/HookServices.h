@@ -13,7 +13,7 @@
 // Unified IHookServices interface shared by UMController, HookUI, and HookCoreLib.
 // Provides two logging channels: general (Log) and hook-core diagnostics (LogCore).
 struct IHookServices {
-	
+	virtual bool GetHighAccessProcHandle(DWORD pid, HANDLE* hProc) = 0;
     virtual void Log(const wchar_t* fmt, ...) = 0;
 	virtual void LogPhlib(const wchar_t* fmt, ...) = 0;
 	virtual void LogCore(const wchar_t* fmt, ...) = 0;
@@ -23,6 +23,7 @@ struct IHookServices {
     // target process. Returns true if the signal was sent successfully. The
     // caller supplies the absolute path to the trampoline DLL that should be
     // loaded inside the target process.
+	virtual bool  GetModuleBase(bool is64, HANDLE hProc,const wchar_t* target_module, DWORD64* base) = 0;
     virtual bool InjectTrampoline(DWORD targetPid, const wchar_t* fullDllPath) = 0;
 	virtual bool CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset) = 0;
 	virtual bool IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent) = 0;

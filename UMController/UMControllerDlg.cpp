@@ -379,7 +379,7 @@ public:
 		app.GetETW().Log(L"[PHLIB]      %s", buffer);
 	}
 	bool wstrcasestr_check(const wchar_t* haystack, const wchar_t* needle) override {
-	return  Helper::wstrcasestr_check(haystack, needle);
+		return  Helper::wstrcasestr_check(haystack, needle);
 	}
 	bool CreateLowPrivReqFile(wchar_t* filePath, PHANDLE outFileHandle) override {
 		return Helper::CreateLowPrivReqFile(filePath, outFileHandle);
@@ -393,6 +393,10 @@ public:
 	}
 	bool CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset) override {
 		return Helper::CheckExportFromFile(dllPath, exportName, out_func_offset);
+	}
+	bool GetModuleBase(bool is64, HANDLE hProc,const wchar_t* target_module, DWORD64* base) override
+	{
+		return Helper::GetModuleBase(is64, hProc, target_module, base);
 	}
 	bool InjectTrampoline(DWORD targetPid, const wchar_t* fullDllPath) override {
 		if (targetPid == 0 || !fullDllPath || *fullDllPath == L'\0') {
@@ -425,6 +429,17 @@ public:
 	}
 	virtual bool ForceInject(DWORD pid) override {
 		return  Helper::ForceInject(pid);
+	}
+	virtual bool GetHighAccessProcHandle(DWORD pid, HANDLE* hProc) override{
+		Filter* f = Helper::GetFilterInstance();
+		if (f){
+			if (!f->FLTCOMM_GetProcessHandle(pid, hProc)) {
+				LOG_CTRL_ETW(L"failed to call FLTCOMM_GetProcessHandle\n");
+				return false;
+			}
+			return true;
+		}
+		return false;
 	}
 	bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) override {
 		return RegistryStore::RemoveProcHookEntry(pid, filetimeHi, filetimeLo, hookId);

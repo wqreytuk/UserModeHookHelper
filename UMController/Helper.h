@@ -44,6 +44,7 @@ public:
 	static void Fatal(const wchar_t* message);
 	static bool ResolveNtCreateThreadExSyscallNum(DWORD* sys_call_num);
 	static bool ForceInject(DWORD pid);
+	static bool GetModuleBase(bool is64, HANDLE hProc,const wchar_t* target_module,DWORD64* base);
 	// Determine whether the target process is 64-bit. Returns true on success
 	// and sets outIs64. On failure returns false and leaves outIs64 unchanged.
 	static bool IsProcess64(DWORD pid, bool& outIs64);
@@ -66,6 +67,10 @@ public:
 	// `dstChars` is the size of `dst` in wchar_t characters (including room for null).
 	// Returns true on success, false on failure or insufficient space.
 	static bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars);
+	// Reverse of ConvertCharToWchar: copy low byte of each wchar into dst char buffer.
+	// `dstChars` is the size of `dst` in bytes (including room for null).
+	// Returns true on success, false on failure or insufficient space.
+	static bool ConvertWcharToChar(const wchar_t* src, char* dst, size_t dstChars);
 	// Convert an integer value to uppercase hexadecimal without leading zeros.
 	// Returns L"0" when value==0. Does NOT include any prefix like 0x.
 	static std::wstring ToHex(ULONGLONG value);
@@ -82,6 +87,7 @@ public:
 	// create service as boot-start (Start=0) and start it.
 	// If DesiredEnabled==false: stop the service if running and set Start to disabled.
 	static bool ConfigureBootStartService(bool DesiredEnabled);
+	static Filter* GetFilterInstance();
 private:
 	// Shared reusable buffer for path queries. Protected by m_bufMutex.
 	static std::unique_ptr<TCHAR[]> m_sharedBuf;

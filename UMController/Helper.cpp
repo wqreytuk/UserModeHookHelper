@@ -619,13 +619,30 @@ bool Helper::ResolveNtCreateThreadExSyscallNum(DWORD* sys_call_num) {
 	*sys_call_num = res;
 	return true;
 }
+bool Helper::GetModuleBase(bool is64, HANDLE hProc, const wchar_t* target_module, DWORD64* base) {
+	if (is64) {
+		char _[MAX_PATH] = { 0 };
+		ConvertWcharToChar(target_module, _, MAX_PATH);
+		if (!GetModuleBaseWithPathEx(hProc, _, (PVOID*)base)) {
+			LOG_CTRL_ETW(L"failed to call GetModuleBaseWithPathEx\n");
+			return false;
+		}
+	}
+	else {
+		if (0 != PHLIB::GetModuleBase((PVOID)hProc, (PVOID)target_module, (PVOID)base)) {
+			LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase CPU=x86\n");
+			return false;
+		}
+	}
+	return true;
+}
 bool Helper::ForceInject(DWORD pid) {
 	// I have an idea about foce inject, we get a process handle with 
 	// PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION
 	// access
 	HANDLE hProc = NULL;
 	if (Helper::m_filterInstance) {
-		if (!Helper::m_filterInstance->FLTCOMM_GetProcessHandle(pid, hProc)) {
+		if (!Helper::m_filterInstance->FLTCOMM_GetProcessHandle(pid, &hProc)) {
 			LOG_CTRL_ETW(L"failed to call FLTCOMM_GetProcessHandle\n");
 			return false;
 		}
@@ -964,6 +981,17 @@ std::wstring Helper::ToHex(ULONGLONG value) {
 	}
 	return out;
 }
+
+bool Helper::ConvertWcharToChar(const wchar_t* src, char* dst, size_t dstChars) {
+	if (!src || !dst || dstChars == 0) return false;
+	size_t i = 0;
+	for (; i + 1 < dstChars && src[i] != L'\0'; ++i) {
+		dst[i] = (char)(src[i] & 0xFF);
+	}
+	if (i >= dstChars) return false; // no room for null
+	dst[i] = '\0';
+	return true;
+}
 bool Helper::CheckExportFromFile(const wchar_t* dllPath, const char* exportName,DWORD* out_func_offset) {
 	if (!dllPath || !exportName) {
 		LOG_CTRL_ETW(L"Parameter sanity check failed\n");
@@ -1168,7 +1196,9 @@ SIZE_T Helper::RvaToOffset(void* base, IMAGE_NT_HEADERS64* nth, DWORD rva) {
 	return (SIZE_T)-1;
 }
 
-
+ Filter* Helper::GetFilterInstance() {
+	 return Helper::m_filterInstance;
+}
 // Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)
 bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 	// disable for now, seems like I fucked up file system when using global injection

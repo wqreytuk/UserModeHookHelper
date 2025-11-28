@@ -55,10 +55,28 @@ namespace HookCore {
 		std::wstring trampFullPath;
 		SIZE_T bytesout = 0;
 		PVOID module_base = 0;
-
+		bool is64 = false;
+		HANDLE hProc = NULL;
 
 		if (!services) {
 			MessageBoxW(NULL, L"Fatal Error! services is NULL!", L"Hook", MB_OK | MB_ICONINFORMATION);
+			return false;
+		}
+		if (!services->IsProcess64(pid, is64)) {
+			LOG_CORE(services, L"failed to call IsProcess64 target Pid=%u\n", pid);
+			return false;
+		}
+
+		// try open process with suitable access
+		// we should request dirver to get a high access process handle
+		if (!services->GetHighAccessProcHandle(pid, &hProc)) {
+			LOG_CORE(services, L"failed to call GetHighAccessProcHandle target Pid=%u\n", pid);
+			return false;
+		}
+
+		if (!hProc) {
+			if (services)
+				services->LogCore(L"failed to open target process, error: 0x%x\n", GetLastError());
 			return false;
 		}
 		if (address == 0) { if (services) services->LogCore(L"ApplyHook: address is 0 (invalid).\n"); return false; }
@@ -139,13 +157,12 @@ namespace HookCore {
 				// Poll up to 5 seconds (50 * 100ms) for trampoline module presence.
 				const int maxIterations = 50; bool loaded = false;
 				for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
-					std::vector<ModuleInfo> mods; EnumerateModules(pid, mods);
-					for (auto &m : mods) {
-						if (_wcsicmp(m.name.c_str(), trampName.c_str()) == 0) {
-							trampoline_dll_base = (PVOID)m.base;
-							loaded = true;
-							break;
-						}
+					//  GetModuleBase(bool is64, HANDLE hProc, wchar_t* target_module, DWORD64* base) = 0;
+					services->GetModuleBase(is64, hProc, trampName.c_str(), (DWORD64*)&trampoline_dll_base);
+
+					if (trampoline_dll_base != NULL) {
+						loaded = true;
+						break;
 					}
 					if (!loaded) Sleep(100);
 				}
@@ -156,14 +173,6 @@ namespace HookCore {
 				}
 			}
 		}
-
-		// try open process with suitable access
-		HANDLE hProc = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
-		if (!hProc) {
-			if (services)
-				services->LogCore(L"failed to open target process, error: 0x%x\n", GetLastError());
-			return false;
-		}
 		// probe target process memory to locate a suitable near locate for allocating trampoline code addr
 		PVOID trampoline_pit = AllocNearRemote(hProc, address, sizeof(void*));
 		if (!trampoline_pit) {
@@ -172,28 +181,21 @@ namespace HookCore {
 			return false;
 		}
 
-
-		HMODULE tramp_dll_handle = LoadLibraryW(trampFullPath.c_str());
-		if (!tramp_dll_handle) {
-			if (services)
-				LOG_CORE(services, L"failed to call LoadLibraryW with %s, error: 0x%x\n", trampFullPath.c_str(), GetLastError());
-			return false;
-		}
 		// Resolve export by hook-specific name (trampoline_stage_1_num_##)
-		char stage_1_func_name[64] = {0};
+		char stage_1_func_name[64] = { 0 };
 		sprintf_s(stage_1_func_name, "trampoline_stage_1_num_%03d", hook_id);
-		PVOID tramp_stage_1_addr = GetProcAddress(tramp_dll_handle, stage_1_func_name);
-		if (!tramp_stage_1_addr) {
-			if (services)
-				LOG_CORE(services, L"failed to call GetProcAddress to get %S function adress, error: 0x%x\n", stage_1_func_name, GetLastError());
+		DWORD stage_1_func_offset = 0;
+		if (!services->CheckExportFromFile(trampFullPath.c_str(), stage_1_func_name, &stage_1_func_offset)) {
+			LOG_CORE(services, L"required export function not found in dll Path=%s\n", trampFullPath.c_str());
 			return false;
 		}
 
-		tramp_stage_1_addr = (PVOID)((DWORD64)tramp_stage_1_addr - (DWORD64)tramp_dll_handle + (DWORD64)trampoline_dll_base);
+		PVOID tramp_stage_1_addr = (PVOID)(stage_1_func_offset + (DWORD64)trampoline_dll_base);
 
 		// there is a pivot in export table, we need to get that jmp instruction oprand to calculate real function address
 		DWORD e9_jmp_instruction_oprand = 0;
-		if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE), (LPVOID)&e9_jmp_instruction_oprand, E9_JMP_INSTRUCTION_OPRAND_SIZE, &bytesout)) {
+		if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE), 
+			(LPVOID)&e9_jmp_instruction_oprand, E9_JMP_INSTRUCTION_OPRAND_SIZE, &bytesout)) {
 			if (services)
 				LOG_CORE(services, L"failed to call WriteProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
 					tramp_stage_1_addr, trampoline_pit, GetLastError());
@@ -204,14 +206,12 @@ namespace HookCore {
 		// Resolve stage 2 export using the same hook-specific naming
 		char stage_2_func_name[64] = {0};
 		sprintf_s(stage_2_func_name, "trampoline_stage_2_num_%03d", hook_id);
-		PVOID tramp_stage_2_addr = GetProcAddress(tramp_dll_handle, stage_2_func_name);
-		if (!tramp_stage_2_addr) {
-			if (services)
-				LOG_CORE(services, L"failed to call GetProcAddress to get %S function adress, error: 0x%x\n", stage_2_func_name, GetLastError());
+		DWORD stage_2_func_offset = 0;
+		if (!services->CheckExportFromFile(trampFullPath.c_str(), stage_2_func_name, &stage_2_func_offset)) {
+			LOG_CORE(services, L"required export function not found in dll Path=%s\n", trampFullPath.c_str());
 			return false;
 		}
-
-		tramp_stage_2_addr = (PVOID)((DWORD64)tramp_stage_2_addr - (DWORD64)tramp_dll_handle + (DWORD64)trampoline_dll_base);
+		PVOID tramp_stage_2_addr = (PVOID)(stage_2_func_offset + (DWORD64)trampoline_dll_base);
 
 		// there is a pivot in export table, we need to get that jmp instruction oprand to calculate real function address
 		e9_jmp_instruction_oprand = 0;
@@ -223,19 +223,26 @@ namespace HookCore {
 		}
 		tramp_stage_2_addr = (PVOID)((DWORD64)tramp_stage_2_addr + E9_JMP_INSTRUCTION_SIZE + e9_jmp_instruction_oprand);
 		
-		if (!FreeLibrary(tramp_dll_handle)) {
-			LOG_CORE(services, L"failed to free trampoline dll from UMController\n");
-		}
 
-		DWORD stage_1_func_offset = (DWORD)((DWORD64)tramp_stage_1_addr - (DWORD64)trampoline_dll_base);
-		DWORD stage_2_func_offset = (DWORD)((DWORD64)tramp_stage_2_addr - (DWORD64)trampoline_dll_base);
+		stage_1_func_offset = (DWORD)((DWORD64)tramp_stage_1_addr - (DWORD64)trampoline_dll_base);
+		stage_2_func_offset = (DWORD)((DWORD64)tramp_stage_2_addr - (DWORD64)trampoline_dll_base);
 		DWORD original_asm_code_len = 0;
 		*out_ori_asm_code_addr = (PVOID)(stage_2_func_offset + (DWORD64)trampoline_dll_base + OFFSET_FOR_ORIGINAL_ASM_CODE_SAVE);
-		if (!ConstructTrampoline_x64(services, hProc, (PVOID)address, module_base, trampoline_dll_base, 
-			stage_1_func_offset, stage_2_func_offset, hook_code_addr, &original_asm_code_len)) {
-			if (services)
-				LOG_CORE(services, L"ConstructTrampoline_x64 failed\n");
-			return false;
+		if (is64) {
+			if (!ConstructTrampoline_x64(services, hProc, (PVOID)address, module_base, trampoline_dll_base,
+				stage_1_func_offset, stage_2_func_offset, hook_code_addr, &original_asm_code_len)) {
+				if (services)
+					LOG_CORE(services, L"ConstructTrampoline_x64 failed\n");
+				return false;
+			}
+		}
+		else {
+			if (!ConstructTrampoline_x86(services, hProc, (PVOID)address, module_base, trampoline_dll_base,
+				stage_1_func_offset, stage_2_func_offset, hook_code_addr, &original_asm_code_len)) {
+				if (services)
+					LOG_CORE(services, L"ConstructTrampoline_x64 failed\n");
+				return false;
+			}
 		}
 		if (!InstallHook(services, hProc, (PVOID)address, trampoline_pit,
 			(PVOID)(stage_1_func_offset + (DWORD64)trampoline_dll_base + 0x3+0x8))) {

@@ -559,8 +559,8 @@ bool Filter::FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64) {
 	return true;
 }
 
-bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE& outHandle) {
-	outHandle = NULL;
+bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
+	*outHandle = NULL;
 	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
 	if (!msg) return false;
@@ -577,7 +577,7 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE& outHandle) {
 	HANDLE h = NULL;
 	RtlCopyMemory(&h, reply.get(), sizeof(HANDLE));
 	if (!h) return false;
-	outHandle = h;
+	*outHandle = h;
 	return true;
 }
 
