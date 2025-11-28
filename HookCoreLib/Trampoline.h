@@ -13,32 +13,45 @@ namespace HookCore {
 #define PLACEHOLDER_SECOND_FUNCIONT_OFFSET2 0x5AD4
 // #define READ_OUT_LEN_ORIASMCODE_LEN 0xc 
 #define ORIGINAL_BYTE_COUNT_FOR_DETERMINE 0x20
- 
 
+
+#define x86_stage_2_shellcode_size 26
 #define stage_0_xoreaxeaxret_size 3
 	// #define PLACEHOLDER_FUNCIONT_OFFSET PLACEHOLDER_FUNCIONT_OFFSET2+stage_0_xoreaxeaxret_size
 // #define PLACEHOLDER_SECOND_FUNCIONT_OFFSET PLACEHOLDER_SECOND_FUNCIONT_OFFSET2+stage_0_xoreaxeaxret_size
 #define stage_0_placeholder_size 8
+#define x86_stage_0_placeholder_size 4
 // #define stage_1_shellcode_size 0x56+READ_OUT_LEN_ORIASMCODE_LEN-6
 #define stage_2_shellcode_size 0x23
 #define stage_1_oriAsmCodeOffset 0x4a
+#define x86_stage_1_oriAsmCodeOffset 0x2a
 #define ff25jmpsize 6
 #define stage_1_next_ins_offset 0x23
+#define x86_stage_1_next_ins_offset 0x13
 #define stage_1_next_ins_offset_second_ff25 stage_1_oriAsmCodeOffset+ff25jmpsize+READ_OUT_LEN_ORIASMCODE_LEN
+#define x86_stage_1_next_ins_offset_second_ff25 x86_stage_1_oriAsmCodeOffset+ff25jmpsize+READ_OUT_LEN_ORIASMCODE_LEN
 
 #define stage_2_call_offset 0x1b
 #define stage_2_ff25_offset 0x28
 #define ff25offset_size 4
-
+#define ff25_opcode_size 2
 #define shellcode_call_offset 50
 
 #define SHELLCODE_LEN 100
 //#define SHELLCODE_LEN 0xa0
 
 #define stage2_back_to_stage_1_offset 0x23
-#define TOTAL_LEN 	 stage_0_placeholder_size + stage_1_shellcode_size 	+ READ_OUT_LEN_ORIASMCODE_LEN + ff25jmpsize + stage_0_placeholder_size + stage_2_shellcode_size + stage_0_placeholder_size + stage_0_placeholder_size + SHELLCODE_LEN
+#define x86_stage2_back_to_stage_1_offset 0x13
+#define TOTAL_LEN 	 stage_0_placeholder_size + stage_1_shellcode_size 	+ READ_OUT_LEN_ORIASMCODE_LEN + ff25jmpsize + stage_0_placeholder_size \
+	+ stage_2_shellcode_size + stage_0_placeholder_size + stage_0_placeholder_size + SHELLCODE_LEN
+
+
+#define x86_TOTAL_LEN 	 4*x86_stage_0_placeholder_size + stage_1_shellcode_size 	+ READ_OUT_LEN_ORIASMCODE_LEN + ff25jmpsize +  \
+	+ x86_stage_2_shellcode_size +  SHELLCODE_LEN
 
 #define fixedTotal_LEN TOTAL_LEN+stage_0_placeholder_size-SHELLCODE_LEN+stage_0_xoreaxeaxret_size
+
+#define x86_fixedTotal_LEN x86_TOTAL_LEN+x86_stage_0_placeholder_size-SHELLCODE_LEN+stage_0_xoreaxeaxret_size
 
 #define wide_char_patch_value_underscore 0x5f
 
@@ -47,11 +60,12 @@ namespace HookCore {
 #define recover_byte_value wide_char_patch_value_underscore
 #define recover_word_value 0x63 
 
-	bool	InstallHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_pit, PVOID trampoline_addr);
+
+	bool	InstallHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_pit, PVOID trampoline_addr,bool is64);
 	bool RemoveHookInternal(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_dll_base,
 		DWORD64 stage_2_func_offset, DWORD original_asm_code_len);
 	bool ConstructTrampoline_x86(IHookServices* services, HANDLE hProcess, PVOID hook_addr, PVOID target_base,
 		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset, DWORD64 hook_code_addr, DWORD* out_original_asm_len);
 	bool ConstructTrampoline_x64(IHookServices* services, HANDLE hProcess, PVOID hook_addr, PVOID target_base,
-		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset,DWORD64 hook_code_addr, DWORD* out_original_asm_len);
+		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset, DWORD64 hook_code_addr, DWORD* out_original_asm_len);
 }

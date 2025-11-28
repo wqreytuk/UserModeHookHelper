@@ -50,7 +50,7 @@ namespace HookCore {
 	// replace this in future iterations.
 	bool ApplyHook(DWORD pid, ULONGLONG address, IHookServices* services,
 		DWORD64 hook_code_addr, int hook_id, DWORD *out_ori_asm_code_len,
-		PVOID* out_trampoline_pit,PVOID* out_ori_asm_code_addr){
+		PVOID* out_trampoline_pit, PVOID* out_ori_asm_code_addr) {
 		PVOID trampoline_dll_base = 0;
 		std::wstring trampFullPath;
 		SIZE_T bytesout = 0;
@@ -193,8 +193,11 @@ namespace HookCore {
 		PVOID tramp_stage_1_addr = (PVOID)(stage_1_func_offset + (DWORD64)trampoline_dll_base);
 
 		// there is a pivot in export table, we need to get that jmp instruction oprand to calculate real function address
+		// this situation only happends when we're using DEBUG build of trampoline.dll, in relase version, what we get is
+		// the real address of treampoline export function
+#ifdef _DEBUG
 		DWORD e9_jmp_instruction_oprand = 0;
-		if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE), 
+		if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE),
 			(LPVOID)&e9_jmp_instruction_oprand, E9_JMP_INSTRUCTION_OPRAND_SIZE, &bytesout)) {
 			if (services)
 				LOG_CORE(services, L"failed to call WriteProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
@@ -202,9 +205,9 @@ namespace HookCore {
 			return false;
 		}
 		tramp_stage_1_addr = (PVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_SIZE + e9_jmp_instruction_oprand);
-
+#endif
 		// Resolve stage 2 export using the same hook-specific naming
-		char stage_2_func_name[64] = {0};
+		char stage_2_func_name[64] = { 0 };
 		sprintf_s(stage_2_func_name, "trampoline_stage_2_num_%03d", hook_id);
 		DWORD stage_2_func_offset = 0;
 		if (!services->CheckExportFromFile(trampFullPath.c_str(), stage_2_func_name, &stage_2_func_offset)) {
@@ -213,7 +216,7 @@ namespace HookCore {
 		}
 		PVOID tramp_stage_2_addr = (PVOID)(stage_2_func_offset + (DWORD64)trampoline_dll_base);
 
-		// there is a pivot in export table, we need to get that jmp instruction oprand to calculate real function address
+#ifdef _DEBUG
 		e9_jmp_instruction_oprand = 0;
 		if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)tramp_stage_2_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE), (LPVOID)&e9_jmp_instruction_oprand, E9_JMP_INSTRUCTION_OPRAND_SIZE, &bytesout)) {
 			if (services)
@@ -222,7 +225,7 @@ namespace HookCore {
 			return false;
 		}
 		tramp_stage_2_addr = (PVOID)((DWORD64)tramp_stage_2_addr + E9_JMP_INSTRUCTION_SIZE + e9_jmp_instruction_oprand);
-		
+#endif
 
 		stage_1_func_offset = (DWORD)((DWORD64)tramp_stage_1_addr - (DWORD64)trampoline_dll_base);
 		stage_2_func_offset = (DWORD)((DWORD64)tramp_stage_2_addr - (DWORD64)trampoline_dll_base);
@@ -245,7 +248,7 @@ namespace HookCore {
 			}
 		}
 		if (!InstallHook(services, hProc, (PVOID)address, trampoline_pit,
-			(PVOID)(stage_1_func_offset + (DWORD64)trampoline_dll_base + 0x3+0x8))) {
+			(PVOID)(stage_1_func_offset + (DWORD64)trampoline_dll_base + 0x3 + (is64 ? 0x8 : 0x4)),is64)) {
 			if (services)
 				LOG_CORE(services, L"InstallHook failed\n");
 			// recover original asm code
@@ -258,7 +261,7 @@ namespace HookCore {
 		*out_ori_asm_code_len = original_asm_code_len;
 		return true;
 	}
-	bool RemoveHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD hook_id, DWORD ori_asm_code_len,PVOID trampoline_pit) { 
+	bool RemoveHook(DWORD pid, ULONGLONG address, IHookServices* services, DWORD hook_id, DWORD ori_asm_code_len, PVOID trampoline_pit) {
 		PVOID trampoline_dll_base = 0;
 		std::wstring trampFullPath;
 		SIZE_T bytesout = 0;
@@ -275,18 +278,18 @@ namespace HookCore {
 		}
 		std::wstring owning = FindOwningModule(pid, address, &module_base);
 		if (owning.empty()) {
-			 services->LogCore(L"RemoveHook: address 0x%llX not within any module for pid %u.\n", address, pid);
+			services->LogCore(L"RemoveHook: address 0x%llX not within any module for pid %u.\n", address, pid);
 			return false;
 		}
 		if (!module_base) {
 			LOG_CORE(services, L"weird, found owner module %s but failed to get module base\n", owning.c_str());
 			return false;
 		}
-		
+
 
 		if (services) services->LogCore(L"RemoveHook: address 0x%llX belongs to module %s (pid %u).\n", address, owning.c_str(), pid);
 
-		
+
 		std::wstring masterNameFound; // canonical name (architecture-specific)
 		std::wstring masterPathFound; // full path to master DLL inside target process
 		{
@@ -343,7 +346,7 @@ namespace HookCore {
 			if (services)
 				services->LogCore(L"failed to open target process, error: 0x%x\n", GetLastError());
 			return false;
-		} 
+		}
 		// deallocate trampoline allocted when ApplyHook
 		if (!VirtualFreeEx(hProc, trampoline_pit, 0, MEM_RELEASE)) {
 			LOG_CORE(services, L"failed to call VirtualFreeEx to free trampoline pit, error: 0x%x\n", GetLastError());
@@ -409,7 +412,7 @@ namespace HookCore {
 		}
 		return true;
 	}
-	
+
 
 	// to disable hook, I need the address where the original asm code is saved
 	// so I can read it out and write back to hook address

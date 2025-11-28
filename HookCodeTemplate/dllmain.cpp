@@ -21,10 +21,26 @@ void Log(_In_ PCWSTR Format, ...) {
 	EventWriteString(g_ProviderHandle, 0, 0, Prefixed);
 }
 
-extern "C" __declspec(dllexport) VOID HookCodeWin32() {
+extern "C" __declspec(dllexport) VOID HookCodeWin32(ULONG esp) {
+	if (!esp) {
+		Log(L"Fatal Error, RSP==NULL\n");
+		return;
+	}
+	ULONG original_esp = esp + 0x20;
+
+
+	// WRITE YOUR CODE HERE
+	Log(L"CreateFileW opening: %s\n", *(DWORD*)(original_esp + 0x4));
+	// HOOK CODE END
+
+
 	return;
 }
 extern "C" __declspec(dllexport) VOID HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8, PVOID r9, PVOID rsp) {
+	if (!rsp) {
+		Log(L"Fatal Error, RSP==NULL\n");
+		return;
+	}
 	PVOID r15 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x0);
 	PVOID r14 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x8);
 	PVOID r13 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x10);
@@ -37,10 +53,6 @@ extern "C" __declspec(dllexport) VOID HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8
 	PVOID rbx = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x68);
 	PVOID rax = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x70);
 
-	if (!rsp) {
-		Log(L"Fatal Error, RSP==NULL\n");
-		return;
-	}
 
 	// WRITE YOUR CODE HERE
 

@@ -34,6 +34,14 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
 	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
 	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
+	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
+	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
+	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
+	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
+	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
+	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
+	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
+	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); \
 	printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called."); printf("APCTEST - DispatchRead() called.");
 
 #define DECL_PAIR(num) \

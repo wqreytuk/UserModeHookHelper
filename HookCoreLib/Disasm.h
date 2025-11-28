@@ -18,9 +18,15 @@ namespace HookCore {
 	};
 
 	DecideResult DetermineCodeEdge_x64(const uint8_t* buffer, size_t bufSize, uint64_t codeAddr, size_t minNeeded = 6);
+	DecideResult DetermineCodeEdge_x86(const uint8_t* buffer, size_t bufSize, uint32_t codeAddr, size_t minNeeded = 6);
 	uint64_t ResolveRipRelativeTarget(
 		HANDLE hProcess,
 		uint64_t hookSiteBase,
+		const std::vector<uint8_t>& codeBytes
+	);
+	uint32_t ResolveRipRelativeTarget_x86(
+		HANDLE hProcess,
+		uint32_t hookSiteBase,
 		const std::vector<uint8_t>& codeBytes
 	);
 
@@ -34,6 +40,14 @@ namespace HookCore {
 		size_t codeSize,
 		UINT64 newBaseAddr,           // absolute address where code[] lives
 		UINT64 ff25StubAddr          // absolute address of ff25 stub
+	);
+
+	// x86 (32-bit) variant of PatchLastInstruction
+	bool PatchLastInstruction_x86(
+		BYTE* code,                   // IN/OUT
+		size_t codeSize,
+		UINT32 newBaseAddr,           // absolute address where code[] lives
+		UINT32 ff25StubAddr           // absolute address of ff25 stub
 	);
 }
 	 
