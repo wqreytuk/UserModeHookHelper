@@ -444,7 +444,7 @@ public:
 	bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) override {
 		return RegistryStore::RemoveProcHookEntry(pid, filetimeHi, filetimeLo, hookId);
 	}
-	bool LoadProcHookList(std::vector<HookRow>& outEntries) override {
+	 bool LoadProcHookList(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, std::vector<HookRow>& outEntries) override {
 		std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> tmp;
 		if (!RegistryStore::ReadProcHookList(tmp)) return false;
 		outEntries.clear(); outEntries.reserve(tmp.size());

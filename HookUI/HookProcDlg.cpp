@@ -19,6 +19,27 @@ static std::wstring Hex64(ULONGLONG v) {
     return buf;
 }
 
+static void CopyTextToClipboard(const CString& text, HWND owner) {
+    if (text.IsEmpty()) return;
+    if (::OpenClipboard(owner)) {
+        EmptyClipboard();
+        size_t len = (text.GetLength() + 1) * sizeof(wchar_t);
+        HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, len);
+        if (h) {
+            void* p = GlobalLock(h);
+            if (p) {
+                memcpy(p, (LPCWSTR)text.GetString(), len);
+                GlobalUnlock(h);
+                SetClipboardData(CF_UNICODETEXT, h);
+            }
+            else {
+                GlobalFree(h);
+            }
+        }
+        ::CloseClipboard();
+    }
+}
+
 const UINT HookProcDlg::kMsgHookDlgDestroyed = WM_APP + 0x701;
 
 BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
@@ -77,7 +98,7 @@ BOOL HookProcDlg::OnInitDialog() {
     DWORD hi = createTime.dwHighDateTime;
     DWORD lo = createTime.dwLowDateTime;
     std::vector<HookRow> persisted;
-    if (m_services && m_services->LoadProcHookList(persisted)) {
+    if (m_services && m_services->LoadProcHookList(m_pid, hi, lo, persisted)) {
         for (auto &pr : persisted) {
             // controller returns HookRow populated; we still need to verify PID+FILETIME
             // For backward-compatibility the controller should only return rows for this PID+FILETIME.
@@ -282,9 +303,12 @@ void HookProcDlg::OnContextMenu(CWnd* pWnd, CPoint point) {
     const UINT CMD_DISABLE = 0x8001;
     const UINT CMD_ENABLE = 0x8002;
     const UINT CMD_REMOVE = 0x8003;
+    const UINT CMD_COPY_ADDR = 0x8004;
     menu.AppendMenuW(MF_STRING, CMD_DISABLE, L"Disable");
     menu.AppendMenuW(MF_STRING, CMD_ENABLE, L"Enable");
     menu.AppendMenuW(MF_STRING, CMD_REMOVE, L"Remove");
+    menu.AppendMenuW(MF_SEPARATOR, 0, (LPCTSTR)NULL);
+    menu.AppendMenuW(MF_STRING, CMD_COPY_ADDR, L"Copy Address");
 
     // Determine whether the row is currently disabled (we mark it by prefixing module with "[DISABLED] ")
     bool isDisabled = false;
@@ -293,9 +317,12 @@ void HookProcDlg::OnContextMenu(CWnd* pWnd, CPoint point) {
         if (testHr->module.rfind(L"[DISABLED] ", 0) == 0) isDisabled = true;
     }
 
+    CString addrText = m_HookList.GetItemText(item, 1);
+
     // Only enable the relevant action: if disabled -> Enable is active; else Disable is active.
     menu.EnableMenuItem(CMD_DISABLE, MF_BYCOMMAND | (isDisabled ? MF_GRAYED : MF_ENABLED));
     menu.EnableMenuItem(CMD_ENABLE, MF_BYCOMMAND | (isDisabled ? MF_ENABLED : MF_GRAYED));
+    menu.EnableMenuItem(CMD_COPY_ADDR, MF_BYCOMMAND | (!addrText.IsEmpty() ? MF_ENABLED : MF_GRAYED));
 
     // Store selected item index in window userdata so handlers can find it
     SetWindowLongPtr(m_hWnd, GWLP_USERDATA, (LONG_PTR)item);
@@ -308,8 +335,12 @@ void HookProcDlg::OnContextMenu(CWnd* pWnd, CPoint point) {
     case 0x8001: OnHookMenuDisable(); break;
     case 0x8002: OnHookMenuEnable(); break;
     case 0x8003: OnHookMenuRemove(); break;
+    case 0x8004:
+        CopyTextToClipboard(addrText, this->GetSafeHwnd());
+        break;
     }
 }
+
 
 // Handlers: left as stubs for user implementation
 void HookProcDlg::OnHookMenuDisable() {
