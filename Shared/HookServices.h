@@ -13,6 +13,7 @@
 // Unified IHookServices interface shared by UMController, HookUI, and HookCoreLib.
 // Provides two logging channels: general (Log) and hook-core diagnostics (LogCore).
 struct IHookServices {
+	virtual std::wstring GetCurrentDirFilePath(WCHAR* filename) = 0;
 	virtual bool GetHighAccessProcHandle(DWORD pid, HANDLE* hProc) = 0;
     virtual void Log(const wchar_t* fmt, ...) = 0;
 	virtual void LogPhlib(const wchar_t* fmt, ...) = 0;

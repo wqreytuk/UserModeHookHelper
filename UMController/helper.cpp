@@ -777,8 +777,8 @@ bool Helper::GetModuleBaseWithPathEx(HANDLE hProcess, const char* mPath, PVOID* 
 			char szModName[MAX_PATH] = { 0 };
 			if (GetModuleFileNameExA(hProcess, hMods[i], szModName, _countof(szModName))) {
 
-				ConvertCharToWchar(szModName, wide, MAX_PATH);
-				LOG_CTRL_ETW(L"debug: SysWOW64 module: %s\n", wide);
+				// ConvertCharToWchar(szModName, wide, MAX_PATH);
+				// LOG_CTRL_ETW(L"debug: SysWOW64 module: %s\n", wide);
 				if (strcasestr_check(szModName, mPath)) {
 					*base = (PVOID)hMods[i];
 					break;

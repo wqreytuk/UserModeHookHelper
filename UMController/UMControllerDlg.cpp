@@ -430,6 +430,10 @@ public:
 	virtual bool ForceInject(DWORD pid) override {
 		return  Helper::ForceInject(pid);
 	}
+	virtual std::wstring GetCurrentDirFilePath(WCHAR* filename) override {
+		auto s = Helper::GetCurrentDirFilePath(filename);
+		return s;
+	}
 	virtual bool GetHighAccessProcHandle(DWORD pid, HANDLE* hProc) override{
 		Filter* f = Helper::GetFilterInstance();
 		if (f){

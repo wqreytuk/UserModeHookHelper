@@ -149,7 +149,11 @@ namespace HookCore {
 				if (pos != std::wstring::npos) baseDir.erase(pos);
 			}
 			std::wstring trampName = (masterNameFound == X64_DLL) ? TRAMP_X64_DLL : TRAMP_X86_DLL;
-			trampFullPath = baseDir + L"\\" + trampName;
+			 WCHAR temp_tramp_name[MAX_PATH];
+			memcpy(temp_tramp_name, trampName.c_str(), trampName.size() * sizeof(WCHAR));
+			auto s = services->GetCurrentDirFilePath(temp_tramp_name);
+
+			trampFullPath = s;
 			if (services) services->LogCore(L"ApplyHook: requesting trampoline inject %s (path=%s).\n", trampName.c_str(), trampFullPath.c_str());
 			bool signaled = services ? services->InjectTrampoline(pid, trampFullPath.c_str()) : false;
 			if (services) services->LogCore(L"ApplyHook: InjectTrampoline result: %s.\n", signaled ? L"success" : L"failure");
