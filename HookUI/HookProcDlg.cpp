@@ -134,6 +134,8 @@ void HookProcDlg::OnDestroy() {
     if (CWnd* parent = GetParent()) {
         ::PostMessage(parent->GetSafeHwnd(), HookProcDlg::kMsgHookDlgDestroyed, (WPARAM)this, 0);
     }
+    // Delete self: created by factory with 'new' and responsible for own lifetime.
+    delete this;
 }
 
 void HookProcDlg::UpdateLayoutForSplitter(int cx, int cy) {
