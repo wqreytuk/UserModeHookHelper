@@ -6,6 +6,9 @@
 #include "../UserModeHookHelper/MacroDef.h"
 #include "ETW.h"
 #include "UMController.h"
+#include "Helper.h"
+#include "../Shared/LogMacros.h"
+
 
 static const wchar_t* VALUE_NAME = L"HookPaths";
 static const wchar_t* COMPOSITE_VALUE_NAME = L"NtProcCache"; // new composite key cache
@@ -207,6 +210,14 @@ bool RegistryStore::WriteCompositeProcCache(const std::vector<std::tuple<DWORD, 
 // Format: PID:HIGH:LOW:HOOKID:ORI_LEN:ORI_ADDR:TRAMP_PIT:ADDR=MODULE
 // (ADDR/ORI_ADDR/TRAMP_PIT hex 64-bit, HOOKID/ORI_LEN hex)
 bool RegistryStore::ReadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& outEntries) {
+    // Delegate to the filtered variant with no filtering (backwards compatible)
+
+	
+
+    return RegistryStore::ReadProcHookList(0, 0, 0, outEntries);
+}
+
+bool RegistryStore::ReadProcHookList(DWORD filterPid, DWORD filterHi, DWORD filterLo, std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& outEntries) {
     outEntries.clear();
     HKEY hKey = NULL;
     LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_READ, &hKey);
@@ -246,6 +257,19 @@ bool RegistryStore::ReadProcHookList(std::vector<std::tuple<DWORD, DWORD, DWORD,
         swscanf_s(parts[5].c_str(), L"%llx", &ori_addr);
         swscanf_s(parts[6].c_str(), L"%llx", &tramp_pit);
         swscanf_s(parts[7].c_str(), L"%llx", &addr);
+
+        // If filtering requested, only include tuples that match PID + FILETIME hi/lo
+        if (filterPid != 0 || filterHi != 0 || filterLo != 0) {
+            if (pid != filterPid) continue;
+            if (filterHi != 0 || filterLo != 0) {
+                if (hi != filterHi || lo != filterLo) continue;
+            }
+            else {
+                // caller supplied pid but zero FILETIME: only accept entries with hi==0 && lo==0
+                if (hi != 0 || lo != 0) continue;
+            }
+        }
+
         outEntries.emplace_back(pid, hi, lo, hookid, ori_len, ori_addr, tramp_pit, addr, module);
     }
     return true;
@@ -426,11 +450,14 @@ bool RegistryStore::RemoveForcedMark(DWORD pid, DWORD hi, DWORD lo) {
 }
 
 bool RegistryStore::RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) {
+    // Read only entries matching the provided PID + FILETIME so we don't load others.
     std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> entries;
-    if (!ReadProcHookList(entries)) return false;
-    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> out;
+    if (!ReadProcHookList(pid, filetimeHi, filetimeLo, entries)) return false;
+    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> all;
+    // Load all entries (unfiltered) so we can rewrite the full list without the removed item.
+    if (!ReadProcHookList(all)) return false;
     bool removed = false;
-    for (auto &t : entries) {
+    for (auto &t : all) {
         DWORD p = std::get<0>(t);
         DWORD hi = std::get<1>(t);
         DWORD lo = std::get<2>(t);
@@ -438,9 +465,21 @@ bool RegistryStore::RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filet
         if (!removed && p == pid && hi == filetimeHi && lo == filetimeLo && hid == hookId) {
             removed = true; continue;
         }
-        out.push_back(t);
+        // keep
+        ;
     }
     if (!removed) return true; // nothing to do
+    // Build new vector excluding the removed item
+    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> out;
+    out.reserve(all.size());
+    for (auto &t : all) {
+        DWORD p = std::get<0>(t);
+        DWORD hi = std::get<1>(t);
+        DWORD lo = std::get<2>(t);
+        int hid = std::get<3>(t);
+        if (p == pid && hi == filetimeHi && lo == filetimeLo && hid == hookId) continue;
+        out.push_back(t);
+    }
     return WriteProcHookList(out);
 }
 

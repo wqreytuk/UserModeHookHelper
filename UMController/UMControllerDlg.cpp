@@ -449,6 +449,8 @@ public:
 		if (!RegistryStore::ReadProcHookList(tmp)) return false;
 		outEntries.clear(); outEntries.reserve(tmp.size());
 		for (auto &t : tmp) {
+			if ((pid != std::get<0>(t)) || (filetimeHi != std::get<1>(t)) || (filetimeLo != std::get<2>(t)))
+				continue;
 			HookRow r;
 			r.id = std::get<3>(t);
 			r.ori_asm_code_len = std::get<4>(t);
