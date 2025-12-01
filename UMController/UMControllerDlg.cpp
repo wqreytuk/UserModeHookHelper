@@ -350,7 +350,8 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND_RANGE(ID_MENU_PLUGINS_BASE, ID_MENU_PLUGINS_BASE + 255, &CUMControllerDlg::OnPluginCommand)
 	ON_COMMAND(ID_MENU_PLUGIN_REFRESH, &CUMControllerDlg::OnPluginRefresh)
 	ON_COMMAND(ID_MENU_PLUGIN_UNLOAD_ALL, &CUMControllerDlg::OnPluginUnloadAll)
-	ON_COMMAND(ID_MENU_RE_REGISTER_OBCALLBACK, &CUMControllerDlg::OnReRegisterObCallback)
+	ON_COMMAND(ID_TOOLS_ADD_WHITELIST, &CUMControllerDlg::OnAddWhitelist)
+	ON_COMMAND(ID_TOOLS_REMOVE_WHITELIST, &CUMControllerDlg::OnRemoveWhitelist)
 END_MESSAGE_MAP()
 // Adapter implementing IHookServices for current process (bridges to ETW tracer)
 class HookServicesAdapter : public IHookServices {
@@ -1969,18 +1970,94 @@ void CUMControllerDlg::OnForceInject()
 	}
 }
 
-// Handler for Extra->Re-RegisterObCallback menu. Forces re-registration of
-// kernel Ob callback by deleting/recreating the UMHH.ObCallback service.
-void CUMControllerDlg::OnReRegisterObCallback()
+void CUMControllerDlg::OnAddWhitelist()
 {
-	BOOL ok = Helper::UMHH_ObCallback_DriverCheck();
-	if (ok) {
-		LOG_CTRL_ETW(L"Re-RegisterObCallback: service refreshed and running\n");
-		MessageBox(L"ObCallback driver/service re-registered successfully.", L"ObCallback", MB_OK | MB_ICONINFORMATION);
-	} else {
-		LOG_CTRL_ETW(L"Re-RegisterObCallback: failed to refresh service\n");
-		MessageBox(L"Failed to re-register ObCallback driver/service. Check ETW log.", L"ObCallback", MB_OK | MB_ICONERROR);
+	// Pick an executable, resolve to NT path, compute hash, persist both, then restart UMHH.ObCallback
+	wchar_t szFile[MAX_PATH] = { 0 };
+	OPENFILENAME ofn = { 0 };
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = this->GetSafeHwnd();
+	ofn.lpstrFile = szFile;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = L"Executable Files\0*.exe\0All Files\0*.*\0";
+	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+	ofn.lpstrTitle = L"Select executable to whitelist";
+	if (!GetOpenFileName(&ofn)) return;
+
+	if (!Helper::IsFileExists(szFile)) {
+		MessageBoxW(L"Selected file does not exist.", L"Whitelist", MB_OK | MB_ICONERROR);
+		return;
 	}
+	std::wstring dosPath(szFile), ntPath;
+	bool ok = Helper::ResolveDosPathToNtPath(dosPath, ntPath);
+	std::wstring ntToPersist = (ok && !ntPath.empty()) ? ntPath : dosPath;
+
+	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntToPersist.c_str());
+	size_t len = ntToPersist.size() * sizeof(wchar_t);
+	unsigned long long hash = Helper::GetNtPathHash(bytes, len);
+
+	if (!RegistryStore::AddWhitelistPath(ntToPersist)) {
+		LOG_CTRL_ETW(L"AddWhitelist: failed to persist NT path %s\n", ntToPersist.c_str());
+		MessageBoxW(L"Failed to persist whitelist path.", L"Whitelist", MB_OK | MB_ICONERROR);
+		return;
+	}
+	if (!RegistryStore::AddWhitelistHash(hash)) {
+		LOG_CTRL_ETW(L"AddWhitelist: failed to persist hash 0x%016llX for %s\n", hash, ntToPersist.c_str());
+		MessageBoxW(L"Failed to persist whitelist hash.", L"Whitelist", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// Restart ObCallback so driver reloads whitelist keys at start
+	if (!Helper::UMHH_ObCallback_DriverCheck()) {
+		LOG_CTRL_ETW(L"AddWhitelist: UMHH_ObCallback_DriverCheck failed\n");
+		MessageBoxW(L"Whitelist persisted, but failed to restart ObCallback.", L"Whitelist", MB_OK | MB_ICONWARNING);
+		return;
+	}
+	MessageBoxW(L"Whitelist updated.", L"Whitelist", MB_OK | MB_ICONINFORMATION);
+}
+
+void CUMControllerDlg::OnRemoveWhitelist()
+{
+	// Choose an executable to remove from whitelist; resolve NT path; remove both path and corresponding hash entry
+	wchar_t szFile[MAX_PATH] = { 0 };
+	OPENFILENAME ofn = { 0 };
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = this->GetSafeHwnd();
+	ofn.lpstrFile = szFile;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = L"Executable Files\0*.exe\0All Files\0*.*\0";
+	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+	ofn.lpstrTitle = L"Select executable to remove from whitelist";
+	if (!GetOpenFileName(&ofn)) return;
+
+	if (!Helper::IsFileExists(szFile)) {
+		MessageBoxW(L"Selected file does not exist.", L"Whitelist", MB_OK | MB_ICONERROR);
+		return;
+	}
+	std::wstring dosPath(szFile), ntPath;
+	bool ok = Helper::ResolveDosPathToNtPath(dosPath, ntPath);
+	std::wstring ntToRemove = (ok && !ntPath.empty()) ? ntPath : dosPath;
+	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntToRemove.c_str());
+	size_t len = ntToRemove.size() * sizeof(wchar_t);
+	unsigned long long hash = Helper::GetNtPathHash(bytes, len);
+
+	if (!RegistryStore::RemoveWhitelistPath(ntToRemove)) {
+		LOG_CTRL_ETW(L"RemoveWhitelist: failed to remove NT path %s\n", ntToRemove.c_str());
+		MessageBoxW(L"Failed to remove whitelist path.", L"Whitelist", MB_OK | MB_ICONERROR);
+		return;
+	}
+	if (!RegistryStore::RemoveWhitelistHash(hash)) {
+		LOG_CTRL_ETW(L"RemoveWhitelist: failed to remove hash 0x%016llX for %s\n", hash, ntToRemove.c_str());
+		MessageBoxW(L"Failed to remove whitelist hash.", L"Whitelist", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	if (!Helper::UMHH_ObCallback_DriverCheck()) {
+		LOG_CTRL_ETW(L"RemoveWhitelist: UMHH_ObCallback_DriverCheck failed\n");
+		MessageBoxW(L"Whitelist updated, but failed to restart ObCallback.", L"Whitelist", MB_OK | MB_ICONWARNING);
+		return;
+	}
+	MessageBoxW(L"Whitelist updated.", L"Whitelist", MB_OK | MB_ICONINFORMATION);
 }
 
 LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {

@@ -15,4 +15,7 @@ MiniPreCreateCallback(
 	PVOID* CompletionContext
 );
 
+BOOLEAN Mini_WriteKernelMemory(PVOID Address, const VOID* Buffer, SIZE_T Size);
+BOOLEAN Mini_ReadKernelMemory(PVOID Address, VOID* Buffer, SIZE_T Size);
+
 #endif

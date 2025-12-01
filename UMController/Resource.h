@@ -30,6 +30,8 @@
 // Extra menu command
 #define ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE 40020
 #define ID_MENU_RE_REGISTER_OBCALLBACK 40021
+#define ID_TOOLS_ADD_WHITELIST         40031
+#define ID_TOOLS_REMOVE_WHITELIST      40032
 // Plugin menu base (reserve a small range for plugin items)
 #define ID_MENU_PLUGINS_BASE   41000
 #define ID_MENU_PLUGINS        41001

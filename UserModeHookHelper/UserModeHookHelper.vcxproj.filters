@@ -66,6 +66,9 @@
     <ClCompile Include="BootStartControl.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="KernelOffsets.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Trace.h">
@@ -114,6 +117,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="BootStartControl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="KernelOffsets.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

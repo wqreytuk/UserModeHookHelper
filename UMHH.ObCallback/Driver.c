@@ -11,6 +11,12 @@
 #define LOG_PREFIX L"[UMHH.ObCallback]"
 DWORD64 gHash;
 #define LOG_PREFIX L"[UMHH.ObCallback]"
+typedef struct _HASH_NODE {
+	LIST_ENTRY Link;
+	ULONGLONG Hash;
+} HASH_NODE, *PHASH_NODE;
+LIST_ENTRY g_HashList; // list of whitelist hashes
+KSPIN_LOCK g_HashLock; // protects g_HashList
 void Log(const WCHAR* format, ...);
 PFLT_FILTER gFilter;
 NTSYSAPI
@@ -88,6 +94,15 @@ MiniUnload(
 		gFilter = NULL;
 	}
 
+	// Free whitelist hash list
+	KIRQL oldIrql; KeAcquireSpinLock(&g_HashLock, &oldIrql);
+	while (!IsListEmpty(&g_HashList)) {
+		PLIST_ENTRY e = RemoveHeadList(&g_HashList);
+		PHASH_NODE n = CONTAINING_RECORD(e, HASH_NODE, Link);
+		ExFreePoolWithTag(n, 'hLST');
+	}
+	KeReleaseSpinLock(&g_HashLock, oldIrql);
+
 	Log(L"successfully unloaded UMHH.ObCallback driver\n");
 	return STATUS_SUCCESS;
 }
@@ -121,78 +136,51 @@ NTSTATUS PreObjProcesCallback(
 	_In_ PVOID RegistrationContext,
 	_In_ POB_PRE_OPERATION_INFORMATION OperationInformation
 ) {
-    UNREFERENCED_PARAMETER(RegistrationContext);
+	UNREFERENCED_PARAMETER(RegistrationContext);
 	if (!OperationInformation) return STATUS_SUCCESS;
-
-
 
 	PUNICODE_STRING imageName = NULL;
 	NTSTATUS stImg = 0;
 	if (OperationInformation->Operation == OB_OPERATION_HANDLE_CREATE) {
 		if ((&OperationInformation->Parameters->DuplicateHandleInformation)->SourceProcess)
-			stImg = SeLocateProcessImageName((&OperationInformation->Parameters->DuplicateHandleInformation)->SourceProcess,
-				&imageName);
+			stImg = SeLocateProcessImageName((&OperationInformation->Parameters->DuplicateHandleInformation)->SourceProcess, &imageName);
 		else
 			return STATUS_SUCCESS;
-	}
-	else {
+	} else {
 		stImg = SeLocateProcessImageName(PsGetCurrentProcess(), &imageName);
-
 	}
 	if (!NT_SUCCESS(stImg) || imageName == NULL || imageName->Length == 0) {
-		// imageName not available; ensure we don't hold a stale pointer
-		if (imageName) {
-			ExFreePool(imageName);
-			imageName = NULL;
-		}
+		if (imageName) { ExFreePool(imageName); imageName = NULL; }
 		Log(L"failed to located source process image path, Status=0x%x\n", stImg);
 		return STATUS_SUCCESS;
 	}
-	else {
-		// compare hash
-		DWORD64 hash = SL_ComputeNtPathHash((const PUCHAR)imageName->Buffer, imageName->Length);
 
-		ExFreePool(imageName);
-		imageName = NULL;
+	// compare hash
+	DWORD64 hash = SL_ComputeNtPathHash((const PUCHAR)imageName->Buffer, imageName->Length);
+	ExFreePool(imageName); imageName = NULL;
 
-		if (hash != gHash)
-			return STATUS_SUCCESS;
+	// Allow only if hash is present in whitelist list
+	BOOLEAN allowed = FALSE;
+	KIRQL oldIrql;
+	KeAcquireSpinLock(&g_HashLock, &oldIrql);
+	for (PLIST_ENTRY e = g_HashList.Flink; e != &g_HashList; e = e->Flink) {
+		PHASH_NODE n = CONTAINING_RECORD(e, HASH_NODE, Link);
+		if (n->Hash == hash) { allowed = TRUE; break; }
 	}
+	KeReleaseSpinLock(&g_HashLock, oldIrql);
+	if (!allowed) return STATUS_SUCCESS;
 
 	// Quick-grant: if the requester and the target are the same process,
 	// restore the original desired access and allow the operation.
 	if (OperationInformation->Operation == OB_OPERATION_HANDLE_CREATE) {
 		POB_PRE_CREATE_HANDLE_INFORMATION info = &OperationInformation->Parameters->CreateHandleInformation;
-
 		info->DesiredAccess = 0x1fffff;
-
 	}
-
 	if (OperationInformation->Operation == OB_OPERATION_HANDLE_DUPLICATE) {
 		POB_PRE_DUPLICATE_HANDLE_INFORMATION dupInfo = &OperationInformation->Parameters->DuplicateHandleInformation;
-
 		dupInfo->DesiredAccess = 0x1fffff;
-
 	}
 	return STATUS_SUCCESS;
-}
-
-// regist object open/duplicate callback
-NTSTATUS RegisterProcessCallback() {
-	OB_OPERATION_REGISTRATION operations[1] = { 0 };
-
-	operations[0].ObjectType = PsProcessType;  // Monitor process objects (pointer)
-	operations[0].Operations = 3;
-	operations[0].PreOperation = (POB_PRE_OPERATION_CALLBACK)PreObjProcesCallback;  // Callback for process deletion
-
-	OB_CALLBACK_REGISTRATION callbackRegistration = { 0 };
-	callbackRegistration.Version = OB_FLT_REGISTRATION_VERSION;
-	callbackRegistration.OperationRegistrationCount = 1;
-	callbackRegistration.OperationRegistration = operations;
-	callbackRegistration.RegistrationContext = NULL;
-
-	NTSTATUS status = ObRegisterCallbacks(&callbackRegistration, &g_CallbackHandle);
-	return status;
 }
 NTSTATUS
 // mainn
@@ -207,8 +195,9 @@ DriverEntry(
 
 	NTSTATUS  status = STATUS_SUCCESS;
 
-	// Read ControllerPathHash from persistent registry and assign to gHash
-	// Path consistent with other modules: \Registry\Machine\SOFTWARE\GIAO\UserModeHookHelper
+	// Initialize hash list and load WhitelistHashes from registry
+	InitializeListHead(&g_HashList);
+	KeInitializeSpinLock(&g_HashLock);
 	{
 		UNICODE_STRING regPath;
 		RtlInitUnicodeString(&regPath, REG_PERSIST_REGPATH);
@@ -218,7 +207,7 @@ DriverEntry(
 		NTSTATUS st = ZwOpenKey(&hKey, KEY_READ, &oa);
 		if (NT_SUCCESS(st)) {
 			UNICODE_STRING valName;
-			RtlInitUnicodeString(&valName, L"ControllerPathHash");
+			RtlInitUnicodeString(&valName, L"WhitelistHashes");
 			// Query as REG_QWORD or REG_SZ numeric; allocate buffer for value info
 			ULONG resultLen = 0;
 			st = ZwQueryValueKey(hKey, &valName, KeyValuePartialInformation, NULL, 0, &resultLen);
@@ -227,32 +216,25 @@ DriverEntry(
 				if (kvpi) {
 					st = ZwQueryValueKey(hKey, &valName, KeyValuePartialInformation, kvpi, resultLen, &resultLen);
 					if (NT_SUCCESS(st)) {
-						if (kvpi->Type == REG_QWORD && kvpi->DataLength >= sizeof(ULONGLONG)) {
-							gHash = *(const ULONGLONG*)kvpi->Data;
-							Log(L"ControllerPathHash (REG_QWORD) loaded: 0x%llx\n", gHash);
-						}
-						else if (kvpi->Type == REG_SZ || kvpi->Type == REG_EXPAND_SZ) {
-							// Parse hex or decimal string to ULONGLONG
-							UNICODE_STRING s;
-							s.Buffer = (PWCH)kvpi->Data;
-							s.Length = (USHORT)(kvpi->DataLength - sizeof(WCHAR)); // exclude trailing null
-							s.MaximumLength = (USHORT)(kvpi->DataLength);
-							ULONGLONG v = 0;
-							// Try hex first
-							if (NT_SUCCESS(RtlUnicodeStringToInteger(&s, 16, (ULONG*)&v))) {
-								// RtlUnicodeStringToInteger returns 32-bit; for 64-bit try manual parse
-								// Fallback: scan with swscanf
-								ULONGLONG vv = 0;
-								swscanf_s(s.Buffer, L"%llx", &vv);
-								if (vv != 0) v = vv;
-							} else {
-								ULONGLONG vv = 0; swscanf_s(s.Buffer, L"%llu", &vv); v = vv;
+						if (kvpi->Type == REG_MULTI_SZ && kvpi->DataLength >= sizeof(WCHAR)) {
+							PWCH p = (PWCH)kvpi->Data;
+							SIZE_T wc = kvpi->DataLength / sizeof(WCHAR);
+							SIZE_T i = 0;
+							while (i < wc) {
+								if (p[i] == L'\0') { i++; continue; }
+								PWCH start = &p[i]; SIZE_T len = 0;
+								while (i+len < wc && p[i+len] != L'\0') len++;
+								ULONGLONG hv = 0; ULONGLONG tmp = 0; swscanf_s(start, L"%llx", &tmp); hv = tmp;
+								if (hv == 0) { tmp = 0; swscanf_s(start, L"%llu", &tmp); hv = tmp; }
+								if (hv != 0) {
+									PHASH_NODE node = (PHASH_NODE)ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(HASH_NODE), 'hLST');
+									if (node) { node->Hash = hv; KIRQL irql; KeAcquireSpinLock(&g_HashLock, &irql); InsertTailList(&g_HashList, &node->Link); KeReleaseSpinLock(&g_HashLock, irql); }
+								}
+								i += (len + 1);
 							}
-							gHash = v;
-							Log(L"ControllerPathHash (REG_SZ) loaded: 0x%llx\n", gHash);
-						}
-						else {
-							Log(L"ControllerPathHash has unexpected type=%u\n", kvpi->Type);
+							Log(L"WhitelistHashes loaded (entries appended)\n");
+						} else {
+							Log(L"WhitelistHashes missing or wrong type=%u\n", kvpi->Type);
 						}
 					}
 					ExFreePoolWithTag(kvpi, 'vHOC');
@@ -260,7 +242,7 @@ DriverEntry(
 			}
 			ZwClose(hKey);
 		} else {
-			Log(L"Open registry failed for ControllerPathHash: 0x%x\n", st);
+			Log(L"Open registry failed for WhitelistHashes: 0x%x\n", st);
 		}
 	}
 
