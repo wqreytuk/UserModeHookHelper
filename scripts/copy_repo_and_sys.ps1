@@ -20,7 +20,7 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$LocalInfPath = "$RepoRoot\x64\Debug\UserModeHookHelper.inf",
     [Parameter(Mandatory=$false)]
-    [string]$RemoteSysDestDir = "\\$RemoteHost\c$\users\x\Desktop\Documents\x64\Debug"
+    [string]$RemoteSysDestDir = "\\$RemoteHost\c$\Users\Public\UserModeHookHelper\x64\Debug"
 )
 
 # Disconnect any previous connection (ignore errors)

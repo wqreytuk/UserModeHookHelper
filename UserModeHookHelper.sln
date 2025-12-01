@@ -37,7 +37,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "UMHH.BootStart", "UMHH.Boot
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ProcessHackerLib", "ProcessHackerLib\ProcessHackerLib.vcxproj", "{74FD19A0-B533-46DA-B591-B1EF4EEF48B0}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "UMHH.ObCallback", "UMHH.ObCallback\avscan.vcxproj", "{F8973BDD-E1CC-4FD5-B7E7-745274B005C4}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "UMHH.ObCallback", "UMHH.ObCallback\UMHH.ObCallback.vcxproj", "{F8973BDD-E1CC-4FD5-B7E7-745274B005C4}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

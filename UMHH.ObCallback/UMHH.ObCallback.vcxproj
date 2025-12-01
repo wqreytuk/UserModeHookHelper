@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="CustomConfig|ARM64">
@@ -32,8 +32,16 @@
     <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">x64</Platform>
     <SampleGuid>{435DDC97-0EA8-4E27-95FF-7C7BD5906BFB}</SampleGuid>
-    <WindowsTargetPlatformVersion>$(LatestTargetPlatformVersion)</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.16299.0</WindowsTargetPlatformVersion>
     <ProjectName>UMHH.ObCallback</ProjectName>
+  </PropertyGroup>
+  <!-- Ensure SolutionDir is valid when building project-only (outside .sln) -->
+  <PropertyGroup>
+    <SolutionDir Condition="'$(SolutionDir)'=='' Or '$(SolutionDir)'=='*Undefined*'">$(MSBuildThisFileDirectory)..\</SolutionDir>
+  </PropertyGroup>
+  <!-- Force SolutionDir to solution root to avoid mis-evaluation to project folder -->
+  <PropertyGroup>
+    <SolutionDir>$(MSBuildThisFileDirectory)..\</SolutionDir>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -88,7 +96,7 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
-    <OutDir>$(IntDir)</OutDir>
+    <OutDir>$(SolutionDir)$(Platform)\$(ConfigurationName)\</OutDir>
   </PropertyGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" />
@@ -110,22 +118,23 @@
   </ImportGroup>
   <ItemGroup Label="WrappedTaskItems" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <TargetName>avscan</TargetName>
+    <TargetName>UMHH.ObCallback</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
-    <TargetName>avscan</TargetName>
+    <TargetName>UMHH.ObCallback</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <TargetName>$(TargetName.Replace(' ',''))</TargetName>
+    <TargetName>UMHH.ObCallback</TargetName>
+    <IntDir>$(Platform)\$(ConfigurationName)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='CustomConfig|x64'">
-    <TargetName>FolderProtect</TargetName>
+    <TargetName>UMHH.ObCallback</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
-    <TargetName>avscan</TargetName>
+    <TargetName>UMHH.ObCallback</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='CustomConfig|ARM64'">
-    <TargetName>avscan</TargetName>
+    <TargetName>UMHH.ObCallback</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -257,7 +266,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Driver.c" />
-    <ResourceCompile Include="avscan.rc" />
   </ItemGroup>
   <ItemGroup>
     <Inf Exclude="@(Inf)" Include="*.inf" />

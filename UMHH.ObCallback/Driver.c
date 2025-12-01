@@ -3,6 +3,12 @@
 
 #include <ntifs.h> 
 #include <ntstrsafe.h>
+#include "../UMHH.BootStart/MacroDef.h"
+// Avoid LOG_PREFIX conflict; use ObCallback-specific prefix
+#ifdef LOG_PREFIX
+#undef LOG_PREFIX
+#endif
+#define LOG_PREFIX L"[UMHH.ObCallback]"
 DWORD64 gHash;
 #define LOG_PREFIX L"[UMHH.ObCallback]"
 void Log(const WCHAR* format, ...);
@@ -110,11 +116,12 @@ CONST FLT_REGISTRATION FilterRegistration = {
 };
 
 
-// 这个是我们的回调函数，我们将在这里进行一些检查来防止别人把我们关掉
-NTSTATUS PreDeleteProcessCallback(
+// this callback function will make sure UMController.exe can always get the requested handle access
+NTSTATUS PreObjProcesCallback(
 	_In_ PVOID RegistrationContext,
 	_In_ POB_PRE_OPERATION_INFORMATION OperationInformation
 ) {
+    UNREFERENCED_PARAMETER(RegistrationContext);
 	if (!OperationInformation) return STATUS_SUCCESS;
 
 
@@ -122,8 +129,11 @@ NTSTATUS PreDeleteProcessCallback(
 	PUNICODE_STRING imageName = NULL;
 	NTSTATUS stImg = 0;
 	if (OperationInformation->Operation == OB_OPERATION_HANDLE_CREATE) {
-		stImg = SeLocateProcessImageName((&OperationInformation->Parameters->DuplicateHandleInformation)->SourceProcess,
-			&imageName);
+		if ((&OperationInformation->Parameters->DuplicateHandleInformation)->SourceProcess)
+			stImg = SeLocateProcessImageName((&OperationInformation->Parameters->DuplicateHandleInformation)->SourceProcess,
+				&imageName);
+		else
+			return STATUS_SUCCESS;
 	}
 	else {
 		stImg = SeLocateProcessImageName(PsGetCurrentProcess(), &imageName);
@@ -154,27 +164,26 @@ NTSTATUS PreDeleteProcessCallback(
 	if (OperationInformation->Operation == OB_OPERATION_HANDLE_CREATE) {
 		POB_PRE_CREATE_HANDLE_INFORMATION info = &OperationInformation->Parameters->CreateHandleInformation;
 
-		info->DesiredAccess = info->OriginalDesiredAccess;
-		return STATUS_SUCCESS;
+		info->DesiredAccess = 0x1fffff;
 
 	}
 
 	if (OperationInformation->Operation == OB_OPERATION_HANDLE_DUPLICATE) {
 		POB_PRE_DUPLICATE_HANDLE_INFORMATION dupInfo = &OperationInformation->Parameters->DuplicateHandleInformation;
 
-		dupInfo->DesiredAccess = dupInfo->OriginalDesiredAccess;
-		return STATUS_SUCCESS;
+		dupInfo->DesiredAccess = 0x1fffff;
 
 	}
+	return STATUS_SUCCESS;
 }
 
-// 该函数用于注册ObCallback
+// regist object open/duplicate callback
 NTSTATUS RegisterProcessCallback() {
 	OB_OPERATION_REGISTRATION operations[1] = { 0 };
 
-	operations[0].ObjectType = *PsProcessType;  // Monitor process objects
+	operations[0].ObjectType = PsProcessType;  // Monitor process objects (pointer)
 	operations[0].Operations = 3;
-	operations[0].PreOperation = PreDeleteProcessCallback;  // Callback for process deletion
+	operations[0].PreOperation = (POB_PRE_OPERATION_CALLBACK)PreObjProcesCallback;  // Callback for process deletion
 
 	OB_CALLBACK_REGISTRATION callbackRegistration = { 0 };
 	callbackRegistration.Version = OB_FLT_REGISTRATION_VERSION;
@@ -194,16 +203,70 @@ DriverEntry(
 {
 	DbgBreakPoint();
 
-
-	// DbgBreakPoint();
-
+	UNREFERENCED_PARAMETER(RegistryPath);
 
 	NTSTATUS  status = STATUS_SUCCESS;
-	PSECURITY_DESCRIPTOR sd = NULL;
+
+	// Read ControllerPathHash from persistent registry and assign to gHash
+	// Path consistent with other modules: \Registry\Machine\SOFTWARE\GIAO\UserModeHookHelper
+	{
+		UNICODE_STRING regPath;
+		RtlInitUnicodeString(&regPath, REG_PERSIST_REGPATH);
+		OBJECT_ATTRIBUTES oa;
+		InitializeObjectAttributes(&oa, &regPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+		HANDLE hKey = NULL;
+		NTSTATUS st = ZwOpenKey(&hKey, KEY_READ, &oa);
+		if (NT_SUCCESS(st)) {
+			UNICODE_STRING valName;
+			RtlInitUnicodeString(&valName, L"ControllerPathHash");
+			// Query as REG_QWORD or REG_SZ numeric; allocate buffer for value info
+			ULONG resultLen = 0;
+			st = ZwQueryValueKey(hKey, &valName, KeyValuePartialInformation, NULL, 0, &resultLen);
+			if (st == STATUS_BUFFER_TOO_SMALL || st == STATUS_BUFFER_OVERFLOW) {
+				PKEY_VALUE_PARTIAL_INFORMATION kvpi = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePoolWithTag(NonPagedPoolNx, resultLen, 'vHOC');
+				if (kvpi) {
+					st = ZwQueryValueKey(hKey, &valName, KeyValuePartialInformation, kvpi, resultLen, &resultLen);
+					if (NT_SUCCESS(st)) {
+						if (kvpi->Type == REG_QWORD && kvpi->DataLength >= sizeof(ULONGLONG)) {
+							gHash = *(const ULONGLONG*)kvpi->Data;
+							Log(L"ControllerPathHash (REG_QWORD) loaded: 0x%llx\n", gHash);
+						}
+						else if (kvpi->Type == REG_SZ || kvpi->Type == REG_EXPAND_SZ) {
+							// Parse hex or decimal string to ULONGLONG
+							UNICODE_STRING s;
+							s.Buffer = (PWCH)kvpi->Data;
+							s.Length = (USHORT)(kvpi->DataLength - sizeof(WCHAR)); // exclude trailing null
+							s.MaximumLength = (USHORT)(kvpi->DataLength);
+							ULONGLONG v = 0;
+							// Try hex first
+							if (NT_SUCCESS(RtlUnicodeStringToInteger(&s, 16, (ULONG*)&v))) {
+								// RtlUnicodeStringToInteger returns 32-bit; for 64-bit try manual parse
+								// Fallback: scan with swscanf
+								ULONGLONG vv = 0;
+								swscanf_s(s.Buffer, L"%llx", &vv);
+								if (vv != 0) v = vv;
+							} else {
+								ULONGLONG vv = 0; swscanf_s(s.Buffer, L"%llu", &vv); v = vv;
+							}
+							gHash = v;
+							Log(L"ControllerPathHash (REG_SZ) loaded: 0x%llx\n", gHash);
+						}
+						else {
+							Log(L"ControllerPathHash has unexpected type=%u\n", kvpi->Type);
+						}
+					}
+					ExFreePoolWithTag(kvpi, 'vHOC');
+				}
+			}
+			ZwClose(hKey);
+		} else {
+			Log(L"Open registry failed for ControllerPathHash: 0x%x\n", st);
+		}
+	}
 
 
 
-	// 注册自保回调
+	// register ob callback
 	status = RegisterProcessCallback();
 	if (!NT_SUCCESS(status)) {
 		Log(L"failed to register ObProcessType callback, Status=0x%x\n", status);
@@ -211,8 +274,6 @@ DriverEntry(
 	}
 	else
 		Log(L"ObProcessType callback registered\n", status);
-	LARGE_INTEGER cookie;
-
 	status = FltRegisterFilter(DriverObject,
 		&FilterRegistration,
 		&gFilter);

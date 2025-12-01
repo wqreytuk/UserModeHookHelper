@@ -128,6 +128,11 @@ VOID Inject_CheckWin7() {
 	VersionInformation.dwOSVersionInfoSize = sizeof(VersionInformation);
 	RtlGetVersion(&VersionInformation);
 
+	// Persist current OS version into driver context for later decisions
+	DriverCtx_SetOsVersion(VersionInformation.dwMajorVersion,
+		VersionInformation.dwMinorVersion,
+		VersionInformation.dwBuildNumber);
+
 	if (VersionInformation.dwMajorVersion == 6 &&
 		VersionInformation.dwMinorVersion == 1)
 	{

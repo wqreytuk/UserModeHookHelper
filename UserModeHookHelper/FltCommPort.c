@@ -903,10 +903,10 @@ Handle_GetProcessHandle(
 	// ACCESS_MASK DesiredAccess = 0x43A;
 	HANDLE src_proc_handle = ZwCurrentProcess();
 
-		 KAPC_STATE apc ;
-		 KeStackAttachProcess(targetProc, &apc);
+		// KAPC_STATE apc ;
+		// KeStackAttachProcess(targetProc, &apc);
 		 st = ZwDuplicateObject(src_proc_handle, hTarget, hCallerProc, &dup, PROCESS_ALL_ACCESS, 0, 0);
-		 KeUnstackDetachProcess(&apc);
+		// KeUnstackDetachProcess(&apc);
 	
 	// Cleanup kernel handles and object refs
 	ZwClose(hTarget);

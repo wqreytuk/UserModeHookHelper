@@ -44,4 +44,14 @@ VOID DriverCtx_ClearUserDir(VOID);
 VOID DriverCtx_SetGlobalHookMode(BOOLEAN Enabled);
 BOOLEAN DriverCtx_GetGlobalHookMode(VOID);
 
+// OS version info stored in driver context
+typedef struct _DRIVERCTX_OSVER {
+	ULONG Major;
+	ULONG Minor;
+	ULONG Build;
+} DRIVERCTX_OSVER, *PDRIVERCTX_OSVER;
+
+VOID DriverCtx_SetOsVersion(ULONG Major, ULONG Minor, ULONG Build);
+DRIVERCTX_OSVER DriverCtx_GetOsVersion(VOID);
+
 #endif

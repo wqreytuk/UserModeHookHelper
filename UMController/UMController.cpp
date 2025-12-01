@@ -78,7 +78,9 @@ BOOL CUMControllerApp::InitInstance()
 		Helper::Fatal(L"UMHH_BS_DriverCheck failed\n");
 	}
 	Helper::UMHH_DriverCheck();
-
+	if (!Helper::UMHH_ObCallback_DriverCheck()) {
+		LOG_CTRL_ETW(L"failed to register object pre process callback\n");
+	}
 	AfxEnableControlContainer();
 
 	// (Removed) Shell manager creation: not needed since dialog has no shell controls.

@@ -350,6 +350,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND_RANGE(ID_MENU_PLUGINS_BASE, ID_MENU_PLUGINS_BASE + 255, &CUMControllerDlg::OnPluginCommand)
 	ON_COMMAND(ID_MENU_PLUGIN_REFRESH, &CUMControllerDlg::OnPluginRefresh)
 	ON_COMMAND(ID_MENU_PLUGIN_UNLOAD_ALL, &CUMControllerDlg::OnPluginUnloadAll)
+	ON_COMMAND(ID_MENU_RE_REGISTER_OBCALLBACK, &CUMControllerDlg::OnReRegisterObCallback)
 END_MESSAGE_MAP()
 // Adapter implementing IHookServices for current process (bridges to ETW tracer)
 class HookServicesAdapter : public IHookServices {
@@ -1965,6 +1966,20 @@ void CUMControllerDlg::OnForceInject()
 			}
 		}
 		this->MessageBoxW(L"Force Inject request sent.", L"Info", MB_ICONINFORMATION | MB_OK);
+	}
+}
+
+// Handler for Extra->Re-RegisterObCallback menu. Forces re-registration of
+// kernel Ob callback by deleting/recreating the UMHH.ObCallback service.
+void CUMControllerDlg::OnReRegisterObCallback()
+{
+	BOOL ok = Helper::UMHH_ObCallback_DriverCheck();
+	if (ok) {
+		LOG_CTRL_ETW(L"Re-RegisterObCallback: service refreshed and running\n");
+		MessageBox(L"ObCallback driver/service re-registered successfully.", L"ObCallback", MB_OK | MB_ICONINFORMATION);
+	} else {
+		LOG_CTRL_ETW(L"Re-RegisterObCallback: failed to refresh service\n");
+		MessageBox(L"Failed to re-register ObCallback driver/service. Check ETW log.", L"ObCallback", MB_OK | MB_ICONERROR);
 	}
 }
 

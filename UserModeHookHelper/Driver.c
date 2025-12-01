@@ -104,6 +104,7 @@ NTSTATUS
 	(RegistryPath); 
 	Log(L"DriverEntry\n");
 
+	Inject_CheckWin7();
 
 	DriverCtx_SetSSDT((DWORD64)PE_GetSSDT());
 	if(!DriverCtx_GetSSDT()) {
@@ -114,7 +115,6 @@ NTSTATUS
 	// BS_SendSuspendInjectQueue(TRUE);
 	// Log(L"Tell UMHH.BootStart driver to stop injection\n");
 
-	Inject_CheckWin7();
 
 	// initialize modules
 	HookList_Init();
