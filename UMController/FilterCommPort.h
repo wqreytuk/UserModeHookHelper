@@ -72,6 +72,9 @@ public:
 	// Payload: DWORD pid; PVOID userWideStringPtr
 	// Reply: PVOID returned in reply buffer (placeholder NULL until implemented).
 	bool FLTCOMM_WriteDllPathToTargetProcess(DWORD pid, PVOID userWideStringPtr, PVOID* outValue);
+    // Request driver to register/unregister an Ob callback. Payload: BOOLEAN registerFlag (1=register,0=unregister)
+    // Returns true on success.
+    bool FLTCOMM_RegisterObCallback(bool registerFlag);
 private:
 	HANDLE m_Port = INVALID_HANDLE_VALUE;
 	// listener state for async messages

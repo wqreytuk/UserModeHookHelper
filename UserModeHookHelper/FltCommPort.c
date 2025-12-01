@@ -21,6 +21,7 @@ static NTSTATUS Handle_CreateRemoteThread(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND
 static NTSTATUS Handle_GetSyscallAddr(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_WriteDllPathToTargetProcess(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
+
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -268,6 +269,7 @@ Comm_MessageNotify(
 	case CMD_SET_GLOBAL_HOOK_MODE:
 		status = Handle_SetGlobalHookMode(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break; 
+    
 	default:
 		break;
 	}
@@ -275,6 +277,7 @@ Comm_MessageNotify(
 	if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
 	return status;
 }
+ 
 static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
 	UNREFERENCED_PARAMETER(OutputBuffer);
 	UNREFERENCED_PARAMETER(OutputBufferSize);

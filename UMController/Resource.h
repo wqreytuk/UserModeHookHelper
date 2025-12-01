@@ -29,6 +29,7 @@
 #define ID_MENU_OPEN_ETW_LOG     40007
 // Extra menu command
 #define ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE 40020
+#define ID_MENU_RE_REGISTER_OBCALLBACK 40021
 // Plugin menu base (reserve a small range for plugin items)
 #define ID_MENU_PLUGINS_BASE   41000
 #define ID_MENU_PLUGINS        41001

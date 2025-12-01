@@ -49,6 +49,8 @@
 // given syscall number. Payload: ULONG syscallNumber. Reply: pointer-sized
 // kernel address (if available).
 #define CMD_GET_SYSCALL_ADDR 14
+// Register or unregister an Ob callback in kernel. Payload: BOOLEAN register(1)/unregister(0)
+#define CMD_REGISTER_OBCALLBACK 20
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {

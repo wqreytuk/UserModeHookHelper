@@ -7,6 +7,7 @@
 #define COMM_MAX_CONNECTION	1024
 #define BS_SERVICE_NAME L"UMHH.BootStart"
 #define SERVICE_NAME L"UserModeHookHelper"
+#define UMHH_OB_CALLBACK_SERVICE_NAME L"UMHH.ObCallback"
 // Registry persistence vendor/key definitions. Vendor name is configurable
 // here so kernel and user-mode code use the same value.
 #define REG_VENDOR_NAME L"GIAO"

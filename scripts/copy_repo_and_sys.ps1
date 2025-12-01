@@ -14,6 +14,12 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$LocalBootSysPath = "$RepoRoot\x64\Debug\UMHH.BootStart.sys",
     [Parameter(Mandatory=$false)]
+    [string]$LocalObCallbackSysPath = "$RepoRoot\x64\Debug\UMHH.ObCallback.sys",
+    [Parameter(Mandatory=$false)]
+    [string]$LocalObCallbackInfPath = "$RepoRoot\x64\Debug\UMHH.ObCallback.inf",
+    [Parameter(Mandatory=$false)]
+    [string]$LocalInfPath = "$RepoRoot\x64\Debug\UserModeHookHelper.inf",
+    [Parameter(Mandatory=$false)]
     [string]$RemoteSysDestDir = "\\$RemoteHost\c$\users\x\Desktop\Documents\x64\Debug"
 )
 
@@ -91,7 +97,7 @@ try {
 }
 
 # Copy both driver .sys files if present: UMHH.BootStart.sys and UserModeHookHelper.sys
-$sysFiles = @($LocalBootSysPath, $LocalSysPath)
+$sysFiles = @($LocalBootSysPath, $LocalSysPath, $LocalObCallbackSysPath, $LocalInfPath, $LocalObCallbackInfPath)
 
 foreach ($local in $sysFiles) {
     $leaf = Split-Path $local -Leaf

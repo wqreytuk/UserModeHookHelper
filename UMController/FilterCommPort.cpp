@@ -656,6 +656,14 @@ bool Filter::FLTCOMM_WriteDllPathToTargetProcess(DWORD pid, PVOID userWideString
 	return true;
 }
 
+bool Filter::FLTCOMM_RegisterObCallback(bool registerFlag) {
+	// Ob callback registration has moved into a separate component (UMHH.ObCallback).
+	// This user-mode function no longer talks to the kernel. To (re)register the
+	// callback, restart the `UMHH.ObCallback` service which hosts the registration.
+	UNREFERENCED_PARAMETER(registerFlag);
+	return false;
+}
+
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {
 	LOG_CTRL_ETW(L"FLTCOMM_RemoveHookByHash: request hash=0x%I64x\n", hash);
 	size_t msgSize = sizeof(UMHH_COMMAND_MESSAGE) + sizeof(ULONGLONG) - 1;

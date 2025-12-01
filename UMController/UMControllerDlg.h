@@ -145,6 +145,8 @@ private:
 	afx_msg void OnPluginCommand(UINT nID);
 	afx_msg void OnPluginRefresh();
 	afx_msg void OnPluginUnloadAll();
+	// Toggle Ob callback registration in kernel (prehandler-only)
+	afx_msg void OnReRegisterObCallback();
 	void FinishStartupIfDone(); // persistence only (no UI)
 	void CompleteStartupUI(); // UI enable/hide after enumeration completes
 	LRESULT OnPostEnumCleanup(WPARAM, LPARAM);

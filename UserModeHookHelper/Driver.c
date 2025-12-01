@@ -124,6 +124,8 @@ NTSTATUS
 	// Load persisted settings from registry (global hook mode, user dir, ...)
 	LoadPersistedDriverSettings();
 
+	// Ob callback registration moved to separate UMHH.ObCallback component.
+
 	// register minifilter
 	PFLT_FILTER filter = NULL;
 	NTSTATUS status = FltRegisterFilter(
@@ -160,6 +162,8 @@ NTSTATUS
 		Log(L"failed to set system notify routines\n");
 		goto ABORTION;
 	}
+
+
 	return status;
 ABORTION:
 	MiniUnload(0);

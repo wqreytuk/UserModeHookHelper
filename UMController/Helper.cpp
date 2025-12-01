@@ -190,6 +190,65 @@ bool Helper::GetFullImageNtPathFromHandle(HANDLE hProcess, std::wstring& outNtPa
 	outNtPath.assign(m_sharedBuf.get());
 	return true;
 }
+
+bool Helper::UMHH_ObCallback_DriverCheck() {
+	// Check and start the dedicated OB callback service named "UMHH.ObCallback"
+	const wchar_t* svcName = L"UMHH.ObCallback";
+	SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CONNECT);
+	if (!scm) {
+		LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: OpenSCManagerW failed: %lu\n", GetLastError());
+		return false;
+	}
+
+	DWORD desiredAccess = SERVICE_QUERY_STATUS | SERVICE_START;
+	SC_HANDLE svc = OpenServiceW(scm, svcName, desiredAccess);
+	if (!svc) {
+		DWORD err = GetLastError();
+		LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: service '%s' not found (err=%lu)\n", svcName, err);
+		CloseServiceHandle(scm);
+		return false;
+	}
+
+	SERVICE_STATUS_PROCESS ssp = { 0 };
+	DWORD bytes = 0;
+	if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+		LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: QueryServiceStatusEx failed: %lu\n", GetLastError());
+		CloseServiceHandle(svc);
+		CloseServiceHandle(scm);
+		return false;
+	}
+
+	if (ssp.dwCurrentState != SERVICE_RUNNING) {
+		LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: service '%s' not running (state=%u), attempting to start\n", svcName, ssp.dwCurrentState);
+		if (StartServiceW(svc, 0, NULL)) {
+			// wait briefly for running state
+			const int MAX_MS = 5000;
+			const int INTERVAL_MS = 200;
+			int waited = 0;
+			while (waited < MAX_MS) {
+				if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) break;
+				if (ssp.dwCurrentState == SERVICE_RUNNING) break;
+				std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS));
+				waited += INTERVAL_MS;
+			}
+		}
+		else {
+			DWORD err = GetLastError();
+			LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: StartServiceW failed for '%s' : %lu\n", svcName, err);
+		}
+	}
+
+	bool running = false;
+	if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+		running = (ssp.dwCurrentState == SERVICE_RUNNING);
+	}
+
+	if (!running) LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: service '%s' not running after start attempt\n", svcName);
+
+	CloseServiceHandle(svc);
+	CloseServiceHandle(scm);
+	return running;
+}
 bool Helper::IsFileExists(TCHAR* szPath) {
 	DWORD dwAttrib = GetFileAttributes(szPath);
 	return (dwAttrib != INVALID_FILE_ATTRIBUTES &&
@@ -918,13 +977,13 @@ bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent
 		HANDLE h = OpenEventW(SYNCHRONIZE, FALSE, event_name);
 		DWORD err = GetLastError();
 		if (!err) {
-			CloseHandle(h);
 			outPresent = true;
 		}
 		else if (err == ERROR_ACCESS_DENIED) {
 			outPresent = true;
-			return true;
 		}
+		if (NULL != h)
+			CloseHandle(h);
 		return true;
 	}
 
