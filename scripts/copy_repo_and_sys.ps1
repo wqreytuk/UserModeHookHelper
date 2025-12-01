@@ -8,7 +8,7 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$RepoRoot = (Get-Location).Path,
     [Parameter(Mandatory=$false)]
-    [string]$RemoteBase = "\\$RemoteHost\c$\users\x\Desktop\Documents",
+    [string]$RemoteBase = "\\$RemoteHost\c$\Users\Public\UserModeHookHelper",
     [Parameter(Mandatory=$false)]
     [string]$LocalSysPath = "$RepoRoot\x64\Debug\UserModeHookHelper.sys",
     [Parameter(Mandatory=$false)]

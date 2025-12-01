@@ -711,7 +711,7 @@ bool Helper::ForceInject(DWORD pid) {
 		return false;
 	}
 	LOG_CTRL_ETW(L"get process handle=0x%x from kernel\n", hProc);
-	
+
 	bool is64;
 	if (!IsProcess64(pid, is64)) {
 		LOG_CTRL_ETW(L"failed to call IsProcess64 PID=%u\n", pid);
@@ -729,7 +729,7 @@ bool Helper::ForceInject(DWORD pid) {
 	}
 	else {
 		WCHAR _[] = WIDEN(KERNEL_32_X86);
-		if (0!=PHLIB::GetModuleBase((PVOID)hProc, (PVOID)_, (PVOID)&kernel32_base)) {
+		if (0 != PHLIB::GetModuleBase((PVOID)hProc, (PVOID)_, (PVOID)&kernel32_base)) {
 			LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase PID=%u, CPU=x86\n", pid);
 			CloseHandle(hProc);
 			return false;
@@ -752,7 +752,7 @@ bool Helper::ForceInject(DWORD pid) {
 	std::wstring exe = Helper::GetCurrentDirFilePath(L"");
 	size_t pos = exe.find_last_of(L"/\\");
 	std::wstring dir = (pos == std::wstring::npos) ? exe : exe.substr(0, pos);
-	
+
 	const wchar_t* masterName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 	std::wstring dllnamepath = dir + L"\\" + masterName;
 
@@ -766,7 +766,7 @@ bool Helper::ForceInject(DWORD pid) {
 	}
 	LOG_CTRL_ETW(L"write dll Path=%s to target process Pid=%u memory Addr=0x%p\n", dllnamepath.c_str(), pid, dll_path_addr);
 	PVOID syscall_addr = 0;
-	 
+
 	// get NtCreateThreadEx kernel function addr
 	if (!Helper::m_filterInstance->FLTCOMM_GetSyscallAddr(Helper::m_NtCreateThreadExSyscallNum, &syscall_addr)) {
 		LOG_CTRL_ETW(L"call FLTCOMM_GetSyscallAddr failed\n");
@@ -822,9 +822,9 @@ bool Helper::GetModuleBaseWithPathEx(HANDLE hProcess, const char* mPath, PVOID* 
 	if (!mPath || !base || !hProcess) {
 		LOG_CTRL_ETW(L"GetModuleBaseWithPathEx parameter snanity check failed\n");
 		return false;
-}
+	}
 	*base = NULL;
-	
+
 
 	HMODULE hMods[4096];
 	DWORD cbNeeded = 0;
@@ -892,7 +892,7 @@ bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 	outIs64 = is64;
 	return true;
 }
-void Helper::SetSysDriverMark(std::wstring sysmark){
+void Helper::SetSysDriverMark(std::wstring sysmark) {
 	Helper::m_SysDriverMark = sysmark;
 }
 void Helper::SetNtCreateThreadExSyscallNum(DWORD num) {
@@ -1051,12 +1051,12 @@ bool Helper::ConvertWcharToChar(const wchar_t* src, char* dst, size_t dstChars) 
 	dst[i] = '\0';
 	return true;
 }
-bool Helper::CheckExportFromFile(const wchar_t* dllPath, const char* exportName,DWORD* out_func_offset) {
+bool Helper::CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset) {
 	if (!dllPath || !exportName) {
 		LOG_CTRL_ETW(L"Parameter sanity check failed\n");
 		return false;
 	}
-	HANDLE hFile = CreateFileW(dllPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 
+	HANDLE hFile = CreateFileW(dllPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
 		LOG_CTRL_ETW(L"CheckExportFromFile: CreateFileW failed for %s err=%u\n", dllPath, GetLastError());
@@ -1255,8 +1255,8 @@ SIZE_T Helper::RvaToOffset(void* base, IMAGE_NT_HEADERS64* nth, DWORD rva) {
 	return (SIZE_T)-1;
 }
 
- Filter* Helper::GetFilterInstance() {
-	 return Helper::m_filterInstance;
+Filter* Helper::GetFilterInstance() {
+	return Helper::m_filterInstance;
 }
 // Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)
 bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
@@ -1394,7 +1394,7 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 
 	}
 	else {
-		
+
 		// Desired disabled: if service exists, stop it, delete the service, and
 		// remove the driver file from the system drivers directory.
 		if (svc) {
