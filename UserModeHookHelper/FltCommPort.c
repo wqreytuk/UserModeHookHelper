@@ -949,7 +949,7 @@ Handle_GetSyscallAddr(
 	ULONG syscallNumber = 0;
 	RtlCopyMemory(&syscallNumber, msg->m_Data, sizeof(ULONG));
 
-	PVOID pKsdt = (PVOID)DriverCtx_GetSSDT();
+	PVOID pKsdt = (PVOID)(ULONG_PTR)DriverCtx_GetSSDT();
 	if (!pKsdt) {
 		// Not available on this build - can't resolve
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
@@ -1048,6 +1048,7 @@ Handle_CreateRemoteThread(
 
 	// Note: keep hTargetProc and targetProc alive until after thread creation
 	if (!NT_SUCCESS(status)) {
+		Log(L"failed to call pfnNtCreateThreadEx, Status=0x%x\n", status);
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 		return status;
 	}

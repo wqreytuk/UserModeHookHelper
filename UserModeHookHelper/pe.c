@@ -135,22 +135,22 @@ PULONGLONG PE_GetSSDT()
 		INT32 Limit = 4096;
 
 		for (int i = 0; i < Limit; i++) {		        // Increase that address until you hit "0x4c/0x8d/0x15"
-			if (*(PUINT8)(KiSystemCall64 + i) == 0x65
-				&& *(PUINT8)(KiSystemCall64 + i + 1) == 0xC6
-				&& *(PUINT8)(KiSystemCall64 + i + 2) == 0x4
-				&& *(PUINT8)(KiSystemCall64 + i + 3) == 0x25)
+			if (*(PUINT8)((ULONG_PTR)KiSystemCall64 + i) == 0x65
+				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 1) == 0xC6
+				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 2) == 0x4
+				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 3) == 0x25)
 			{
 				KiSystemCall64 = KiSystemCall64 + i;
 				KiSystemServiceUser = KiSystemCall64 + 4 + 4 + 1 +1 + 4 + 
-					(0xFFFFFFFF00000000 | *(DWORD*)(KiSystemCall64 + 4 + 4 + 1 + 1));
+					(0xFFFFFFFF00000000 | *(DWORD*)((ULONG_PTR)KiSystemCall64 + 4 + 4 + 1 + 1));
 				for ( i = 0; i < Limit; i++) {		        // Increase that address until you hit "0x4c/0x8d/0x15"
-					if (*(PUINT8)(KiSystemServiceUser + i) == 0x4C
-						&& *(PUINT8)(KiSystemServiceUser + i + 1) == 0x8D
-						&& *(PUINT8)(KiSystemServiceUser + i + 2) == 0x15)
+					if (*(PUINT8)((ULONG_PTR)KiSystemServiceUser + i) == 0x4C
+						&& *(PUINT8)((ULONG_PTR)KiSystemServiceUser + i + 1) == 0x8D
+						&& *(PUINT8)((ULONG_PTR)KiSystemServiceUser + i + 2) == 0x15)
 					{
 						KiSystemServiceRepeat = KiSystemServiceUser + i;
 						// Convert relative address to absolute address
-						return (PULONGLONG)(*(PINT32)(KiSystemServiceRepeat + 3) + KiSystemServiceRepeat + 7);
+						return (PULONGLONG)(*(PINT32)((ULONG_PTR)KiSystemServiceRepeat + 3) + (ULONG_PTR)KiSystemServiceRepeat + 7);
 
 					}
 				}
@@ -164,16 +164,16 @@ PULONGLONG PE_GetSSDT()
 		INT32 Limit = 4096;
 
 		for (int i = 0; i < Limit; i++) {		        // Increase that address until you hit "0x4c/0x8d/0x15"
-			if (*(PUINT8)(KiSystemCall64 + i) == 0x4C
-				&& *(PUINT8)(KiSystemCall64 + i + 1) == 0x8D
-				&& *(PUINT8)(KiSystemCall64 + i + 2) == 0x15)
+			if (*(PUINT8)((ULONG_PTR)KiSystemCall64 + i) == 0x4C
+				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 1) == 0x8D
+				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 2) == 0x15)
 			{
 				KiSystemServiceRepeat = KiSystemCall64 + i;
 				DbgPrint("KiSystemCall64           %p \r\n", KiSystemCall64);
 				DbgPrint("KiSystemServiceRepeat    %p \r\n", KiSystemServiceRepeat);
 
 				// Convert relative address to absolute address
-				return (PULONGLONG)(*(PINT32)(KiSystemServiceRepeat + 3) + KiSystemServiceRepeat + 7);
+				return (PULONGLONG)(*(PINT32)((ULONG_PTR)KiSystemServiceRepeat + 3) + (ULONG_PTR)KiSystemServiceRepeat + 7);
 			}
 		}
 	}
