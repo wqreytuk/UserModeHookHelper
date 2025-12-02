@@ -14,4 +14,5 @@ MiniPreCreateCallback(
 	PCFLT_RELATED_OBJECTS FltObjects,
 	PVOID* CompletionContext
 );
+
 #endif
