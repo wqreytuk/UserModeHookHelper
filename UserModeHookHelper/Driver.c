@@ -101,7 +101,7 @@ NTSTATUS
 		_In_ PUNICODE_STRING RegistryPath
 	)
 {
-	DbgBreakPoint();
+	// DbgBreakPoint();
 	(RegistryPath); 
 	Log(L"DriverEntry\n");
 

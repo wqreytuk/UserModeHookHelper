@@ -3,4 +3,8 @@
 namespace PHLIB {
 	 void* GetModuleBase(void* hProc, void* target_module, void* out);
 	 void SetHookServices(void* services);
+	 void* PhBuildModuleListWow64(
+		void* ProcessHandle,
+		 void* OutHead
+	 );
 }

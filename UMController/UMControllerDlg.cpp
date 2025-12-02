@@ -430,14 +430,17 @@ public:
 		}
 		return RegistryStore::WriteProcHookList(out);
 	}
-	virtual bool ForceInject(DWORD pid) override {
+	 bool ForceInject(DWORD pid) override {
 		return  Helper::ForceInject(pid);
 	}
-	virtual std::wstring GetCurrentDirFilePath(WCHAR* filename) override {
+	  bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars) override {
+		  return Helper::ConvertCharToWchar(src, dst, dstChars);
+	}
+	 std::wstring GetCurrentDirFilePath(WCHAR* filename) override {
 		auto s = Helper::GetCurrentDirFilePath(filename);
 		return s;
 	}
-	virtual bool GetHighAccessProcHandle(DWORD pid, HANDLE* hProc) override{
+	 bool GetHighAccessProcHandle(DWORD pid, HANDLE* hProc) override{
 		Filter* f = Helper::GetFilterInstance();
 		if (f){
 			if (!f->FLTCOMM_GetProcessHandle(pid, hProc)) {

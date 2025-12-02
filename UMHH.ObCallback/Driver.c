@@ -207,7 +207,7 @@ DriverEntry(
 	_In_ PUNICODE_STRING RegistryPath
 )
 {
-	DbgBreakPoint();
+	// DbgBreakPoint();
 
 	UNREFERENCED_PARAMETER(RegistryPath);
 
