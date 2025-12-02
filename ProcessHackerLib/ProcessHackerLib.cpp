@@ -272,6 +272,83 @@ namespace PHLIB {
 		return status;
 	}
 
+	NTSTATUS PhBuildModuleListWow64(
+		_In_ HANDLE ProcessHandle,
+		_Out_ PPH_MODULE_LIST_NODE* OutHead
+	) {
+		if (OutHead) *OutHead = NULL;
+		NTSTATUS status;
+		PPEB32 peb = NULL;
+		ULONG ldr = 0;
+		PEB_LDR_DATA32 pebLdrData;
+		ULONG startLink = 0;
+		ULONG currentLink = 0;
+		ULONG dataTableEntrySize = 0;
+		LDR_DATA_TABLE_ENTRY32 currentEntry;
+		ULONG i = 0;
+
+		PhInitializeWindowsVersion();
+		status = PhGetProcessPeb32(ProcessHandle, (PVOID*)&peb);
+		if (!NT_SUCCESS(status)) return status;
+		if (!peb) return STATUS_NOT_SUPPORTED;
+
+		status = PhReadVirtualMemory(ProcessHandle, PTR_ADD_OFFSET(peb, FIELD_OFFSET(PEB32, Ldr)), &ldr, sizeof(ULONG), NULL);
+		if (!NT_SUCCESS(status)) return status;
+		status = PhReadVirtualMemory(ProcessHandle, UlongToPtr(ldr), &pebLdrData, sizeof(PEB_LDR_DATA32), NULL);
+		if (!NT_SUCCESS(status)) return status;
+		if (!pebLdrData.Initialized) return STATUS_UNSUCCESSFUL;
+
+		if (WindowsVersion >= WINDOWS_8)
+			dataTableEntrySize = LDR_DATA_TABLE_ENTRY_SIZE_WIN8_32;
+		else if (WindowsVersion >= WINDOWS_7)
+			dataTableEntrySize = LDR_DATA_TABLE_ENTRY_SIZE_WIN7_32;
+		else
+			dataTableEntrySize = LDR_DATA_TABLE_ENTRY_SIZE_WINXP_32;
+
+		startLink = (ULONG)(ldr + FIELD_OFFSET(PEB_LDR_DATA32, InLoadOrderModuleList));
+		currentLink = pebLdrData.InLoadOrderModuleList.Flink;
+
+		PPH_MODULE_LIST_NODE head = NULL;
+		PPH_MODULE_LIST_NODE tail = NULL;
+
+		while (currentLink != startLink && i <= PH_ENUM_PROCESS_MODULES_LIMIT) {
+			ULONG addressOfEntry = PtrToUlong(CONTAINING_RECORD(UlongToPtr(currentLink), LDR_DATA_TABLE_ENTRY32, InLoadOrderLinks));
+			status = PhReadVirtualMemory(ProcessHandle, UlongToPtr(addressOfEntry), &currentEntry, dataTableEntrySize, NULL);
+			if (!NT_SUCCESS(status)) break;
+			if (currentEntry.DllBase) {
+				PUNICODE_STRING mappedFileName = NULL;
+				NTSTATUS st = PhGetProcessMappedFileName(ProcessHandle, (PVOID)(ULONG_PTR)currentEntry.DllBase, &mappedFileName);
+				if (NT_SUCCESS(st) && mappedFileName && mappedFileName->Buffer && mappedFileName->Length > 0) {
+					SIZE_T wcharLen = mappedFileName->Length / sizeof(WCHAR);
+					SIZE_T bytes = (wcharLen + 1) * sizeof(WCHAR);
+					PPH_MODULE_LIST_NODE node = (PPH_MODULE_LIST_NODE)malloc(sizeof(PH_MODULE_LIST_NODE));
+					if (node) {
+						RtlZeroMemory(node, sizeof(PH_MODULE_LIST_NODE));
+						node->Base = (void*)(ULONG_PTR)currentEntry.DllBase;
+						node->Size = currentEntry.SizeOfImage; // populate SizeOfImage if available
+						node->Path = (PWSTR)malloc(bytes);
+						if (node->Path) {
+							RtlCopyMemory(node->Path, mappedFileName->Buffer, mappedFileName->Length);
+							node->Path[wcharLen] = L'\0';
+							// append to list
+							node->Next = NULL;
+							if (!head) head = node; else tail->Next = node;
+							tail = node;
+						}
+						else {
+							free(node);
+						}
+					}
+				}
+				if (mappedFileName) free(mappedFileName);
+			}
+			currentLink = currentEntry.InLoadOrderLinks.Flink;
+			i++;
+		}
+
+		if (OutHead) *OutHead = head;
+		return STATUS_SUCCESS;
+	}
 
 
 	NTSTATUS PhGetProcessMappedFileName(

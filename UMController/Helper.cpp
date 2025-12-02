@@ -190,6 +190,113 @@ bool Helper::GetFullImageNtPathFromHandle(HANDLE hProcess, std::wstring& outNtPa
 	outNtPath.assign(m_sharedBuf.get());
 	return true;
 }
+
+bool Helper::UMHH_ObCallback_DriverCheck() {
+	const wchar_t* svcName = UMHH_OB_CALLBACK_SERVICE_NAME;
+
+	// Merge Controller executable hash into WhitelistHashes (REG_MULTI_SZ)
+	{
+		TCHAR exePath[MAX_PATH] = { 0 }; DWORD len = GetModuleFileNameW(NULL, exePath, _countof(exePath));
+		if (len > 0 && len < _countof(exePath)) {
+			std::wstring ntPath;
+			if (ResolveDosPathToNtPath(std::wstring(exePath), ntPath)) {
+				ULONGLONG hash = Helper::GetNtPathHash((const UCHAR*)ntPath.c_str(), ntPath.size()*sizeof(wchar_t));
+				wchar_t hashStr[32]; _snwprintf_s(hashStr, _TRUNCATE, L"%016llX", hash);
+				HKEY hKey=NULL; LONG rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE,
+					KEY_READ | KEY_WRITE | KEY_WOW64_64KEY, NULL, &hKey, NULL);
+				if (rc==ERROR_SUCCESS) {
+					std::vector<std::wstring> vals;
+					DWORD type=0, dataSize=0; LONG q = RegQueryValueExW(hKey, L"WhitelistHashes", NULL, &type, NULL, &dataSize);
+					if (q==ERROR_SUCCESS && type==REG_MULTI_SZ && dataSize>0) {
+						std::vector<wchar_t> buf(dataSize/sizeof(wchar_t));
+						if (RegQueryValueExW(hKey, L"WhitelistHashes", NULL, NULL, reinterpret_cast<LPBYTE>(buf.data()), &dataSize)==ERROR_SUCCESS) {
+							size_t i=0, wc=dataSize/sizeof(wchar_t); while (i<wc) { if (buf[i]==L'\0'){i++;continue;} std::wstring s(&buf[i]); vals.push_back(s); i+=s.size()+1; }
+						}
+					}
+					bool have=false; for (auto &s:vals) if (!_wcsicmp(s.c_str(), hashStr)) { have=true; break; }
+					if (!have) vals.push_back(hashStr);
+					std::vector<wchar_t> out; for (auto &s:vals){ out.insert(out.end(), s.begin(), s.end()); out.push_back(L'\0'); }
+					if (out.empty() || out.back()!=L'\0') out.push_back(L'\0'); out.push_back(L'\0');
+					LONG sw = RegSetValueExW(hKey, L"WhitelistHashes", 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(out.data()), (DWORD)(out.size()*sizeof(wchar_t)));
+					if (sw==ERROR_SUCCESS) LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: merged controller hash 0x%llx into WhitelistHashes (total=%zu)\n", hash, vals.size());
+					else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: failed updating WhitelistHashes (err=%ld)\n", sw);
+					RegDeleteValueW(hKey, L"ControllerPathHash"); // legacy cleanup
+					RegCloseKey(hKey);
+				} else {
+					LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: RegCreateKeyExW failed (%ld)\n", rc);
+				}
+			} else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: ResolveDosPathToNtPath failed for %s\n", exePath);
+		}
+	}
+
+	SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CREATE_SERVICE | SC_MANAGER_CONNECT);
+	if (!scm) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: OpenSCManagerW failed: %lu\n", GetLastError()); return false; }
+	DWORD desiredAccess = SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP | DELETE | SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG;
+	SC_HANDLE svc = OpenServiceW(scm, svcName, desiredAccess);
+	if (svc) {
+		SERVICE_STATUS_PROCESS ssp={0}; DWORD bytes=0;
+		if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
+			if (ssp.dwCurrentState==SERVICE_RUNNING || ssp.dwCurrentState==SERVICE_START_PENDING) {
+				SERVICE_STATUS ss={0}; if (ControlService(svc, SERVICE_CONTROL_STOP, &ss)) {
+					const int MAX_MS=10000, INTERVAL_MS=200; int waited=0; while (waited<MAX_MS) { if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO,(LPBYTE)&ssp,sizeof(ssp),&bytes)) break; if (ssp.dwCurrentState==SERVICE_STOPPED) break; std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS)); waited+=INTERVAL_MS; }
+				} else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: failed to stop existing service %s : %lu\n", svcName, GetLastError());
+			}
+		}
+		if (!DeleteService(svc)) LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DeleteService failed for %s : %lu\n", svcName, GetLastError());
+		else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: deleted existing service %s\n", svcName);
+		CloseServiceHandle(svc); svc=NULL;
+	}
+
+	// Install via INF
+	std::basic_string<TCHAR> infName = std::basic_string<TCHAR>(svcName) + std::basic_string<TCHAR>(L".inf");
+	std::basic_string<TCHAR> infPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(infName.c_str()));
+	if (infPath.empty()) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: could not determine module path to locate INF\n"); CloseServiceHandle(scm); return false; }
+	DWORD fa = GetFileAttributesW(infPath.c_str()); if (fa==INVALID_FILE_ATTRIBUTES){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: INF not found at %s\n", infPath.c_str()); CloseServiceHandle(scm); return false; }
+	HMODULE hNewdev = LoadLibraryW(L"newdev.dll"); if (!hNewdev){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Failed to load newdev.dll: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
+	typedef BOOL(WINAPI* PFN_DiInstallDriverW)(HWND, PCWSTR, DWORD, PBOOL); PFN_DiInstallDriverW pDiInstall=(PFN_DiInstallDriverW)GetProcAddress(hNewdev,"DiInstallDriverW"); if(!pDiInstall){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DiInstallDriverW not found in newdev.dll\n"); FreeLibrary(hNewdev); CloseServiceHandle(scm); return false; }
+	BOOL needReboot=FALSE; BOOL installed=pDiInstall(NULL, infPath.c_str(), 0, &needReboot); if(!installed){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DiInstallDriverW failed for %s: %lu\n", infPath.c_str(), GetLastError()); FreeLibrary(hNewdev); CloseServiceHandle(scm); return false; }
+	LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DiInstallDriverW succeeded for %s (needReboot=%d)\n", infPath.c_str(), (int)needReboot); FreeLibrary(hNewdev);
+
+	svc = OpenServiceW(scm, svcName, desiredAccess | SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG);
+	if (!svc){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Service still not available after install (err=%lu)\n", GetLastError()); CloseServiceHandle(scm); return false; }
+
+	std::basic_string<TCHAR> sysName = std::basic_string<TCHAR>(svcName) + std::basic_string<TCHAR>(L".sys");
+	std::basic_string<TCHAR> sysPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(sysName.c_str()));
+	if (!sysPath.empty()) {
+		if (!ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, SERVICE_DEMAND_START, SERVICE_NO_CHANGE, sysPath.c_str(), NULL, NULL, NULL, NULL, NULL, NULL))
+			LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: ChangeServiceConfigW failed path=%s err=%lu\n", sysPath.c_str(), GetLastError());
+		else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Service binary path updated to %s\n", sysPath.c_str());
+	} else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Could not determine module path to set service binary path\n");
+
+	SERVICE_STATUS_PROCESS ssp={0}; DWORD bytes=0; if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO,(LPBYTE)&ssp,sizeof(ssp),&bytes)) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: QueryServiceStatusEx failed after install: %lu\n", GetLastError()); CloseServiceHandle(svc); CloseServiceHandle(scm); return false; }
+	if (ssp.dwCurrentState!=SERVICE_RUNNING) {
+		LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: service '%s' not running (state=%u), attempting to start\n", svcName, ssp.dwCurrentState);
+		if (StartServiceW(svc, 0, NULL)) {
+			const int MAX_MS=5000, INTERVAL_MS=200; int waited=0; while (waited<MAX_MS){ if(!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO,(LPBYTE)&ssp,sizeof(ssp),&bytes)) break; if (ssp.dwCurrentState==SERVICE_RUNNING) break; std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS)); waited+=INTERVAL_MS; }
+		} else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: StartServiceW failed for '%s' : %lu\n", svcName, GetLastError());
+	}
+	bool running = (ssp.dwCurrentState==SERVICE_RUNNING);
+	if (!running) LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: service '%s' not running after start attempt\n", svcName);
+	CloseServiceHandle(svc); CloseServiceHandle(scm); return running;
+}
+
+bool Helper::AddNtPathToWhitelist(const std::wstring& ntPath) {
+	if (ntPath.empty()) return false;
+	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+	size_t len = ntPath.size() * sizeof(wchar_t);
+	unsigned long long hash = Helper::GetNtPathHash(bytes, len);
+
+	if (!RegistryStore::AddWhitelistPath(ntPath)) {
+		LOG_CTRL_ETW(L"AddNtPathToWhitelist: failed to persist NT path %s\n", ntPath.c_str());
+		return false;
+	}
+	if (!RegistryStore::AddWhitelistHash(hash)) {
+		LOG_CTRL_ETW(L"AddNtPathToWhitelist: failed to persist hash 0x%016llX for %s\n", hash, ntPath.c_str());
+		return false;
+	}
+
+	return true;
+}
 bool Helper::IsFileExists(TCHAR* szPath) {
 	DWORD dwAttrib = GetFileAttributes(szPath);
 	return (dwAttrib != INVALID_FILE_ATTRIBUTES &&
@@ -652,7 +759,7 @@ bool Helper::ForceInject(DWORD pid) {
 		return false;
 	}
 	LOG_CTRL_ETW(L"get process handle=0x%x from kernel\n", hProc);
-	
+
 	bool is64;
 	if (!IsProcess64(pid, is64)) {
 		LOG_CTRL_ETW(L"failed to call IsProcess64 PID=%u\n", pid);
@@ -670,7 +777,7 @@ bool Helper::ForceInject(DWORD pid) {
 	}
 	else {
 		WCHAR _[] = WIDEN(KERNEL_32_X86);
-		if (0!=PHLIB::GetModuleBase((PVOID)hProc, (PVOID)_, (PVOID)&kernel32_base)) {
+		if (0 != PHLIB::GetModuleBase((PVOID)hProc, (PVOID)_, (PVOID)&kernel32_base)) {
 			LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase PID=%u, CPU=x86\n", pid);
 			CloseHandle(hProc);
 			return false;
@@ -693,7 +800,7 @@ bool Helper::ForceInject(DWORD pid) {
 	std::wstring exe = Helper::GetCurrentDirFilePath(L"");
 	size_t pos = exe.find_last_of(L"/\\");
 	std::wstring dir = (pos == std::wstring::npos) ? exe : exe.substr(0, pos);
-	
+
 	const wchar_t* masterName = is64 ? MASTER_X64_DLL_BASENAME : MASTER_X86_DLL_BASENAME;
 	std::wstring dllnamepath = dir + L"\\" + masterName;
 
@@ -707,13 +814,38 @@ bool Helper::ForceInject(DWORD pid) {
 	}
 	LOG_CTRL_ETW(L"write dll Path=%s to target process Pid=%u memory Addr=0x%p\n", dllnamepath.c_str(), pid, dll_path_addr);
 	PVOID syscall_addr = 0;
-	 
+
 	// get NtCreateThreadEx kernel function addr
 	if (!Helper::m_filterInstance->FLTCOMM_GetSyscallAddr(Helper::m_NtCreateThreadExSyscallNum, &syscall_addr)) {
 		LOG_CTRL_ETW(L"call FLTCOMM_GetSyscallAddr failed\n");
 		goto CLEAN_UP;
 	}
 
+	// if target process is proceted process, we'll launch Suicide to create remote thread for us
+	bool is_protected = false;
+	if (!Helper::m_filterInstance->FLTCOMM_IsProtectedProcess(pid, is_protected)) {
+		LOG_CTRL_ETW(L"call FLTCOMM_IsProtectedProcess failed\n");
+		goto CLEAN_UP;
+	}
+	if (is_protected) {
+		SHELLEXECUTEINFO sei = { sizeof(sei) };
+		sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+		auto s = Helper::GetCurrentDirFilePath(TEXT("Suicide.exe"));
+		sei.lpFile = s.c_str();
+		sei.nShow = SW_SHOW;
+		wchar_t ts[64];
+		swprintf(ts, _countof(ts), L"%d %llu %llu %llu",
+			pid, (unsigned long long) pLoadLibraryW, (unsigned long long) dll_path_addr, (unsigned long long) syscall_addr);
+		sei.lpParameters = ts;
+		
+		BOOL ok = ShellExecuteEx(&sei);
+		if (!ok) {
+			LOG_CTRL_ETW(L"failed to launch Suicide, Error=0x%x\n", GetLastError());
+			goto CLEAN_UP;
+		}
+		CloseHandle(hProc);
+		return true;
+	}
 	HANDLE thread_handle = 0;
 	if (!Helper::m_filterInstance->FLTCOMM_CreateRemoteThread(pid, pLoadLibraryW, dll_path_addr, syscall_addr, &thread_handle, NULL, hProc)) {
 		LOG_CTRL_ETW(L"call FLTCOMM_CreateRemoteThread failed\n");
@@ -763,9 +895,9 @@ bool Helper::GetModuleBaseWithPathEx(HANDLE hProcess, const char* mPath, PVOID* 
 	if (!mPath || !base || !hProcess) {
 		LOG_CTRL_ETW(L"GetModuleBaseWithPathEx parameter snanity check failed\n");
 		return false;
-}
+	}
 	*base = NULL;
-	
+
 
 	HMODULE hMods[4096];
 	DWORD cbNeeded = 0;
@@ -833,7 +965,7 @@ bool Helper::IsProcess64(DWORD pid, bool& outIs64) {
 	outIs64 = is64;
 	return true;
 }
-void Helper::SetSysDriverMark(std::wstring sysmark){
+void Helper::SetSysDriverMark(std::wstring sysmark) {
 	Helper::m_SysDriverMark = sysmark;
 }
 void Helper::SetNtCreateThreadExSyscallNum(DWORD num) {
@@ -918,13 +1050,13 @@ bool Helper::IsModuleLoaded(DWORD pid, const wchar_t* baseName, bool& outPresent
 		HANDLE h = OpenEventW(SYNCHRONIZE, FALSE, event_name);
 		DWORD err = GetLastError();
 		if (!err) {
-			CloseHandle(h);
 			outPresent = true;
 		}
 		else if (err == ERROR_ACCESS_DENIED) {
 			outPresent = true;
-			return true;
 		}
+		if (NULL != h)
+			CloseHandle(h);
 		return true;
 	}
 
@@ -992,12 +1124,12 @@ bool Helper::ConvertWcharToChar(const wchar_t* src, char* dst, size_t dstChars) 
 	dst[i] = '\0';
 	return true;
 }
-bool Helper::CheckExportFromFile(const wchar_t* dllPath, const char* exportName,DWORD* out_func_offset) {
+bool Helper::CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset) {
 	if (!dllPath || !exportName) {
 		LOG_CTRL_ETW(L"Parameter sanity check failed\n");
 		return false;
 	}
-	HANDLE hFile = CreateFileW(dllPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 
+	HANDLE hFile = CreateFileW(dllPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
 		LOG_CTRL_ETW(L"CheckExportFromFile: CreateFileW failed for %s err=%u\n", dllPath, GetLastError());
@@ -1196,8 +1328,8 @@ SIZE_T Helper::RvaToOffset(void* base, IMAGE_NT_HEADERS64* nth, DWORD rva) {
 	return (SIZE_T)-1;
 }
 
- Filter* Helper::GetFilterInstance() {
-	 return Helper::m_filterInstance;
+Filter* Helper::GetFilterInstance() {
+	return Helper::m_filterInstance;
 }
 // Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)
 bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
@@ -1335,7 +1467,7 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 
 	}
 	else {
-		
+
 		// Desired disabled: if service exists, stop it, delete the service, and
 		// remove the driver file from the system drivers directory.
 		if (svc) {

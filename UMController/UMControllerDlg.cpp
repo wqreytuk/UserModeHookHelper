@@ -21,6 +21,7 @@
 #include <unordered_set>
 #include "IPC.h"
 #include "RemoveHookDlg.h"
+#include "RemoveWhitelistDlg.h"
 #include "RegistryStore.h"
 #include "HookInterfaces.h" // services adapter remains local; dialog now in HookUI DLL
 #include "Resource.h" // ensure menu ID definitions (IDR_MAIN_MENU) visible
@@ -350,6 +351,8 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND_RANGE(ID_MENU_PLUGINS_BASE, ID_MENU_PLUGINS_BASE + 255, &CUMControllerDlg::OnPluginCommand)
 	ON_COMMAND(ID_MENU_PLUGIN_REFRESH, &CUMControllerDlg::OnPluginRefresh)
 	ON_COMMAND(ID_MENU_PLUGIN_UNLOAD_ALL, &CUMControllerDlg::OnPluginUnloadAll)
+	ON_COMMAND(ID_TOOLS_ADD_WHITELIST, &CUMControllerDlg::OnAddWhitelist)
+	ON_COMMAND(ID_TOOLS_REMOVE_WHITELIST, &CUMControllerDlg::OnRemoveWhitelist)
 END_MESSAGE_MAP()
 // Adapter implementing IHookServices for current process (bridges to ETW tracer)
 class HookServicesAdapter : public IHookServices {
@@ -427,14 +430,17 @@ public:
 		}
 		return RegistryStore::WriteProcHookList(out);
 	}
-	virtual bool ForceInject(DWORD pid) override {
+	 bool ForceInject(DWORD pid) override {
 		return  Helper::ForceInject(pid);
 	}
-	virtual std::wstring GetCurrentDirFilePath(WCHAR* filename) override {
+	  bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars) override {
+		  return Helper::ConvertCharToWchar(src, dst, dstChars);
+	}
+	 std::wstring GetCurrentDirFilePath(WCHAR* filename) override {
 		auto s = Helper::GetCurrentDirFilePath(filename);
 		return s;
 	}
-	virtual bool GetHighAccessProcHandle(DWORD pid, HANDLE* hProc) override{
+	 bool GetHighAccessProcHandle(DWORD pid, HANDLE* hProc) override{
 		Filter* f = Helper::GetFilterInstance();
 		if (f){
 			if (!f->FLTCOMM_GetProcessHandle(pid, hProc)) {
@@ -1965,6 +1971,61 @@ void CUMControllerDlg::OnForceInject()
 			}
 		}
 		this->MessageBoxW(L"Force Inject request sent.", L"Info", MB_ICONINFORMATION | MB_OK);
+	}
+}
+
+void CUMControllerDlg::OnAddWhitelist()
+{
+	// Pick an executable, resolve to NT path, compute hash, persist both, then restart UMHH.ObCallback
+	wchar_t szFile[MAX_PATH] = { 0 };
+	OPENFILENAME ofn = { 0 };
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = this->GetSafeHwnd();
+	ofn.lpstrFile = szFile;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.lpstrFilter = L"Executable Files\0*.exe\0All Files\0*.*\0";
+	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+	ofn.lpstrTitle = L"Select executable to whitelist";
+	if (!GetOpenFileName(&ofn)) return;
+
+	if (!Helper::IsFileExists(szFile)) {
+		MessageBoxW(L"Selected file does not exist.", L"Whitelist", MB_OK | MB_ICONERROR);
+		return;
+	}
+	std::wstring dosPath(szFile), ntPath;
+	bool ok = Helper::ResolveDosPathToNtPath(dosPath, ntPath);
+	std::wstring ntToPersist = (ok && !ntPath.empty()) ? ntPath : dosPath;
+
+	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntToPersist.c_str());
+	size_t len = ntToPersist.size() * sizeof(wchar_t);
+	unsigned long long hash = Helper::GetNtPathHash(bytes, len);
+
+	if (!RegistryStore::AddWhitelistPath(ntToPersist)) {
+		LOG_CTRL_ETW(L"AddWhitelist: failed to persist NT path %s\n", ntToPersist.c_str());
+		MessageBoxW(L"Failed to persist whitelist path.", L"Whitelist", MB_OK | MB_ICONERROR);
+		return;
+	}
+	if (!RegistryStore::AddWhitelistHash(hash)) {
+		LOG_CTRL_ETW(L"AddWhitelist: failed to persist hash 0x%016llX for %s\n", hash, ntToPersist.c_str());
+		MessageBoxW(L"Failed to persist whitelist hash.", L"Whitelist", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// Restart ObCallback so driver reloads whitelist keys at start
+	if (!Helper::UMHH_ObCallback_DriverCheck()) {
+		LOG_CTRL_ETW(L"AddWhitelist: UMHH_ObCallback_DriverCheck failed\n");
+		MessageBoxW(L"Whitelist persisted, but failed to restart ObCallback.", L"Whitelist", MB_OK | MB_ICONWARNING);
+		return;
+	}
+	MessageBoxW(L"Whitelist updated.", L"Whitelist", MB_OK | MB_ICONINFORMATION);
+}
+
+void CUMControllerDlg::OnRemoveWhitelist()
+{
+	// Show selection dialog that lists current whitelist entries for removal
+	CRemoveWhitelistDlg dlg(this);
+	if (dlg.DoModal() == IDOK) {
+		MessageBoxW(L"Whitelist updated.", L"Whitelist", MB_OK | MB_ICONINFORMATION);
 	}
 }
 

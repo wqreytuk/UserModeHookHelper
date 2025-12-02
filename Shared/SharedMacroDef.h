@@ -49,3 +49,13 @@
 
 #define WIDEN2(x) L##x
 #define WIDEN(x) WIDEN2(x)
+
+
+
+// Simple module list node returned by PhBuildModuleListWow64
+typedef struct _PH_MODULE_LIST_NODE {
+	struct _PH_MODULE_LIST_NODE* Next;
+	void* Base;
+	unsigned long Size; // SizeOfImage if known; 0 if unknown
+	wchar_t* Path;      // Full NT path of module
+} PH_MODULE_LIST_NODE, *PPH_MODULE_LIST_NODE;

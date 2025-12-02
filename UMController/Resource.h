@@ -29,6 +29,9 @@
 #define ID_MENU_OPEN_ETW_LOG     40007
 // Extra menu command
 #define ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE 40020
+#define ID_MENU_RE_REGISTER_OBCALLBACK 40021
+#define ID_TOOLS_ADD_WHITELIST         40031
+#define ID_TOOLS_REMOVE_WHITELIST      40032
 // Plugin menu base (reserve a small range for plugin items)
 #define ID_MENU_PLUGINS_BASE   41000
 #define ID_MENU_PLUGINS        41001
@@ -39,6 +42,9 @@
 #define IDR_TOOLS_MENU         129
 #define IDD_REMOVE_HOOK_DLG    140
 #define IDD_HOOK_PROC_DLG       141
+// Whitelist removal dialog and controls
+#define IDD_REMOVE_WHITELIST_DLG 142
+#define IDC_LIST_WHITELIST       1022
 
 #define IDC_BTN_HOOK            1006
 // Hook dialog new controls
@@ -61,9 +67,9 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        145
+#define _APS_NEXT_RESOURCE_VALUE        146
 #define _APS_NEXT_COMMAND_VALUE         32772
-#define _APS_NEXT_CONTROL_VALUE         1022
+#define _APS_NEXT_CONTROL_VALUE         1023
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

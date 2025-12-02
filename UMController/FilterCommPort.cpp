@@ -559,6 +559,29 @@ bool Filter::FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64) {
 	return true;
 }
 
+bool Filter::FLTCOMM_IsProtectedProcess(DWORD pid, bool& outIsProtected) {
+	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_IS_PROTECTED_PROCESS;
+	memcpy(msg->m_Data, &pid, sizeof(DWORD));
+
+	struct PROT_REPLY { BOOLEAN isProtected; UCHAR pad[3]; } replyBuf;
+	memset(&replyBuf, 0, sizeof(replyBuf));
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, &replyBuf, (DWORD)sizeof(replyBuf), &bytesOut);
+	free(msg);
+
+	if (hr != S_OK) {
+		LOG_CTRL_ETW(L"FLTCOMM_IsProtectedProcess: FilterSendMessage failed hr=0x%08x pid=%u\n", hr, pid);
+		return false;
+	}
+	if (bytesOut == 0) return false;
+	outIsProtected = (replyBuf.isProtected ? true : false);
+	return true;
+}
+
 bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
 	*outHandle = NULL;
 	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
@@ -654,6 +677,14 @@ bool Filter::FLTCOMM_WriteDllPathToTargetProcess(DWORD pid, PVOID userWideString
 	PVOID v = NULL; RtlCopyMemory(&v, reply.get(), sizeof(PVOID));
 	*outValue = v;
 	return true;
+}
+
+bool Filter::FLTCOMM_RegisterObCallback(bool registerFlag) {
+	// Ob callback registration has moved into a separate component (UMHH.ObCallback).
+	// This user-mode function no longer talks to the kernel. To (re)register the
+	// callback, restart the `UMHH.ObCallback` service which hosts the registration.
+	UNREFERENCED_PARAMETER(registerFlag);
+	return false;
 }
 
 bool Filter::FLTCOMM_RemoveHookByHash(ULONGLONG hash) {

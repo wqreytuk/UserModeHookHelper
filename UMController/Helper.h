@@ -13,7 +13,6 @@ public:
 	// rely on zero bytes within UTF-16LE strings as a terminator for byte
 	// buffers.
 	static DWORD64 GetNtPathHash(const UCHAR* buf, size_t byteLen);
-
 	static bool CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset);
 	// NEW: get NT (native) image path for a PID. Returns true on success and
 	// fills outNtPath with an NT-style path (e.g. "\Device\HarddiskVolume2\...").
@@ -27,9 +26,15 @@ public:
 	static bool ResolveProcessNtImagePath(DWORD pid, Filter& filter, std::wstring& outNtPath);
 	static void UMHH_DriverCheck(); 
 	static bool UMHH_BS_DriverCheck();
+	// Check the dedicated OB callback driver/service (UMHH.ObCallback).
+	// Returns true if the service is running (or was started successfully).
+	static bool UMHH_ObCallback_DriverCheck();
 	// Resolve a DOS/Win32 path (e.g., C:\...) to an NT-style path. Returns
 	// true on success and stores a string like "\\Device\\HarddiskVolumeX\\..."
 	// If resolution fails, returns false.
+	// Add an NT-style path to whitelist: persists path and its hash,
+	// then restarts the ObCallback service to reload keys.
+	static bool AddNtPathToWhitelist(const std::wstring& ntPath);
 	static bool ResolveDosPathToNtPath(const std::wstring& dosPath, std::wstring& outNtPath);
 	// Try to get process command line (start parameters) from user-mode via WMI.
 	static bool GetProcessCommandLineByPID(DWORD pid, std::wstring& outCmdLine);

@@ -3,6 +3,7 @@
 #include <phnt/ntldr.h>
 #include <phnt/ntpsapi.h>
 #include "../Shared/HookServices.h"
+#include "../Shared/SharedMacroDef.h"
 
 #define NTSTATUS LONG
 #define PTR_ADD_OFFSET(Pointer, Offset) ((PVOID)((ULONG_PTR)(Pointer) + (ULONG_PTR)(Offset)))
@@ -24,10 +25,18 @@ namespace PHLIB {
 		struct _PH_MODULE_NODE* Next;
 	} PH_MODULE_NODE, *PPH_MODULE_NODE;
 
+
 	// Enumerate modules and return a newly-allocated singly-linked list
 	// of PH_MODULE_NODE structures (caller is responsible for freeing).
 	NTSTATUS PhpEnumProcessModules(
 		_In_ HANDLE ProcessHandle, WCHAR* target_module,DWORD64* ModuleBase
+	);
+
+	// Build a linked list of modules (base + size + full path) for a WOW64 process.
+	// Caller owns the list and must free each node's Path and the node itself.
+	NTSTATUS PhBuildModuleListWow64(
+		_In_ HANDLE ProcessHandle,
+		_Out_ PPH_MODULE_LIST_NODE* OutHead
 	);
 
 

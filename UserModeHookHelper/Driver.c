@@ -93,6 +93,7 @@ const FLT_REGISTRATION FilterRegistration = {
 	NULL                             // SectionNotificationCallback
 };
 
+
 // mainn
 NTSTATUS
 	DriverEntry(
@@ -100,10 +101,11 @@ NTSTATUS
 		_In_ PUNICODE_STRING RegistryPath
 	)
 {
-	DbgBreakPoint();
+	// DbgBreakPoint();
 	(RegistryPath); 
 	Log(L"DriverEntry\n");
 
+	Inject_CheckWin7();
 
 	DriverCtx_SetSSDT((DWORD64)PE_GetSSDT());
 	if(!DriverCtx_GetSSDT()) {
@@ -114,7 +116,6 @@ NTSTATUS
 	// BS_SendSuspendInjectQueue(TRUE);
 	// Log(L"Tell UMHH.BootStart driver to stop injection\n");
 
-	Inject_CheckWin7();
 
 	// initialize modules
 	HookList_Init();
@@ -123,6 +124,8 @@ NTSTATUS
 
 	// Load persisted settings from registry (global hook mode, user dir, ...)
 	LoadPersistedDriverSettings();
+
+	// Ob callback registration moved to separate UMHH.ObCallback component.
 
 	// register minifilter
 	PFLT_FILTER filter = NULL;
@@ -160,6 +163,8 @@ NTSTATUS
 		Log(L"failed to set system notify routines\n");
 		goto ABORTION;
 	}
+
+
 	return status;
 ABORTION:
 	MiniUnload(0);

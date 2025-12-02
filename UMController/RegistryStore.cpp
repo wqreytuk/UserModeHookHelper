@@ -15,6 +15,8 @@ static const wchar_t* COMPOSITE_VALUE_NAME = L"NtProcCache"; // new composite ke
 static const wchar_t* PROCHOOK_VALUE_NAME = L"ProcHookList"; // per-process hook list
 static const wchar_t* EARLYBREAK_VALUE_NAME = L"EarlyBreakList"; // per-process early-break marks (NT paths)
 static const wchar_t* FORCED_VALUE_NAME = L"ForcedList"; // per-process forced injection marks (PID:HI:LOW)
+static const wchar_t* WHITELIST_PATHS_NAME = L"WhitelistPaths"; // NT paths allowed/ignored
+static const wchar_t* WHITELIST_HASHES_NAME = L"WhitelistHashes"; // NT path hashes
 
 bool RegistryStore::ReadHookPaths(std::vector<std::wstring>& outPaths) {
     outPaths.clear();
@@ -528,4 +530,113 @@ bool RegistryStore::ReadGlobalHookMode(bool& outEnabled) {
 
 bool RegistryStore::WriteGlobalHookMode(bool enabled) {
     return WriteBoolSetting(L"EnableGlobalHookMode", enabled);
+}
+
+// Whitelist Paths (REG_MULTI_SZ of NT paths)
+bool RegistryStore::ReadWhitelistPaths(std::vector<std::wstring>& outNtPaths) {
+    outNtPaths.clear();
+    HKEY hKey = NULL;
+    LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_READ, &hKey);
+    if (r != ERROR_SUCCESS) return true; // treat missing as empty
+    DWORD type=0, dataSize=0;
+    r = RegQueryValueExW(hKey, WHITELIST_PATHS_NAME, NULL, &type, NULL, &dataSize);
+    if (r != ERROR_SUCCESS) { RegCloseKey(hKey); if (r == ERROR_FILE_NOT_FOUND) return true; return false; }
+    if (type != REG_MULTI_SZ) { RegCloseKey(hKey); return false; }
+    if (dataSize == 0) { RegCloseKey(hKey); return true; }
+    std::vector<wchar_t> buf(dataSize/sizeof(wchar_t));
+    r = RegQueryValueExW(hKey, WHITELIST_PATHS_NAME, NULL, NULL, reinterpret_cast<LPBYTE>(buf.data()), &dataSize);
+    RegCloseKey(hKey);
+    if (r != ERROR_SUCCESS) return false;
+    size_t idx=0, wcCount=dataSize/sizeof(wchar_t);
+    while (idx < wcCount) {
+        if (buf[idx] == L'\0') { ++idx; continue; }
+        std::wstring s(&buf[idx]);
+        outNtPaths.push_back(s);
+        idx += s.size() + 1;
+    }
+    return true;
+}
+
+static bool WriteMultiSz(HKEY root, const wchar_t* subkey, const wchar_t* valueName, const std::vector<std::wstring>& entries) {
+    std::vector<wchar_t> buf;
+    for (auto &s : entries) { buf.insert(buf.end(), s.c_str(), s.c_str() + s.size()); buf.push_back(L'\0'); }
+    if (buf.empty() || buf.back() != L'\0') buf.push_back(L'\0');
+    buf.push_back(L'\0');
+    HKEY hKey = NULL; DWORD disp=0;
+    LONG r = RegCreateKeyExW(root, subkey, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &disp);
+    if (r != ERROR_SUCCESS) return false;
+    LONG rr = RegSetValueExW(hKey, valueName, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size()*sizeof(wchar_t)));
+    RegCloseKey(hKey);
+    return rr == ERROR_SUCCESS;
+}
+
+bool RegistryStore::AddWhitelistPath(const std::wstring& ntPath) {
+    std::vector<std::wstring> paths; if (!ReadWhitelistPaths(paths)) return false;
+    for (auto &p : paths) { if (_wcsicmp(p.c_str(), ntPath.c_str()) == 0) return true; }
+    paths.push_back(ntPath);
+    return WriteMultiSz(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, WHITELIST_PATHS_NAME, paths);
+}
+
+bool RegistryStore::RemoveWhitelistPath(const std::wstring& ntPath) {
+    std::vector<std::wstring> paths; if (!ReadWhitelistPaths(paths)) return false;
+    std::vector<std::wstring> out; bool removed=false;
+    for (auto &p : paths) { if (!removed && _wcsicmp(p.c_str(), ntPath.c_str()) == 0) { removed=true; continue; } out.push_back(p); }
+    if (!removed) return true;
+    if (out.empty()) {
+        HKEY hKey = NULL; LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_SET_VALUE, &hKey);
+        if (r == ERROR_SUCCESS) { RegDeleteValueW(hKey, WHITELIST_PATHS_NAME); RegCloseKey(hKey); }
+        return true;
+    }
+    return WriteMultiSz(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, WHITELIST_PATHS_NAME, out);
+}
+
+// Whitelist Hashes (REG_MULTI_SZ of hex 64-bit hash strings)
+bool RegistryStore::ReadWhitelistHashes(std::vector<unsigned long long>& outHashes) {
+    outHashes.clear();
+    HKEY hKey = NULL;
+    LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_READ, &hKey);
+    if (r != ERROR_SUCCESS) return true; // treat missing as empty
+    DWORD type=0, dataSize=0;
+    r = RegQueryValueExW(hKey, WHITELIST_HASHES_NAME, NULL, &type, NULL, &dataSize);
+    if (r != ERROR_SUCCESS) { RegCloseKey(hKey); if (r == ERROR_FILE_NOT_FOUND) return true; return false; }
+    if (type != REG_MULTI_SZ) { RegCloseKey(hKey); return false; }
+    if (dataSize == 0) { RegCloseKey(hKey); return true; }
+    std::vector<wchar_t> buf(dataSize/sizeof(wchar_t));
+    r = RegQueryValueExW(hKey, WHITELIST_HASHES_NAME, NULL, NULL, reinterpret_cast<LPBYTE>(buf.data()), &dataSize);
+    RegCloseKey(hKey);
+    if (r != ERROR_SUCCESS) return false;
+    size_t idx=0, wcCount=dataSize/sizeof(wchar_t);
+    while (idx < wcCount) {
+        if (buf[idx] == L'\0') { ++idx; continue; }
+        std::wstring s(&buf[idx]);
+        unsigned long long hv=0; swscanf_s(s.c_str(), L"%llx", &hv);
+        outHashes.push_back(hv);
+        idx += s.size() + 1;
+    }
+    return true;
+}
+
+bool RegistryStore::AddWhitelistHash(unsigned long long hash) {
+    std::vector<unsigned long long> hashes; if (!ReadWhitelistHashes(hashes)) return false;
+    for (auto &h : hashes) { if (h == hash) return true; }
+    hashes.push_back(hash);
+    // format to strings
+    std::vector<std::wstring> strs; strs.reserve(hashes.size());
+    for (auto &h : hashes) { wchar_t b[32]; _snwprintf_s(b, _TRUNCATE, L"%016llX", h); strs.emplace_back(b); }
+    return WriteMultiSz(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, WHITELIST_HASHES_NAME, strs);
+}
+
+bool RegistryStore::RemoveWhitelistHash(unsigned long long hash) {
+    std::vector<unsigned long long> hashes; if (!ReadWhitelistHashes(hashes)) return false;
+    std::vector<unsigned long long> out; bool removed=false;
+    for (auto &h : hashes) { if (!removed && h == hash) { removed=true; continue; } out.push_back(h); }
+    if (!removed) return true;
+    if (out.empty()) {
+        HKEY hKey = NULL; LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, KEY_SET_VALUE, &hKey);
+        if (r == ERROR_SUCCESS) { RegDeleteValueW(hKey, WHITELIST_HASHES_NAME); RegCloseKey(hKey); }
+        return true;
+    }
+    std::vector<std::wstring> strs; strs.reserve(out.size());
+    for (auto &h : out) { wchar_t b[32]; _snwprintf_s(b, _TRUNCATE, L"%016llX", h); strs.emplace_back(b); }
+    return WriteMultiSz(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, WHITELIST_HASHES_NAME, strs);
 }

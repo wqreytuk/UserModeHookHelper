@@ -4,6 +4,7 @@
 #include "Helper.h"
 #include "UMController.h"
 #include "ProcFlags.h" // for MASTER_X64_DLL_BASENAME / MASTER_X86_DLL_BASENAME
+#include "../ProcessHackerLib/ProcessHackerLib.h"
 
 // Define public static message constant
 const UINT HookProcDlg::kMsgHookDlgDestroyed = WM_APP + 0x501;
@@ -58,6 +59,39 @@ void HookProcDlg::OnDestroy() {
 
 void HookProcDlg::PopulateModuleList() {
     m_ModuleList.DeleteAllItems();
+    // Prefer ProcessHackerLib WOW64 module list for robust path resolution; fallback to Toolhelp
+    HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, m_pid);
+    if (hProc) {
+        PHLIB::PPH_MODULE_LIST_NODE head = NULL;
+        if (PHLIB::PhBuildModuleListWow64(hProc, &head) == 0 /* STATUS_SUCCESS */ && head) {
+            int i = 0;
+            for (PHLIB::PPH_MODULE_LIST_NODE n = head; n != NULL; n = n->Next) {
+                std::wstring baseStr = L"0x" + Helper::ToHex((ULONGLONG)n->Base);
+                int idx = m_ModuleList.InsertItem(i, baseStr.c_str());
+                // Populate size if provided by WOW64 list builder
+                if (n->Size != 0) {
+                    std::wstring sizeStr = L"0x" + Helper::ToHex((ULONGLONG)n->Size);
+                    m_ModuleList.SetItemText(idx, 1, sizeStr.c_str());
+                } else {
+                    m_ModuleList.SetItemText(idx, 1, L"");
+                }
+                // Extract module name from path
+                std::wstring name = n->Path ? std::wstring(n->Path) : L"";
+                size_t pos = name.find_last_of(L"\\");
+                std::wstring justName = (pos != std::wstring::npos) ? name.substr(pos+1) : name;
+                m_ModuleList.SetItemText(idx, 2, justName.c_str());
+                m_ModuleList.SetItemText(idx, 3, name.c_str());
+                m_ModuleList.SetItemData(idx, (DWORD_PTR)n->Base);
+                i++;
+            }
+            // Free list
+            while (head) { auto* next = head->Next; if (head->Path) free(head->Path); free(head); head = next; }
+            CloseHandle(hProc);
+            return;
+        }
+        CloseHandle(hProc);
+    }
+    // Fallback: Toolhelp snapshot
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, m_pid);
     if (snap == INVALID_HANDLE_VALUE) return;
     MODULEENTRY32 me = { sizeof(me) };

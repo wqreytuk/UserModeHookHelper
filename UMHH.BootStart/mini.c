@@ -5,6 +5,7 @@
 #include "HookList.h" 
 #include "DriverCtx.h"
 #include "Inject.h"
+#include <ntifs.h>
 NTSTATUS
 MiniUnload(
 	FLT_FILTER_UNLOAD_FLAGS Flags
@@ -27,6 +28,7 @@ MiniUnload(
 	Log(L"successfully unloaded BootStart driver\n");
 	return STATUS_SUCCESS;
 }
+
 
 
 // Dummy PreCreate callback

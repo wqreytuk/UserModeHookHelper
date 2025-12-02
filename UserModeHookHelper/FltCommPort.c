@@ -6,6 +6,8 @@
 #include "DriverCtx.h"
 #include "Inject.h"
 #include "PE.h"
+#include "KernelOffsets.h"
+#include "mini.h"
 // Some WDK versions may not declare PsGetProcessWow64Process; forward-declare it here.
 extern PVOID PsGetProcessWow64Process(IN PEPROCESS Process);
 
@@ -21,7 +23,9 @@ static NTSTATUS Handle_CreateRemoteThread(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND
 static NTSTATUS Handle_GetSyscallAddr(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_WriteDllPathToTargetProcess(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
+
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_IsProtectedProcess(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 // NOTE: Do NOT declare or call user-mode-only path conversion helpers from
@@ -39,6 +43,39 @@ typedef struct _BROADCAST_WORK {
 	PCOMM_CONTEXT* Array;
 	ULONG Count;
 } BROADCAST_WORK, *PBROADCAST_WORK;
+
+// Work item to defer EPROCESS field recovery (Protection / SectionSignatureLevel)
+typedef struct _EPROCESS_RECOVERY_WORK {
+	WORK_QUEUE_ITEM WorkItem;
+	PEPROCESS Process; // referenced
+	EPROCESS_OFFSETS Offsets; // offsets snapshot
+	UCHAR OrigProtection;
+	UCHAR OrigSectionSignatureLevel;
+} EPROCESS_RECOVERY_WORK, *PEPROCESS_RECOVERY_WORK;
+
+static VOID
+EprocessRecoveryRoutine(
+	PVOID Context
+) {
+	PEPROCESS_RECOVERY_WORK w = (PEPROCESS_RECOVERY_WORK)Context;
+	if (!w) return;
+	// Delay 2 seconds before recovery
+	LARGE_INTEGER interval; interval.QuadPart = -20000000LL; // 2s in 100ns units
+	KeDelayExecutionThread(KernelMode, FALSE, &interval);
+	__try {
+		if (w->Process) {
+			// Restore original values (ignore current protection state changes)
+			(void)Mini_WriteKernelMemory((PVOID)((PUCHAR)w->Process + w->Offsets.ProtectionOffset), &w->OrigProtection, sizeof(UCHAR));
+			(void)Mini_WriteKernelMemory((PVOID)((PUCHAR)w->Process + w->Offsets.SectionSignatureLevelOffset), &w->OrigSectionSignatureLevel, sizeof(UCHAR));
+			Log(L"Deferred recovery: restored Protection=%d SectionSignatureLevel=%d for PID=%u\n",
+				w->OrigProtection, w->OrigSectionSignatureLevel, PsGetProcessId(w->Process));
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		Log(L"Deferred recovery: exception while restoring process fields\n");
+	}
+	if (w->Process) ObDereferenceObject(w->Process);
+	ExFreePoolWithTag(w, tag_port);
+}
 
 // Worker routine that performs deferred broadcasts from a safe system
 // context. It iterates the snapshot, sends messages, removes disconnected
@@ -246,6 +283,9 @@ Comm_MessageNotify(
 	case CMD_IS_PROCESS_WOW64:
 		status = Handle_IsProcessWow64(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
+	case CMD_IS_PROTECTED_PROCESS:
+		status = Handle_IsProtectedProcess(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
 	case CMD_ENUM_HOOKS:
 		status = Handle_EnumHooks(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
@@ -268,6 +308,7 @@ Comm_MessageNotify(
 	case CMD_SET_GLOBAL_HOOK_MODE:
 		status = Handle_SetGlobalHookMode(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break; 
+    
 	default:
 		break;
 	}
@@ -275,6 +316,7 @@ Comm_MessageNotify(
 	if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
 	return status;
 }
+ 
 static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
 	UNREFERENCED_PARAMETER(OutputBuffer);
 	UNREFERENCED_PARAMETER(OutputBufferSize);
@@ -583,6 +625,49 @@ Handle_IsProcessWow64(
 
 	if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
 		*(BOOLEAN*)OutputBuffer = isWow64;
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
+		return STATUS_SUCCESS;
+	} else {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+}
+
+static NTSTATUS
+Handle_IsProtectedProcess(
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	DWORD pid = 0; RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+	PEPROCESS process = NULL;
+	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process);
+	if (!NT_SUCCESS(status) || process == NULL) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &status, sizeof(status));
+		return status;
+	}
+
+	BOOLEAN isProtected = FALSE;
+	__try {
+		if (PsIsProtectedProcess(process)) {
+			isProtected = TRUE;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		isProtected = FALSE;
+	}
+
+	ObDereferenceObject(process);
+
+	if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
+		*(BOOLEAN*)OutputBuffer = isProtected;
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
 		return STATUS_SUCCESS;
 	} else {
@@ -900,10 +985,10 @@ Handle_GetProcessHandle(
 	// ACCESS_MASK DesiredAccess = 0x43A;
 	HANDLE src_proc_handle = ZwCurrentProcess();
 
-		 KAPC_STATE apc ;
-		 KeStackAttachProcess(targetProc, &apc);
+		// KAPC_STATE apc ;
+		// KeStackAttachProcess(targetProc, &apc);
 		 st = ZwDuplicateObject(src_proc_handle, hTarget, hCallerProc, &dup, PROCESS_ALL_ACCESS, 0, 0);
-		 KeUnstackDetachProcess(&apc);
+		// KeUnstackDetachProcess(&apc);
 	
 	// Cleanup kernel handles and object refs
 	ZwClose(hTarget);
@@ -946,7 +1031,7 @@ Handle_GetSyscallAddr(
 	ULONG syscallNumber = 0;
 	RtlCopyMemory(&syscallNumber, msg->m_Data, sizeof(ULONG));
 
-	PVOID pKsdt = (PVOID)DriverCtx_GetSSDT();
+	PVOID pKsdt = (PVOID)(ULONG_PTR)DriverCtx_GetSSDT();
 	if (!pKsdt) {
 		// Not available on this build - can't resolve
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
@@ -1040,11 +1125,61 @@ Handle_CreateRemoteThread(
 		Log(L"user MUST provide NtCreateThreadEx kernel function address to make this work\n");
 		return STATUS_NOT_IMPLEMENTED;
 	}
+	// before create thread, remove target process's protection
+	PEPROCESS ep = NULL;
+	PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)targetPid, &ep);
+	if (!ep) {
+		Log(L"failed to call PsLookupProcessByProcessId to get EPROCESS of target PID=%u\n", targetPid);
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_UNSUCCESSFUL;
+	}
+	EPROCESS_ORI_VALUE ori_value = { 0 };
+	if (PsIsProtectedProcess(ep)) {
+		EPROCESS_OFFSETS off;
+		if (KO_GetEprocessOffsets(&off)) {
+			if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &ori_value.SectionSignatureLevelValue, sizeof(UCHAR))) {
+				Log(L"failed to call Mini_ReadKernelMemory to read out SectionSignatureLevel value, target PID=%u\n", targetPid);
+				ObDereferenceObject(ep);
+				return STATUS_UNSUCCESSFUL;
+			}
 
+			Log(L"get target PID=%u's original SectionSignatureLevel=%d\n", 
+				targetPid, ori_value.SectionSignatureLevelValue);
+			UCHAR _ = 0;
+			// we should NOT modify target process's protection field, it may affect its feature
+			// but we're allowed to modify its signature level so we can inject
+			// it is time for us to refactor our client as a UI/Service seperated application
+			// elevate Suicide to PPL process
+			PEPROCESS suicide_ep = PsGetCurrentProcess();
+			UCHAR _ppl_value = 0x31;
+			 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)suicide_ep + off.ProtectionOffset), &_ppl_value, sizeof(UCHAR))) {
+				 Log(L"failed to call Mini_WriteKernelMemory to  elevate Suicide to PPL process\n");
+			 	ObDereferenceObject(ep);
+			 	return STATUS_UNSUCCESSFUL;
+			 }
+			if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &_, sizeof(UCHAR))) {
+				Log(L"failed to call Mini_WriteKernelMemory to write in SectionSignatureLeve, target PID=%u\n", targetPid);
+				ObDereferenceObject(ep);
+				return STATUS_UNSUCCESSFUL;
+			}
+			Log(L"successfully zero out PPL(Protection) field of target process, PID=%u\n", targetPid);
+		}
+		else {
+			ObDereferenceObject(ep);
+			DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
+			Log(L"unsupported windows version, Major=%u Build=%u", ver.Major, ver.Build);
+			return STATUS_UNSUCCESSFUL;
+		}
+
+		// after get original offset, we need save original value first, then we zero it our, then we call create thread
+		// then we deference EP
+	}
 	NTSTATUS status = pfnNtCreateThreadEx(extraValue, THREAD_ALL_ACCESS, NULL, proc_handle, startRoutine, parameter, 0, 0, 0, 0, NULL);
 
+	
 	// Note: keep hTargetProc and targetProc alive until after thread creation
 	if (!NT_SUCCESS(status)) {
+		Log(L"failed to call pfnNtCreateThreadEx, Status=0x%x\n", status);
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 		return status;
 	}

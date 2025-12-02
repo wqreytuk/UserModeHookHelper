@@ -5,6 +5,7 @@ static PFLT_PORT s_ServerPort = NULL;
 static PWSTR s_UserDir = NULL;
 static BOOLEAN s_GlobalHookMode = FALSE;
 static DWORD64 s_ssdt;
+static DRIVERCTX_OSVER s_OsVer = {0};
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter) {
     s_Filter = Filter;
 }
@@ -59,4 +60,14 @@ VOID DriverCtx_SetGlobalHookMode(BOOLEAN Enabled) {
 
 BOOLEAN DriverCtx_GetGlobalHookMode(VOID) {
     return s_GlobalHookMode;
+}
+
+VOID DriverCtx_SetOsVersion(ULONG Major, ULONG Minor, ULONG Build) {
+    s_OsVer.Major = Major;
+    s_OsVer.Minor = Minor;
+    s_OsVer.Build = Build;
+}
+
+DRIVERCTX_OSVER DriverCtx_GetOsVersion(VOID) {
+    return s_OsVer;
 }

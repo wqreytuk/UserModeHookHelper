@@ -60,6 +60,7 @@
     <ClCompile Include="FltCommPort.c" />
     <ClCompile Include="HookList.c" />
     <ClCompile Include="Inject.c" />
+    <ClCompile Include="KernelOffsets.c" />
     <ClCompile Include="ListLib.c" />
     <ClCompile Include="mini.c" />
     <ClCompile Include="pe.c" />
@@ -252,6 +253,7 @@
       <WppRecorderEnabled>true</WppRecorderEnabled>
       <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">trace.h</WppScanConfigurationData>
       <WppKernelMode>true</WppKernelMode>
+      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
       <AdditionalDependencies>ntoskrnl.lib;fltmgr.lib%(AdditionalDependencies);$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfLdr.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfDriverEntry.lib</AdditionalDependencies>
@@ -343,6 +345,7 @@
     <ClInclude Include="FltCommPort.h" />
     <ClInclude Include="HookList.h" />
     <ClInclude Include="Inject.h" />
+    <ClInclude Include="KernelOffsets.h" />
     <ClInclude Include="ListLib.h" />
     <ClInclude Include="MacroDef.h" />
     <ClInclude Include="mini.h" />

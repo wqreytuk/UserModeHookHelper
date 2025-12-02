@@ -245,7 +245,7 @@
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>$(SolutionDir)/lib/capstone.lib;fltlib.lib</AdditionalDependencies>
+      <AdditionalDependencies>$(SolutionDir)$(Platform)\$(Configuration)\ProcessHackerLib.lib;$(SolutionDir)/lib/capstone.lib;fltlib.lib</AdditionalDependencies>
       <AdditionalOptions>/MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <Midl>
@@ -289,6 +289,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="RegistryStore.h" />
+    <ClInclude Include="RemoveWhitelistDlg.h" />
     <ClInclude Include="RemoveHookDlg.h" />
     <ClInclude Include="ETW.h" />
     <ClInclude Include="FilterCommPort.h" />
@@ -310,6 +311,7 @@
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="UMController.rc" />
+    <ClCompile Include="RemoveWhitelistDlg.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="res\UMController.rc2" />
@@ -323,6 +325,9 @@
     </ProjectReference>
     <ProjectReference Include="..\ProcessHackerLib\ProcessHackerLib.vcxproj">
       <Project>{74fd19a0-b533-46da-b591-b1ef4eef48b0}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\Suicide\Suicide.vcxproj">
+      <Project>{e5152195-ee6f-491b-90eb-1e0de39c5245}</Project>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
