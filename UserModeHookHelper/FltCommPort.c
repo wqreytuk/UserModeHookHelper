@@ -25,6 +25,7 @@ static NTSTATUS Handle_WriteDllPathToTargetProcess(PCOMM_CONTEXT CallerCtx, PUMH
 
 
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_IsProtectedProcess(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 // NOTE: Do NOT declare or call user-mode-only path conversion helpers from
@@ -281,6 +282,9 @@ Comm_MessageNotify(
 		break;
 	case CMD_IS_PROCESS_WOW64:
 		status = Handle_IsProcessWow64(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_IS_PROTECTED_PROCESS:
+		status = Handle_IsProtectedProcess(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
 	case CMD_ENUM_HOOKS:
 		status = Handle_EnumHooks(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
@@ -621,6 +625,49 @@ Handle_IsProcessWow64(
 
 	if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
 		*(BOOLEAN*)OutputBuffer = isWow64;
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
+		return STATUS_SUCCESS;
+	} else {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+}
+
+static NTSTATUS
+Handle_IsProtectedProcess(
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	DWORD pid = 0; RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+	PEPROCESS process = NULL;
+	NTSTATUS status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &process);
+	if (!NT_SUCCESS(status) || process == NULL) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &status, sizeof(status));
+		return status;
+	}
+
+	BOOLEAN isProtected = FALSE;
+	__try {
+		if (PsIsProtectedProcess(process)) {
+			isProtected = TRUE;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		isProtected = FALSE;
+	}
+
+	ObDereferenceObject(process);
+
+	if (OutputBuffer && OutputBufferSize >= sizeof(BOOLEAN)) {
+		*(BOOLEAN*)OutputBuffer = isProtected;
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(BOOLEAN);
 		return STATUS_SUCCESS;
 	} else {
@@ -1102,12 +1149,14 @@ Handle_CreateRemoteThread(
 			// we should NOT modify target process's protection field, it may affect its feature
 			// but we're allowed to modify its signature level so we can inject
 			// it is time for us to refactor our client as a UI/Service seperated application
-			
-			// if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &_, sizeof(UCHAR))) {
-			// 	Log(L"failed to call Mini_WriteKernelMemory to write in Protection, target PID=%u\n", targetPid);
-			// 	ObDereferenceObject(ep);
-			// 	return STATUS_UNSUCCESSFUL;
-			// }
+			// elevate Suicide to PPL process
+			PEPROCESS suicide_ep = PsGetCurrentProcess();
+			UCHAR _ppl_value = 0x31;
+			 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)suicide_ep + off.ProtectionOffset), &_ppl_value, sizeof(UCHAR))) {
+				 Log(L"failed to call Mini_WriteKernelMemory to  elevate Suicide to PPL process\n");
+			 	ObDereferenceObject(ep);
+			 	return STATUS_UNSUCCESSFUL;
+			 }
 			if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &_, sizeof(UCHAR))) {
 				Log(L"failed to call Mini_WriteKernelMemory to write in SectionSignatureLeve, target PID=%u\n", targetPid);
 				ObDereferenceObject(ep);

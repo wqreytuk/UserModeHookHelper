@@ -32,6 +32,9 @@ public:
 	// Resolve a DOS/Win32 path (e.g., C:\...) to an NT-style path. Returns
 	// true on success and stores a string like "\\Device\\HarddiskVolumeX\\..."
 	// If resolution fails, returns false.
+	// Add an NT-style path to whitelist: persists path and its hash,
+	// then restarts the ObCallback service to reload keys.
+	static bool AddNtPathToWhitelist(const std::wstring& ntPath);
 	static bool ResolveDosPathToNtPath(const std::wstring& dosPath, std::wstring& outNtPath);
 	// Try to get process command line (start parameters) from user-mode via WMI.
 	static bool GetProcessCommandLineByPID(DWORD pid, std::wstring& outCmdLine);

@@ -279,6 +279,24 @@ bool Helper::UMHH_ObCallback_DriverCheck() {
 	if (!running) LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: service '%s' not running after start attempt\n", svcName);
 	CloseServiceHandle(svc); CloseServiceHandle(scm); return running;
 }
+
+bool Helper::AddNtPathToWhitelist(const std::wstring& ntPath) {
+	if (ntPath.empty()) return false;
+	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntPath.c_str());
+	size_t len = ntPath.size() * sizeof(wchar_t);
+	unsigned long long hash = Helper::GetNtPathHash(bytes, len);
+
+	if (!RegistryStore::AddWhitelistPath(ntPath)) {
+		LOG_CTRL_ETW(L"AddNtPathToWhitelist: failed to persist NT path %s\n", ntPath.c_str());
+		return false;
+	}
+	if (!RegistryStore::AddWhitelistHash(hash)) {
+		LOG_CTRL_ETW(L"AddNtPathToWhitelist: failed to persist hash 0x%016llX for %s\n", hash, ntPath.c_str());
+		return false;
+	}
+
+	return true;
+}
 bool Helper::IsFileExists(TCHAR* szPath) {
 	DWORD dwAttrib = GetFileAttributes(szPath);
 	return (dwAttrib != INVALID_FILE_ATTRIBUTES &&
@@ -803,6 +821,31 @@ bool Helper::ForceInject(DWORD pid) {
 		goto CLEAN_UP;
 	}
 
+	// if target process is proceted process, we'll launch Suicide to create remote thread for us
+	bool is_protected = false;
+	if (!Helper::m_filterInstance->FLTCOMM_IsProtectedProcess(pid, is_protected)) {
+		LOG_CTRL_ETW(L"call FLTCOMM_IsProtectedProcess failed\n");
+		goto CLEAN_UP;
+	}
+	if (is_protected) {
+		SHELLEXECUTEINFO sei = { sizeof(sei) };
+		sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+		auto s = Helper::GetCurrentDirFilePath(TEXT("Suicide.exe"));
+		sei.lpFile = s.c_str();
+		sei.nShow = SW_SHOW;
+		wchar_t ts[64];
+		swprintf(ts, _countof(ts), L"%d %llu %llu %llu",
+			pid, (unsigned long long) pLoadLibraryW, (unsigned long long) dll_path_addr, (unsigned long long) syscall_addr);
+		sei.lpParameters = ts;
+		
+		BOOL ok = ShellExecuteEx(&sei);
+		if (!ok) {
+			LOG_CTRL_ETW(L"failed to launch Suicide, Error=0x%x\n", GetLastError());
+			goto CLEAN_UP;
+		}
+		CloseHandle(hProc);
+		return true;
+	}
 	HANDLE thread_handle = 0;
 	if (!Helper::m_filterInstance->FLTCOMM_CreateRemoteThread(pid, pLoadLibraryW, dll_path_addr, syscall_addr, &thread_handle, NULL, hProc)) {
 		LOG_CTRL_ETW(L"call FLTCOMM_CreateRemoteThread failed\n");

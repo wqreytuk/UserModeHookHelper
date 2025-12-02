@@ -52,6 +52,9 @@ public:
 	// Request kernel to determine if a PID is a WoW64 (32-bit) process. Returns
 	// true on success and sets outIsWow64 accordingly.
 	bool FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64);
+	// Request kernel to determine if a PID is a Protected Process (PP/PP-Lite).
+	// Returns true on success and sets outIsProtected accordingly.
+	bool FLTCOMM_IsProtectedProcess(DWORD pid, bool& outIsProtected);
 	bool FLTCOMM_SetGlobalHookMode(bool enabled);
 	// Request kernel to duplicate a process handle for a given PID into this
 	// process. Returns true on success and sets outHandle to the duplicated

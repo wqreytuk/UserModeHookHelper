@@ -78,6 +78,18 @@ BOOL CUMControllerApp::InitInstance()
 		Helper::Fatal(L"UMHH_BS_DriverCheck failed\n");
 	}
 	Helper::UMHH_DriverCheck();
+
+	// add suicide to white list
+	auto s = Helper::GetCurrentDirFilePath(TEXT("Suicide.exe"));
+	std::wstring ntPath;
+	if (Helper::ResolveDosPathToNtPath(s, ntPath)) {
+		ULONGLONG hash = Helper::GetNtPathHash((const UCHAR*)ntPath.c_str(), ntPath.size() * sizeof(wchar_t));
+		Helper::AddNtPathToWhitelist(ntPath);
+	}
+	else {
+		Helper::Fatal(L"ResolveDosPathToNtPath failed\n");
+	}
+
 	if (!Helper::UMHH_ObCallback_DriverCheck()) {
 		LOG_CTRL_ETW(L"failed to register object pre process callback\n");
 	}

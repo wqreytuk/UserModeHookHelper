@@ -30,6 +30,9 @@
 #define CMD_IS_PROCESS_WOW64 9
 // Set global hook mode on/off. Payload: BOOLEAN enabled (1 = enabled, 0 = disabled)
 #define CMD_SET_GLOBAL_HOOK_MODE 10 
+// Query whether a target PID is a Protected Process (PP/PP-Lite). Payload: DWORD pid.
+// Reply: BOOLEAN (1 = protected / 0 = not protected)
+#define CMD_IS_PROTECTED_PROCESS 11
 // Request the kernel duplicate a process handle for a given PID into the
 // caller process. Payload: DWORD pid. Reply: HANDLE (duplicated into caller).
 #define CMD_GET_PROCESS_HANDLE 12
