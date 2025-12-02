@@ -68,6 +68,9 @@
     <ClInclude Include="RemoveHookDlg.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+      <ClInclude Include="RemoveWhitelistDlg.h">
+        <Filter>Header Files</Filter>
+      </ClInclude>
     <ClInclude Include="RegistryStore.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -127,6 +130,9 @@
     <ClCompile Include="RemoveHookDlg.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+      <ClCompile Include="RemoveWhitelistDlg.cpp">
+        <Filter>Source Files</Filter>
+      </ClCompile>
     <ClCompile Include="RegistryStore.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

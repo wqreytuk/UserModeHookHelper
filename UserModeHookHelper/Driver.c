@@ -93,6 +93,7 @@ const FLT_REGISTRATION FilterRegistration = {
 	NULL                             // SectionNotificationCallback
 };
 
+
 // mainn
 NTSTATUS
 	DriverEntry(

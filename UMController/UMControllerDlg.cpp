@@ -21,6 +21,7 @@
 #include <unordered_set>
 #include "IPC.h"
 #include "RemoveHookDlg.h"
+#include "RemoveWhitelistDlg.h"
 #include "RegistryStore.h"
 #include "HookInterfaces.h" // services adapter remains local; dialog now in HookUI DLL
 #include "Resource.h" // ensure menu ID definitions (IDR_MAIN_MENU) visible
@@ -2018,46 +2019,11 @@ void CUMControllerDlg::OnAddWhitelist()
 
 void CUMControllerDlg::OnRemoveWhitelist()
 {
-	// Choose an executable to remove from whitelist; resolve NT path; remove both path and corresponding hash entry
-	wchar_t szFile[MAX_PATH] = { 0 };
-	OPENFILENAME ofn = { 0 };
-	ofn.lStructSize = sizeof(ofn);
-	ofn.hwndOwner = this->GetSafeHwnd();
-	ofn.lpstrFile = szFile;
-	ofn.nMaxFile = MAX_PATH;
-	ofn.lpstrFilter = L"Executable Files\0*.exe\0All Files\0*.*\0";
-	ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-	ofn.lpstrTitle = L"Select executable to remove from whitelist";
-	if (!GetOpenFileName(&ofn)) return;
-
-	if (!Helper::IsFileExists(szFile)) {
-		MessageBoxW(L"Selected file does not exist.", L"Whitelist", MB_OK | MB_ICONERROR);
-		return;
+	// Show selection dialog that lists current whitelist entries for removal
+	CRemoveWhitelistDlg dlg(this);
+	if (dlg.DoModal() == IDOK) {
+		MessageBoxW(L"Whitelist updated.", L"Whitelist", MB_OK | MB_ICONINFORMATION);
 	}
-	std::wstring dosPath(szFile), ntPath;
-	bool ok = Helper::ResolveDosPathToNtPath(dosPath, ntPath);
-	std::wstring ntToRemove = (ok && !ntPath.empty()) ? ntPath : dosPath;
-	const UCHAR* bytes = reinterpret_cast<const UCHAR*>(ntToRemove.c_str());
-	size_t len = ntToRemove.size() * sizeof(wchar_t);
-	unsigned long long hash = Helper::GetNtPathHash(bytes, len);
-
-	if (!RegistryStore::RemoveWhitelistPath(ntToRemove)) {
-		LOG_CTRL_ETW(L"RemoveWhitelist: failed to remove NT path %s\n", ntToRemove.c_str());
-		MessageBoxW(L"Failed to remove whitelist path.", L"Whitelist", MB_OK | MB_ICONERROR);
-		return;
-	}
-	if (!RegistryStore::RemoveWhitelistHash(hash)) {
-		LOG_CTRL_ETW(L"RemoveWhitelist: failed to remove hash 0x%016llX for %s\n", hash, ntToRemove.c_str());
-		MessageBoxW(L"Failed to remove whitelist hash.", L"Whitelist", MB_OK | MB_ICONERROR);
-		return;
-	}
-
-	if (!Helper::UMHH_ObCallback_DriverCheck()) {
-		LOG_CTRL_ETW(L"RemoveWhitelist: UMHH_ObCallback_DriverCheck failed\n");
-		MessageBoxW(L"Whitelist updated, but failed to restart ObCallback.", L"Whitelist", MB_OK | MB_ICONWARNING);
-		return;
-	}
-	MessageBoxW(L"Whitelist updated.", L"Whitelist", MB_OK | MB_ICONINFORMATION);
 }
 
 LRESULT CUMControllerDlg::OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam) {

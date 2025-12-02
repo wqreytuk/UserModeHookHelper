@@ -130,7 +130,6 @@ CONST FLT_REGISTRATION FilterRegistration = {
 	NULL            //  SectionNotificationCallback
 };
 
-
 // this callback function will make sure UMController.exe can always get the requested handle access
 NTSTATUS PreObjProcesCallback(
 	_In_ PVOID RegistrationContext,
@@ -181,6 +180,25 @@ NTSTATUS PreObjProcesCallback(
 		dupInfo->DesiredAccess = 0x1fffff;
 	}
 	return STATUS_SUCCESS;
+}
+
+
+// regist object open/duplicate callback
+NTSTATUS RegisterProcessCallback() {
+	OB_OPERATION_REGISTRATION operations[1] = { 0 };
+
+	operations[0].ObjectType = PsProcessType;  // Monitor process objects (pointer)
+	operations[0].Operations = 3;
+	operations[0].PreOperation = (POB_PRE_OPERATION_CALLBACK)PreObjProcesCallback;  // Callback for process deletion
+
+	OB_CALLBACK_REGISTRATION callbackRegistration = { 0 };
+	callbackRegistration.Version = OB_FLT_REGISTRATION_VERSION;
+	callbackRegistration.OperationRegistrationCount = 1;
+	callbackRegistration.OperationRegistration = operations;
+	callbackRegistration.RegistrationContext = NULL;
+
+	NTSTATUS status = ObRegisterCallbacks(&callbackRegistration, &g_CallbackHandle);
+	return status;
 }
 NTSTATUS
 // mainn

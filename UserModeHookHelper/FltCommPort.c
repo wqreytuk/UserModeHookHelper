@@ -1090,25 +1090,24 @@ Handle_CreateRemoteThread(
 	if (PsIsProtectedProcess(ep)) {
 		EPROCESS_OFFSETS off;
 		if (KO_GetEprocessOffsets(&off)) {
-			if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &ori_value.ProtectionValue, sizeof(UCHAR))) {
-				Log(L"failed to call Mini_ReadKernelMemory to read out Protection value, target PID=%u\n", targetPid);
-				ObDereferenceObject(ep);
-				return STATUS_UNSUCCESSFUL;
-			}
 			if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &ori_value.SectionSignatureLevelValue, sizeof(UCHAR))) {
 				Log(L"failed to call Mini_ReadKernelMemory to read out SectionSignatureLevel value, target PID=%u\n", targetPid);
 				ObDereferenceObject(ep);
 				return STATUS_UNSUCCESSFUL;
 			}
 
-			Log(L"get target PID=%u's original PPL=%d SectionSignatureLevel=%d\n", 
-				targetPid, ori_value.ProtectionValue, ori_value.SectionSignatureLevelValue);
+			Log(L"get target PID=%u's original SectionSignatureLevel=%d\n", 
+				targetPid, ori_value.SectionSignatureLevelValue);
 			UCHAR _ = 0;
-			if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &_, sizeof(UCHAR))) {
-				Log(L"failed to call Mini_WriteKernelMemory to write in Protection, target PID=%u\n", targetPid);
-				ObDereferenceObject(ep);
-				return STATUS_UNSUCCESSFUL;
-			}
+			// we should NOT modify target process's protection field, it may affect its feature
+			// but we're allowed to modify its signature level so we can inject
+			// it is time for us to refactor our client as a UI/Service seperated application
+			
+			// if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &_, sizeof(UCHAR))) {
+			// 	Log(L"failed to call Mini_WriteKernelMemory to write in Protection, target PID=%u\n", targetPid);
+			// 	ObDereferenceObject(ep);
+			// 	return STATUS_UNSUCCESSFUL;
+			// }
 			if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &_, sizeof(UCHAR))) {
 				Log(L"failed to call Mini_WriteKernelMemory to write in SectionSignatureLeve, target PID=%u\n", targetPid);
 				ObDereferenceObject(ep);
@@ -1128,35 +1127,7 @@ Handle_CreateRemoteThread(
 	}
 	NTSTATUS status = pfnNtCreateThreadEx(extraValue, THREAD_ALL_ACCESS, NULL, proc_handle, startRoutine, parameter, 0, 0, 0, 0, NULL);
 
-	// Schedule deferred recovery (2s) if we modified a protected process
-	if (PsIsProtectedProcess(ep)) {
-		EPROCESS_OFFSETS off;
-		if (KO_GetEprocessOffsets(&off)) {
-			PEPROCESS_RECOVERY_WORK work = (PEPROCESS_RECOVERY_WORK)ExAllocatePoolWithTag(NonPagedPool, sizeof(*work), tag_port);
-			if (work) {
-				RtlZeroMemory(work, sizeof(*work));
-				work->Process = ep; // keep reference; recovery routine will dereference
-				work->Offsets = off;
-				work->OrigProtection = ori_value.ProtectionValue;
-				work->OrigSectionSignatureLevel = ori_value.SectionSignatureLevelValue;
-				ExInitializeWorkItem(&work->WorkItem, EprocessRecoveryRoutine, work);
-				ExQueueWorkItem(&work->WorkItem, DelayedWorkQueue);
-				Log(L"Queued deferred recovery work item for PID=%u (2s delay)\n", targetPid);
-			} else {
-				Log(L"Failed to allocate recovery work item, performing immediate recovery for PID=%u\n", targetPid);
-				Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &ori_value.ProtectionValue, sizeof(UCHAR));
-				Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &ori_value.SectionSignatureLevelValue, sizeof(UCHAR));
-				ObDereferenceObject(ep);
-			}
-		} else {
-			DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
-			Log(L"KO_GetEprocessOffsets failed; immediate dereference PID=%u Major=%u Build=%u\n", targetPid, ver.Major, ver.Build);
-			ObDereferenceObject(ep);
-		}
-	} else {
-		// Not protected: release reference now
-		ObDereferenceObject(ep);
-	}
+	
 	// Note: keep hTargetProc and targetProc alive until after thread creation
 	if (!NT_SUCCESS(status)) {
 		Log(L"failed to call pfnNtCreateThreadEx, Status=0x%x\n", status);
