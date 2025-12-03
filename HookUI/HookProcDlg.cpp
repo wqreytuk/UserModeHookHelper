@@ -147,7 +147,12 @@ void HookProcDlg::OnDestroy() {
 void HookProcDlg::UpdateLayoutForSplitter(int cx, int cy) {
     const int margin = 7;
     int leftWidth = m_splitPos; if (leftWidth < 120) leftWidth = 120; if (leftWidth > cx - 160) leftWidth = cx - 160;
+    // Position module list just below the "Modules" label if present
     int listTop = margin + 11;
+    if (CWnd* modulesLabel = GetDlgItem(IDC_HOOKUI_STATIC_MODULE)) {
+        CRect rcLabel; modulesLabel->GetWindowRect(&rcLabel); ScreenToClient(&rcLabel);
+        listTop = rcLabel.bottom + 2; // small gap to avoid overlap
+    }
     int listHeight = cy - listTop - 20; if (listHeight < 80) listHeight = 80;
     m_ModuleList.MoveWindow(margin, listTop, leftWidth, listHeight);
     int panelX = margin + leftWidth + margin;
@@ -737,8 +742,12 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
         if (rightPanelW < rightPanelMinW) rightPanelW = rightPanelMinW;
     }
     int listW = cx - (margin*2) - rightPanelW;
-    int topYModulesLabel = 7;
-    int listTop = topYModulesLabel + 11;
+    // Compute list top based on actual Modules label position if available
+    int listTop = 7 + 11;
+    if (CWnd* modulesLabel = GetDlgItem(IDC_HOOKUI_STATIC_MODULE)) {
+        CRect rcLabel; modulesLabel->GetWindowRect(&rcLabel); ScreenToClient(&rcLabel);
+        listTop = rcLabel.bottom + 2;
+    }
     int listH = cy - listTop - 60; if(listH < 80) listH = 80;
     HDWP hdwp = BeginDeferWindowPos(10);
     if (!hdwp) { m_ModuleList.MoveWindow(margin, listTop, listW, listH); }
