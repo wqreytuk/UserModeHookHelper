@@ -8,6 +8,7 @@ typedef struct _COMM_CONTEXT {
 	PFLT_PORT		m_ClientPort; 
 	LONG			m_RefCount;
 	BOOLEAN			m_Removed; /* TRUE when removed/unloading */
+	BOOLEAN			m_OnList;  /* TRUE while linked in s_PortCtxList */
 }COMM_CONTEXT, *PCOMM_CONTEXT;
 
 

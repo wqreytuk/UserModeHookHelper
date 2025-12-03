@@ -1162,7 +1162,7 @@ Handle_CreateRemoteThread(
 				ObDereferenceObject(ep);
 				return STATUS_UNSUCCESSFUL;
 			}
-			Log(L"successfully zero out PPL(Protection) field of target process, PID=%u\n", targetPid);
+			Log(L"successfully zero out SectionSignatureLevel field of target process, PID=%u\n", targetPid);
 		}
 		else {
 			ObDereferenceObject(ep);

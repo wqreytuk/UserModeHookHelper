@@ -18,6 +18,7 @@ VOID PortCtx_Uninit(VOID) {
         PLIST_ENTRY entry = RemoveHeadList(&s_PortCtxList);
         PCOMM_CONTEXT ctx = CONTAINING_RECORD(entry, COMM_CONTEXT, m_entry);
         ctx->m_Removed = TRUE;
+        ctx->m_OnList = FALSE;
         /* Drop the list's ownership reference; actual free happens in
          * PortCtx_Dereference when last user drops their refs.
          */
@@ -37,9 +38,11 @@ PCOMM_CONTEXT PortCtx_CreateAndInsert(HANDLE UserProcessId, PFLT_PORT ClientPort
     ctx->m_ClientPort = ClientPort;
     ctx->m_RefCount = 1; /* list owns initial reference */
     ctx->m_Removed = FALSE;
+    ctx->m_OnList = FALSE;
 
     ExAcquireResourceExclusiveLite(&s_PortCtxListLock, TRUE);
     InsertTailList(&s_PortCtxList, &ctx->m_entry);
+    ctx->m_OnList = TRUE;
     ExReleaseResourceLite(&s_PortCtxListLock);
 
     return ctx;
@@ -50,10 +53,9 @@ VOID PortCtx_Remove(PCOMM_CONTEXT ctx) {
     /* Mark removed under exclusive lock and unlink from the list if linked. */
     ExAcquireResourceExclusiveLite(&s_PortCtxListLock, TRUE);
     ctx->m_Removed = TRUE;
-    if (!IsListEmpty(&s_PortCtxList)) {
-        if (ctx->m_entry.Flink != &ctx->m_entry) {
-            RemoveEntryList(&ctx->m_entry);
-        }
+    if (ctx->m_OnList) {
+        RemoveEntryList(&ctx->m_entry);
+        ctx->m_OnList = FALSE;
     }
     ExReleaseResourceLite(&s_PortCtxListLock);
 
@@ -81,6 +83,7 @@ VOID PortCtx_Dereference(PCOMM_CONTEXT ctx) {
     if (!ctx) return;
     LONG v = InterlockedDecrement(&ctx->m_RefCount);
     if (v == 0) {
+		Log(L"disconnected,port Context=0x%p release\n", ctx);
         ExFreePoolWithTag(ctx, tag_ctx);
     }
 }
