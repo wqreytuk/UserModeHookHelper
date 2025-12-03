@@ -321,7 +321,29 @@ void HookProcDlg::FreeHookRows() {
 }
 
 void HookProcDlg::OnContextMenu(CWnd* pWnd, CPoint point) {
-    // Translate screen point to client and hit-test the hook list
+    // Determine which list receives the context menu: modules or hooks
+    if (m_ModuleList.GetSafeHwnd() && pWnd && pWnd->GetSafeHwnd() == m_ModuleList.GetSafeHwnd()) {
+        // Context menu for module list: provide Copy entry for selected row
+        CPoint clientPoint = point; m_ModuleList.ScreenToClient(&clientPoint);
+        LVHITTESTINFO ht = {0}; ht.pt = clientPoint;
+        int item = m_ModuleList.HitTest(&ht); if (item == -1) return;
+        CMenu menu; menu.CreatePopupMenu();
+        const UINT CMD_MOD_COPY = 0x8101;
+        menu.AppendMenuW(MF_STRING, CMD_MOD_COPY, L"Copy Entry");
+        // Build entry text: Base, Size, Name, Path
+        CString base = m_ModuleList.GetItemText(item, 0);
+        CString size = m_ModuleList.GetItemText(item, 1);
+        CString name = m_ModuleList.GetItemText(item, 2);
+        CString path = m_ModuleList.GetItemText(item, 3);
+        CString entry; entry.Format(L"Base=%s\r\nSize=%s\r\nName=%s\r\nPath=%s", base.GetString(), size.GetString(), name.GetString(), path.GetString());
+        int cmd = menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, this);
+        if (cmd == CMD_MOD_COPY) {
+            CopyTextToClipboard(entry, this->GetSafeHwnd());
+        }
+        return;
+    }
+
+    // Default: hook list context menu
     if (!m_HookList.GetSafeHwnd()) return;
     CPoint clientPoint = point;
     m_HookList.ScreenToClient(&clientPoint);
@@ -340,34 +362,23 @@ void HookProcDlg::OnContextMenu(CWnd* pWnd, CPoint point) {
     menu.AppendMenuW(MF_SEPARATOR, 0, (LPCTSTR)NULL);
     menu.AppendMenuW(MF_STRING, CMD_COPY_ADDR, L"Copy Address");
 
-    // Determine whether the row is currently disabled (we mark it by prefixing module with "[DISABLED] ")
     bool isDisabled = false;
     HookRow* testHr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(item));
-    if (testHr) {
-        if (testHr->module.rfind(L"[DISABLED] ", 0) == 0) isDisabled = true;
-    }
+    if (testHr) { if (testHr->module.rfind(L"[DISABLED] ", 0) == 0) isDisabled = true; }
 
     CString addrText = m_HookList.GetItemText(item, 1);
-
-    // Only enable the relevant action: if disabled -> Enable is active; else Disable is active.
     menu.EnableMenuItem(CMD_DISABLE, MF_BYCOMMAND | (isDisabled ? MF_GRAYED : MF_ENABLED));
     menu.EnableMenuItem(CMD_ENABLE, MF_BYCOMMAND | (isDisabled ? MF_ENABLED : MF_GRAYED));
     menu.EnableMenuItem(CMD_COPY_ADDR, MF_BYCOMMAND | (!addrText.IsEmpty() ? MF_ENABLED : MF_GRAYED));
 
-    // Store selected item index in window userdata so handlers can find it
     SetWindowLongPtr(m_hWnd, GWLP_USERDATA, (LONG_PTR)item);
-
-    // Display the menu and dispatch command to our handlers
     int cmd = menu.TrackPopupMenu(TPM_LEFTALIGN | TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, this);
     if (cmd == 0) return;
-
     switch (cmd) {
     case 0x8001: OnHookMenuDisable(); break;
     case 0x8002: OnHookMenuEnable(); break;
     case 0x8003: OnHookMenuRemove(); break;
-    case 0x8004:
-        CopyTextToClipboard(addrText, this->GetSafeHwnd());
-        break;
+    case 0x8004: CopyTextToClipboard(addrText, this->GetSafeHwnd()); break;
     }
 }
 
