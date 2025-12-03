@@ -438,7 +438,7 @@ public:
 		  return Helper::ConvertCharToWchar(src, dst, dstChars);
 	}
 	   void* PhBuildModuleListWow64(void* hProc, void* head) override{
-		   return PHLIB::PhBuildModuleListWow64(hProc, head);
+		   return PHLIB::PhBuildModuleList(hProc, head);
 	  }
 	 std::wstring GetCurrentDirFilePath(WCHAR* filename) override {
 		auto s = Helper::GetCurrentDirFilePath(filename);

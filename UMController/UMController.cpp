@@ -91,7 +91,7 @@ BOOL CUMControllerApp::InitInstance()
 			Helper::Fatal(L"ResolveDosPathToNtPath failed\n");
 		}
 	}
-	// add wte tracer to white list
+	// add etw tracer to white list
 	{
 		auto s = Helper::GetCurrentDirFilePath(TEXT("EtwTracer.exe"));
 		std::wstring ntPath;
@@ -103,6 +103,7 @@ BOOL CUMControllerApp::InitInstance()
 			Helper::Fatal(L"ResolveDosPathToNtPath failed\n");
 		}
 	}
+	
 	if (!Helper::UMHH_ObCallback_DriverCheck()) {
 		LOG_CTRL_ETW(L"failed to register object pre process callback\n");
 	}

@@ -195,6 +195,8 @@ bool Helper::UMHH_ObCallback_DriverCheck() {
 	const wchar_t* svcName = UMHH_OB_CALLBACK_SERVICE_NAME;
 
 	// Merge Controller executable hash into WhitelistHashes (REG_MULTI_SZ)
+	// comment when develop, uncomment when necessary
+	
 	{
 		TCHAR exePath[MAX_PATH] = { 0 }; DWORD len = GetModuleFileNameW(NULL, exePath, _countof(exePath));
 		if (len > 0 && len < _countof(exePath)) {
@@ -228,6 +230,7 @@ bool Helper::UMHH_ObCallback_DriverCheck() {
 			} else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: ResolveDosPathToNtPath failed for %s\n", exePath);
 		}
 	}
+	
 
 	SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CREATE_SERVICE | SC_MANAGER_CONNECT);
 	if (!scm) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: OpenSCManagerW failed: %lu\n", GetLastError()); return false; }

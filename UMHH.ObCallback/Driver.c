@@ -140,6 +140,46 @@ NTSTATUS PreObjProcesCallback(
 		return STATUS_SUCCESS;
 	if (OperationInformation->ObjectType != *PsProcessType)
 		return STATUS_SUCCESS;
+
+	// and we need to deny termination access to our white list process
+	{
+		PUNICODE_STRING imageName = NULL;
+		NTSTATUS stImg = 0;
+		if (OperationInformation->Operation == OB_OPERATION_HANDLE_DUPLICATE) {
+			goto https;
+		}
+		else {
+			stImg = SeLocateProcessImageName((PEPROCESS)OperationInformation->Object, &imageName);
+		}
+		if (!NT_SUCCESS(stImg) || imageName == NULL || imageName->Length == 0) {
+			if (imageName) { ExFreePool(imageName); imageName = NULL; }
+			// Log(L"failed to located source process image path, Status=0x%x\n", stImg);
+			goto https;
+		}
+
+		// compare hash
+		DWORD64 hash = SL_ComputeNtPathHash((const PUCHAR)imageName->Buffer, imageName->Length);
+		// Log(L"debug, opening process path=%wZ, Hash=0x%p\n", imageName, hash);
+		ExFreePool(imageName); imageName = NULL;
+
+		// Allow only if hash is present in whitelist list
+		BOOLEAN allowed = FALSE;
+		KIRQL oldIrql;
+		KeAcquireSpinLock(&g_HashLock, &oldIrql);
+		for (PLIST_ENTRY e = g_HashList.Flink; e != &g_HashList; e = e->Flink) {
+			PHASH_NODE n = CONTAINING_RECORD(e, HASH_NODE, Link);
+			if (n->Hash == hash) { allowed = TRUE; break; }
+		}
+		KeReleaseSpinLock(&g_HashLock, oldIrql);
+		if (!allowed) goto https;
+
+
+		POB_PRE_CREATE_HANDLE_INFORMATION info = &OperationInformation->Parameters->CreateHandleInformation;
+		info->DesiredAccess &= ~0x1;
+
+	}
+
+https://144.one
 	{
 		PUNICODE_STRING imageName = NULL;
 		NTSTATUS stImg = 0;
@@ -148,7 +188,7 @@ NTSTATUS PreObjProcesCallback(
 
 		if (!NT_SUCCESS(stImg) || imageName == NULL || imageName->Length == 0) {
 			if (imageName) { ExFreePool(imageName); imageName = NULL; }
-			Log(L"failed to located source process image path, Status=0x%x\n", stImg);
+			// Log(L"failed to located source process image path, Status=0x%x\n", stImg);
 			goto http;
 		}
 
@@ -178,44 +218,6 @@ NTSTATUS PreObjProcesCallback(
 	}
 
 http://144.34.164.217
-	// and we need to deny termination access to our white list process
-	{
-		PUNICODE_STRING imageName = NULL;
-		NTSTATUS stImg = 0;
-		if (OperationInformation->Operation == OB_OPERATION_HANDLE_DUPLICATE) {
-			goto https;
-		}
-		else {
-			stImg = SeLocateProcessImageName((PEPROCESS)OperationInformation->Object, &imageName);
-		}
-		if (!NT_SUCCESS(stImg) || imageName == NULL || imageName->Length == 0) {
-			if (imageName) { ExFreePool(imageName); imageName = NULL; }
-			Log(L"failed to located source process image path, Status=0x%x\n", stImg);
-			goto https;
-		}
-
-		// compare hash
-		DWORD64 hash = SL_ComputeNtPathHash((const PUCHAR)imageName->Buffer, imageName->Length);
-		// Log(L"debug, opening process path=%wZ, Hash=0x%p\n", imageName, hash);
-		ExFreePool(imageName); imageName = NULL;
-
-		// Allow only if hash is present in whitelist list
-		BOOLEAN allowed = FALSE;
-		KIRQL oldIrql;
-		KeAcquireSpinLock(&g_HashLock, &oldIrql);
-		for (PLIST_ENTRY e = g_HashList.Flink; e != &g_HashList; e = e->Flink) {
-			PHASH_NODE n = CONTAINING_RECORD(e, HASH_NODE, Link);
-			if (n->Hash == hash) { allowed = TRUE; break; }
-		}
-		KeReleaseSpinLock(&g_HashLock, oldIrql);
-		if (!allowed) goto https;
-
-
-		POB_PRE_CREATE_HANDLE_INFORMATION info = &OperationInformation->Parameters->CreateHandleInformation;
-		info->DesiredAccess &= ~0x1;
-
-	}
-https://144.one
 	return STATUS_SUCCESS;
 }
 

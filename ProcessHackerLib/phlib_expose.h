@@ -1,10 +1,10 @@
 #pragma once
 #include <stdio.h>
 namespace PHLIB {
-	 void* GetModuleBase(void* hProc, void* target_module, void* out);
+	 void* GetModuleBase(void* pid, void* target_module, void* out);
 	 void SetHookServices(void* services);
-	 void* PhBuildModuleListWow64(
-		void* ProcessHandle,
+	 void* PhBuildModuleList(
+		 void* pid,
 		 void* OutHead
 	 );
 }

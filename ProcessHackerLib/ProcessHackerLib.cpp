@@ -15,7 +15,7 @@ namespace PHLIB {
 
 	static IHookServices* g_hookServices = nullptr;
 
-	void SetHookServices(IHookServices* services) {
+	void SetHookServicesInternal(IHookServices* services) {
 		g_hookServices = services;
 	}
 
@@ -123,13 +123,27 @@ namespace PHLIB {
 
 	BOOLEAN NTAPI PhpEnumProcessModules32Callback(
 		_In_ HANDLE ProcessHandle,
-		_In_ PLDR_DATA_TABLE_ENTRY32 EntryRaw, WCHAR* module_path
+		_In_ PLDR_DATA_TABLE_ENTRY32 EntryRaw, wchar_t* module_path
 	)
 	{
 		PUNICODE_STRING mappedFileName;
 		NTSTATUS st = PhGetProcessMappedFileName(ProcessHandle, (PVOID)(ULONG_PTR)EntryRaw->DllBase, &mappedFileName);
 		if (st != 0) {
-			PHLog(L"failed to call PhGetProcessMappedFileName, Status=0x%x\n", st);
+			PHLog(L"failed to call PhpEnumProcessModules32Callback, Status=0x%x\n", st);
+			return false;
+		}
+		memcpy(module_path, mappedFileName->Buffer, mappedFileName->Length);
+		return true;
+	}
+	BOOLEAN NTAPI PhpEnumProcessModules64Callback(
+		_In_ HANDLE ProcessHandle,
+		_In_ PLDR_DATA_TABLE_ENTRY EntryRaw, wchar_t* module_path
+	)
+	{
+		PUNICODE_STRING mappedFileName;
+		NTSTATUS st = PhGetProcessMappedFileName(ProcessHandle, (PVOID)(ULONG_PTR)EntryRaw->DllBase, &mappedFileName);
+		if (st != 0) {
+			PHLog(L"failed to call PhpEnumProcessModules64Callback, Status=0x%x\n", st);
 			return false;
 		}
 		memcpy(module_path, mappedFileName->Buffer, mappedFileName->Length);
@@ -161,9 +175,48 @@ namespace PHLIB {
 
 		return status;
 	}
-
+	NTSTATUS PhBuildModuleListInteranl(
+		_In_ DWORD pid, _Out_ PPH_MODULE_LIST_NODE* OutHead
+	) {
+		if (!g_hookServices) {
+			PHLog(L"g_hookServices NULL\n");
+			return STATUS_UNSUCCESSFUL;
+		}
+		bool is64 = false;
+		if (!g_hookServices->IsProcess64(pid, is64)) {
+			PHLog(L"failed to call IsProcess64\n");
+			return STATUS_UNSUCCESSFUL;
+		}
+		HANDLE hProc = NULL;
+		if (!g_hookServices->GetHighAccessProcHandle(pid, &hProc)) {
+			PHLog(L"failed to call GetHighAccessProcHandle\n");
+			return STATUS_UNSUCCESSFUL;
+		}
+		return is64 ? PhBuildModuleListX64(hProc, OutHead)
+			: PhBuildModuleListWin32(hProc, OutHead);
+	}
 	NTSTATUS PhpEnumProcessModules(
-		_In_ HANDLE ProcessHandle, WCHAR *target_module, DWORD64* ModuleBase
+		 DWORD pid, WCHAR* target_module, unsigned long long* ModuleBase
+	) {
+		if (!g_hookServices) {
+			PHLog(L"g_hookServices NULL\n");
+			return STATUS_UNSUCCESSFUL;
+		}
+		bool is64 = false;
+		if (!g_hookServices->IsProcess64(pid, is64)) {
+			PHLog(L"failed to call IsProcess64\n");
+			return STATUS_UNSUCCESSFUL;
+		}
+		HANDLE hProc = NULL;
+		if (!g_hookServices->GetHighAccessProcHandle(pid, &hProc)) {
+			PHLog(L"failed to call GetHighAccessProcHandle\n");
+			return STATUS_UNSUCCESSFUL;
+		}
+		return is64 ? PhpEnumProcessModulesX64(hProc, target_module, ModuleBase)
+			: PhpEnumProcessModulesWin32(hProc, target_module, ModuleBase);
+	}
+	NTSTATUS PhpEnumProcessModulesWin32(
+		_In_ HANDLE ProcessHandle, wchar_t *target_module, DWORD64* ModuleBase
 	) {
 		NTSTATUS status;
 		PPEB32 peb;
@@ -178,7 +231,7 @@ namespace PHLIB {
 		PhInitializeWindowsVersion();
 
 		// Get the 32-bit PEB address.
-		status = PhGetProcessPeb32(ProcessHandle,(PVOID*) &peb);
+		status = PhGetProcessPeb32(ProcessHandle, (PVOID*)&peb);
 
 		if (!NT_SUCCESS(status))
 			return status;
@@ -255,12 +308,12 @@ namespace PHLIB {
 					&currentEntry,
 					mode_path
 				)) {
-					PHLog(L"failed to call PhpEnumProcessModulesCallback\n");
+					PHLog(L"failed to call PhpEnumProcessModules32Callback\n");
 					break;
 				}
 				if (g_hookServices->wstrcasestr_check(mode_path, target_module)) {
 					*ModuleBase = currentEntry.DllBase;
-					PHLog(L"target module Path=%s Base=0x%x\n", mode_path,*ModuleBase);
+					PHLog(L"target module Path=%s Base=0x%x\n", mode_path, *ModuleBase);
 					break;
 				}
 			}
@@ -272,7 +325,113 @@ namespace PHLIB {
 		return status;
 	}
 
-	NTSTATUS PhBuildModuleListWow64(
+	NTSTATUS PhpEnumProcessModulesX64(
+		_In_ HANDLE ProcessHandle, wchar_t *target_module, DWORD64* ModuleBase
+	) {
+		NTSTATUS status;
+		PROCESS_BASIC_INFORMATION basicInfo;
+		PPEB_LDR_DATA ldr;
+		PEB_LDR_DATA pebLdrData;
+		PLIST_ENTRY startLink;
+		PLIST_ENTRY currentLink;
+		ULONG dataTableEntrySize;
+		LDR_DATA_TABLE_ENTRY currentEntry;
+		ULONG i;
+
+		// Get the PEB address.
+		status = PhGetProcessBasicInformation(ProcessHandle, &basicInfo);
+
+		if (!NT_SUCCESS(status))
+			return status;
+
+		// Read the address of the loader data.
+		status = PhReadVirtualMemory(
+			ProcessHandle,
+			PTR_ADD_OFFSET(basicInfo.PebBaseAddress, FIELD_OFFSET(PEB, Ldr)),
+			&ldr,
+			sizeof(PVOID),
+			NULL
+		);
+
+		if (!NT_SUCCESS(status))
+			return status;
+
+		// Read the loader data.
+		status = PhReadVirtualMemory(
+			ProcessHandle,
+			ldr,
+			&pebLdrData,
+			sizeof(PEB_LDR_DATA),
+			NULL
+		);
+
+		if (!NT_SUCCESS(status))
+			return status;
+
+		if (!pebLdrData.Initialized)
+			return STATUS_UNSUCCESSFUL;
+
+		if (WindowsVersion >= WINDOWS_8)
+			dataTableEntrySize = LDR_DATA_TABLE_ENTRY_SIZE_WIN8;
+		else if (WindowsVersion >= WINDOWS_7)
+			dataTableEntrySize = LDR_DATA_TABLE_ENTRY_SIZE_WIN7;
+		else
+			dataTableEntrySize = LDR_DATA_TABLE_ENTRY_SIZE_WINXP;
+
+		// Traverse the linked list (in load order).
+
+		i = 0;
+		startLink = (PLIST_ENTRY)PTR_ADD_OFFSET(ldr, FIELD_OFFSET(PEB_LDR_DATA, InLoadOrderModuleList));
+		currentLink = pebLdrData.InLoadOrderModuleList.Flink;
+
+		PPH_MODULE_LIST_NODE head = NULL;
+		PPH_MODULE_LIST_NODE tail = NULL;
+
+		while (
+			currentLink != startLink &&
+			i <= PH_ENUM_PROCESS_MODULES_LIMIT
+			)
+		{
+			PVOID addressOfEntry;
+
+			addressOfEntry = CONTAINING_RECORD(currentLink, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+			status = PhReadVirtualMemory(
+				ProcessHandle,
+				addressOfEntry,
+				&currentEntry,
+				dataTableEntrySize,
+				NULL
+			);
+
+			if (!NT_SUCCESS(status))
+				return status;
+
+			// Make sure the entry is valid.
+			if (currentEntry.DllBase)
+			{
+				wchar_t mode_path[MAX_PATH] = { 0 };
+				// Execute the callback.
+				if (!PhpEnumProcessModules64Callback(
+					ProcessHandle,
+					&currentEntry,
+					mode_path
+				)) {
+					PHLog(L"failed to call PhpEnumProcessModules64Callback\n");
+					break;
+				}
+				if (g_hookServices->wstrcasestr_check(mode_path, target_module)) {
+					*ModuleBase = (DWORD64)(ULONG_PTR)currentEntry.DllBase;
+					PHLog(L"target module Path=%s Base=0x%x\n", mode_path, *ModuleBase);
+					break;
+				}
+			}
+			currentLink = currentEntry.InLoadOrderLinks.Flink;
+			i++;
+		}
+		return status;
+	}
+
+	NTSTATUS PhBuildModuleListWin32(
 		_In_ HANDLE ProcessHandle,
 		_Out_ PPH_MODULE_LIST_NODE* OutHead
 	) {
@@ -346,6 +505,140 @@ namespace PHLIB {
 			i++;
 		}
 
+		if (OutHead) *OutHead = head;
+		return STATUS_SUCCESS;
+	}
+
+	
+		NTSTATUS
+		PhGetProcessBasicInformation(
+			_In_ HANDLE ProcessHandle,
+			_Out_ PPROCESS_BASIC_INFORMATION BasicInformation
+		)
+	{
+		return NtQueryInformationProcess(
+			ProcessHandle,
+			ProcessBasicInformation,
+			BasicInformation,
+			sizeof(PROCESS_BASIC_INFORMATION),
+			NULL
+		);
+	}
+
+	NTSTATUS PhBuildModuleListX64(
+		_In_ HANDLE ProcessHandle,
+		_Out_ PPH_MODULE_LIST_NODE* OutHead
+	) {
+		NTSTATUS status;
+		PROCESS_BASIC_INFORMATION basicInfo;
+		PPEB_LDR_DATA ldr;
+		PEB_LDR_DATA pebLdrData;
+		PLIST_ENTRY startLink;
+		PLIST_ENTRY currentLink;
+		ULONG dataTableEntrySize;
+		LDR_DATA_TABLE_ENTRY currentEntry;
+		ULONG i;
+
+		// Get the PEB address.
+		status = PhGetProcessBasicInformation(ProcessHandle, &basicInfo);
+
+		if (!NT_SUCCESS(status))
+			return status;
+
+		// Read the address of the loader data.
+		status = PhReadVirtualMemory(
+			ProcessHandle,
+			PTR_ADD_OFFSET(basicInfo.PebBaseAddress, FIELD_OFFSET(PEB, Ldr)),
+			&ldr,
+			sizeof(PVOID),
+			NULL
+		);
+
+		if (!NT_SUCCESS(status))
+			return status;
+
+		// Read the loader data.
+		status = PhReadVirtualMemory(
+			ProcessHandle,
+			ldr,
+			&pebLdrData,
+			sizeof(PEB_LDR_DATA),
+			NULL
+		);
+
+		if (!NT_SUCCESS(status))
+			return status;
+
+		if (!pebLdrData.Initialized)
+			return STATUS_UNSUCCESSFUL;
+
+		if (WindowsVersion >= WINDOWS_8)
+			dataTableEntrySize = LDR_DATA_TABLE_ENTRY_SIZE_WIN8;
+		else if (WindowsVersion >= WINDOWS_7)
+			dataTableEntrySize = LDR_DATA_TABLE_ENTRY_SIZE_WIN7;
+		else
+			dataTableEntrySize = LDR_DATA_TABLE_ENTRY_SIZE_WINXP;
+
+		// Traverse the linked list (in load order).
+
+		i = 0;
+		startLink = (PLIST_ENTRY)PTR_ADD_OFFSET(ldr, FIELD_OFFSET(PEB_LDR_DATA, InLoadOrderModuleList));
+		currentLink = pebLdrData.InLoadOrderModuleList.Flink;
+
+		PPH_MODULE_LIST_NODE head = NULL;
+		PPH_MODULE_LIST_NODE tail = NULL;
+
+		while (
+			currentLink != startLink &&
+			i <= PH_ENUM_PROCESS_MODULES_LIMIT
+			)
+		{
+			PVOID addressOfEntry;
+
+			addressOfEntry = CONTAINING_RECORD(currentLink, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+			status = PhReadVirtualMemory(
+				ProcessHandle,
+				addressOfEntry,
+				&currentEntry,
+				dataTableEntrySize,
+				NULL
+			);
+
+			if (!NT_SUCCESS(status))
+				return status;
+
+			// Make sure the entry is valid.
+			if (currentEntry.DllBase)
+			{
+				PUNICODE_STRING mappedFileName = NULL;
+				NTSTATUS st = PhGetProcessMappedFileName(ProcessHandle, (PVOID)(ULONG_PTR)currentEntry.DllBase, &mappedFileName);
+				if (NT_SUCCESS(st) && mappedFileName && mappedFileName->Buffer && mappedFileName->Length > 0) {
+					SIZE_T wcharLen = mappedFileName->Length / sizeof(WCHAR);
+					SIZE_T bytes = (wcharLen + 1) * sizeof(WCHAR);
+					PPH_MODULE_LIST_NODE node = (PPH_MODULE_LIST_NODE)malloc(sizeof(PH_MODULE_LIST_NODE));
+					if (node) {
+						RtlZeroMemory(node, sizeof(PH_MODULE_LIST_NODE));
+						node->Base = (void*)(ULONG_PTR)currentEntry.DllBase;
+						node->Size = currentEntry.SizeOfImage; // populate SizeOfImage if available
+						node->Path = (PWSTR)malloc(bytes);
+						if (node->Path) {
+							RtlCopyMemory(node->Path, mappedFileName->Buffer, mappedFileName->Length);
+							node->Path[wcharLen] = L'\0';
+							// append to list
+							node->Next = NULL;
+							if (!head) head = node; else tail->Next = node;
+							tail = node;
+						}
+						else {
+							free(node);
+						}
+					}
+				}
+				if (mappedFileName) free(mappedFileName);
+			}
+			currentLink = currentEntry.InLoadOrderLinks.Flink;
+			i++;
+		}
 		if (OutHead) *OutHead = head;
 		return STATUS_SUCCESS;
 	}

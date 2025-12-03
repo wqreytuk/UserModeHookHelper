@@ -29,20 +29,33 @@ namespace PHLIB {
 	// Enumerate modules and return a newly-allocated singly-linked list
 	// of PH_MODULE_NODE structures (caller is responsible for freeing).
 	NTSTATUS PhpEnumProcessModules(
-		_In_ HANDLE ProcessHandle, WCHAR* target_module,DWORD64* ModuleBase
+		_In_ DWORD pid, wchar_t* target_module, unsigned long long* ModuleBase
+	); 
+	NTSTATUS PhBuildModuleListInteranl(
+		_In_ DWORD pid, _Out_ PPH_MODULE_LIST_NODE* OutHead
 	);
-
+	NTSTATUS PhpEnumProcessModulesX64(
+		_In_ HANDLE ProcessHandle, wchar_t *target_module, unsigned long long* ModuleBase);
+	NTSTATUS PhpEnumProcessModulesWin32(
+			_In_ HANDLE ProcessHandle, wchar_t *target_module, unsigned long long* ModuleBase);
 	// Build a linked list of modules (base + size + full path) for a WOW64 process.
 	// Caller owns the list and must free each node's Path and the node itself.
-	NTSTATUS PhBuildModuleListWow64(
+	NTSTATUS PhBuildModuleListWin32(
 		_In_ HANDLE ProcessHandle,
 		_Out_ PPH_MODULE_LIST_NODE* OutHead
 	);
+	NTSTATUS PhBuildModuleListX64(
+		_In_ HANDLE ProcessHandle,
+		_Out_ PPH_MODULE_LIST_NODE* OutHead);
 
-
+	NTSTATUS
+		PhGetProcessBasicInformation(
+			_In_ HANDLE ProcessHandle,
+			_Out_ PPROCESS_BASIC_INFORMATION BasicInformation
+		);
 	// Logging integration: allow host to provide IHookServices for logging
 
-	void SetHookServices(IHookServices* services);
+	void SetHookServicesInternal(IHookServices* services);
 	void PHLog(const wchar_t* fmt, ...);
 
 	NTSTATUS PhGetProcessMappedFileName(

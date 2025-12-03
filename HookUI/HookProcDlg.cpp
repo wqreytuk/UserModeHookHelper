@@ -77,7 +77,11 @@ BOOL HookProcDlg::OnInitDialog() {
     LONG lvStyle = ::GetWindowLong(m_ModuleList.GetSafeHwnd(), GWL_STYLE);
     lvStyle |= LVS_SHOWSELALWAYS; ::SetWindowLong(m_ModuleList.GetSafeHwnd(), GWL_STYLE, lvStyle);
     ::SetWindowPos(m_ModuleList.GetSafeHwnd(), nullptr, 0,0,0,0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_FRAMECHANGED);
-    PopulateModuleList();
+
+	// set process hacker and hook core lib service interface
+	PHLIB::SetHookServices(m_services);
+	HookCore::SetHookServices(m_services);
+	PopulateModuleList();
     // Hook list initialization
     m_HookList.Attach(GetDlgItem(IDC_HOOKUI_LIST_HOOKS)->m_hWnd);
     m_HookList.InsertColumn(0, L"Hook ID", LVCFMT_LEFT, 80);
@@ -85,8 +89,6 @@ BOOL HookProcDlg::OnInitDialog() {
     m_HookList.InsertColumn(2, L"Module", LVCFMT_LEFT, 180);
     m_HookList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
     PopulateHookList();
-	// set hook core lib service interface
-	HookCore::SetHookServices(m_services);
     // Load persisted hook rows for this PID (use PID + startTime key stored by controller)
     // Attempt to obtain process creation FILETIME to form the key components
     FILETIME createTime{0,0};
@@ -230,104 +232,34 @@ void HookProcDlg::PopulateModuleList() {
 	}
 	FreeModuleRows();
 	m_ModuleList.DeleteAllItems();
-	bool is64 = false;
-	if (!m_services->IsProcess64(m_pid, is64)) {
-		LOG_UI(m_services, L"failed to call IsProcess64\n");
+
+	PPH_MODULE_LIST_NODE head = NULL;
+	LONG status = (LONG)(ULONG_PTR)PHLIB::PhBuildModuleList((void*)(ULONG_PTR)m_pid, (void*)(ULONG_PTR)&head);
+	if (status != 0) {
+		LOG_UI(m_services, L"failed to call PHLIB::PhBuildModuleList, Status=0x%x\n", status);
+		MessageBoxW(L"failed to call PHLIB::PhBuildModuleList", L"HookDlg", MB_ICONERROR);
 		return;
 	}
-	// for WOW64 process, use this:
-	if (!is64) {
-		// get high privilege process handle first
-		HANDLE hProc = NULL;
-		if (!m_services->GetHighAccessProcHandle(m_pid, &hProc)) {
-			LOG_UI(m_services, L"failed to call GetHighAccessProcHandle\n");
-			return;
-		}
-		PPH_MODULE_LIST_NODE head = NULL;
-		LONG status = (LONG)(ULONG_PTR)PHLIB::PhBuildModuleListWow64((void*)(ULONG_PTR)hProc, (void*)(ULONG_PTR)&head);
-		if (status != 0) {
-			LOG_UI(m_services, L"failed to call PhBuildModuleListWow64, Status=0x%x\n", status);
-			CloseHandle(hProc);
-			return;
-		}
-		int i = 0;
-		for (PPH_MODULE_LIST_NODE n = head; n != NULL; n = n->Next) {
-			std::wstring baseStr = L"0x" + Hex64((ULONGLONG)n->Base);
-			int idx = m_ModuleList.InsertItem(i, baseStr.c_str());
-			// Size unknown via this path; leave blank for now
-			m_ModuleList.SetItemText(idx, 1, (std::wstring(L"0x") + Hex64((ULONGLONG)n->Size)).c_str());
-			// Extract module name from path
-			std::wstring name = n->Path ? std::wstring(n->Path) : L"";
-			size_t pos = name.find_last_of(L"\\");
-			std::wstring justName = (pos != std::wstring::npos) ? name.substr(pos + 1) : name;
-			m_ModuleList.SetItemText(idx, 2, justName.c_str());
-			m_ModuleList.SetItemText(idx, 3, name.c_str());
-			m_ModuleList.SetItemData(idx, (DWORD_PTR)n->Base);
-			ModuleRow* row = new ModuleRow{ (ULONGLONG)n->Base,(ULONGLONG)n->Size,justName, name };
-			m_ModuleList.SetItemData(idx, (DWORD_PTR)row);
-			i++;
-		}
-		// Free list
-		while (head) { auto* next = head->Next; if (head->Path) free(head->Path); free(head); head = next; }
-		CloseHandle(hProc);
-		return;
-
-
+	int i = 0;
+	for (PPH_MODULE_LIST_NODE n = head; n != NULL; n = n->Next) {
+		std::wstring baseStr = L"0x" + Hex64((ULONGLONG)n->Base);
+		int idx = m_ModuleList.InsertItem(i, baseStr.c_str());
+		// Size unknown via this path; leave blank for now
+		m_ModuleList.SetItemText(idx, 1, (std::wstring(L"0x") + Hex64((ULONGLONG)n->Size)).c_str());
+		// Extract module name from path
+		std::wstring name = n->Path ? std::wstring(n->Path) : L"";
+		size_t pos = name.find_last_of(L"\\");
+		std::wstring justName = (pos != std::wstring::npos) ? name.substr(pos + 1) : name;
+		m_ModuleList.SetItemText(idx, 2, justName.c_str());
+		m_ModuleList.SetItemText(idx, 3, name.c_str());
+		m_ModuleList.SetItemData(idx, (DWORD_PTR)n->Base);
+		ModuleRow* row = new ModuleRow{ (ULONGLONG)n->Base,(ULONGLONG)n->Size,justName, name };
+		m_ModuleList.SetItemData(idx, (DWORD_PTR)row);
+		i++;
 	}
-	else {
-		HANDLE hProc = NULL;
-		if (!m_services->GetHighAccessProcHandle(m_pid, &hProc)) {
-			LOG_UI(m_services, L"failed to call GetHighAccessProcHandle\n");
-			return;
-		}
-		int i = 0;
-		HMODULE hMods[4096];
-		DWORD cbNeeded = 0;
-
-		wchar_t wide[MAX_PATH] = { 0 };
-		// Use LIST_MODULES_ALL to be robust across WoW64 and different module visibility
-		if (EnumProcessModulesEx(hProc, hMods, sizeof(hMods), &cbNeeded, LIST_MODULES_ALL)) {
-			DWORD count = cbNeeded / sizeof(HMODULE);
-			for (DWORD i = 0; i < count; ++i) {
-				char szModName[MAX_PATH] = { 0 };
-				if (GetModuleFileNameExA(hProc, hMods[i], szModName, _countof(szModName))) {
-					MODULEINFO mi;
-					if (!GetModuleInformation(hProc, hMods[i], &mi, sizeof(mi))) {
-						LOG_UI(m_services, L"failed to call GetModuleInformation, Error=0x%x\n", GetLastError());
-						CloseHandle(hProc);
-						return;
-					}
-					std::string module_name = szModName;
-					size_t pos = module_name.find_last_of("\\");
-					std::string justName = (pos != std::string::npos) ? module_name.substr(pos + 1) : module_name;
-
-					WCHAR full_path_wide[MAX_PATH] = { 0 };
-					m_services->ConvertCharToWchar(szModName, full_path_wide, MAX_PATH);
-
-					WCHAR module_name_wide[MAX_PATH] = { 0 };
-					m_services->ConvertCharToWchar(justName.c_str(), module_name_wide, MAX_PATH);
-
-					int idx = m_ModuleList.InsertItem(i, (std::wstring(L"0x") + Hex64((ULONGLONG)mi.lpBaseOfDll)).c_str());
-					m_ModuleList.SetItemText(idx, 1, (std::wstring(L"0x") + Hex64((ULONGLONG)mi.SizeOfImage)).c_str());
-					m_ModuleList.SetItemText(idx, 2, module_name_wide);
-					m_ModuleList.SetItemText(idx, 3, full_path_wide);
-					ModuleRow* row = new ModuleRow{ (ULONGLONG)mi.lpBaseOfDll,(ULONGLONG)mi.SizeOfImage,module_name_wide, full_path_wide };
-					m_ModuleList.SetItemData(idx, (DWORD_PTR)row);
-					i++;
-				}
-				else {
-					CloseHandle(hProc);
-					LOG_UI(m_services, L"failed to call GetModuleFileNameExA, Error=0x%x\n", GetLastError());
-					return;
-				}
-			}
-		}
-		else {
-			CloseHandle(hProc);
-			LOG_UI(m_services, L"failed to call EnumProcessModulesEx, Error=0x%x\n", GetLastError());
-			return;
-		}
-	}
+	// Free list
+	while (head) { auto* next = head->Next; if (head->Path) free(head->Path); free(head); head = next; }
+	return;
 }
 
 bool HookProcDlg::GetSelectedModule(std::wstring& name, ULONGLONG& base) const {
