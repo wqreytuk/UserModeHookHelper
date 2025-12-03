@@ -278,8 +278,39 @@ bool RegistryStore::ReadProcHookList(DWORD filterPid, DWORD filterHi, DWORD filt
 }
 
 bool RegistryStore::WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& entries) {
+    // Merge with existing entries to avoid overwriting prior hooks.
+    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> existing;
+    ReadProcHookList(existing); // treat failures as empty; we will rewrite anyway
+
+    // Use a composite key PID:HI:LO:HOOKID to de-duplicate and replace if same key.
+    struct Key { DWORD pid, hi, lo; int hookid; };
+    auto makeKey = [](const std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>& t)->Key {
+        return Key{ std::get<0>(t), std::get<1>(t), std::get<2>(t), std::get<3>(t) };
+    };
+    std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> merged;
+    merged.reserve(existing.size() + entries.size());
+
+    // Start with existing; we will later replace matching keys from new entries.
+    merged = existing;
+
+    // For each new entry, either replace existing with same key or append.
+    for (auto &ne : entries) {
+        Key nk = makeKey(ne);
+        bool replaced = false;
+        for (auto &ex : merged) {
+            Key ek = makeKey(ex);
+            if (ek.pid == nk.pid && ek.hi == nk.hi && ek.lo == nk.lo && ek.hookid == nk.hookid) {
+                ex = ne; // replace existing record with updated details
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) merged.push_back(ne);
+    }
+
+    // Serialize to REG_MULTI_SZ
     std::vector<wchar_t> buf;
-    for (auto &t : entries) {
+    for (auto &t : merged) {
         DWORD pid = std::get<0>(t);
         DWORD hi = std::get<1>(t);
         DWORD lo = std::get<2>(t);
@@ -292,13 +323,12 @@ bool RegistryStore::WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD,
         if (module.empty()) continue;
         wchar_t header[192];
         _snwprintf_s(header, _TRUNCATE, L"%08lX:%08lX:%08lX:%08X:%08X:%016llX:%016llX:%016llX=", pid, hi, lo, (unsigned int)hookid, (unsigned int)ori_len, ori_addr, tramp_pit, addr);
-        std::wstring line = header;
-        line.append(module);
-        buf.insert(buf.end(), line.c_str(), line.c_str() + line.size());
-        buf.push_back(L'\0');
+        std::wstring line = header; line.append(module);
+        buf.insert(buf.end(), line.c_str(), line.c_str() + line.size()); buf.push_back(L'\0');
     }
     if (buf.empty() || buf.back() != L'\0') buf.push_back(L'\0');
     buf.push_back(L'\0');
+
     HKEY hKey = NULL; DWORD disp=0;
     LONG r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &disp);
     if (r != ERROR_SUCCESS) return false;
