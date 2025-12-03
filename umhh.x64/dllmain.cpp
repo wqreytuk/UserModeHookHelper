@@ -391,7 +391,7 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 
 
-	WCHAR pathBuf[MAX_PATH];
+	WCHAR pathBuf[MAX_PATH] = { 0 };
 
 	_snwprintf(pathBuf, RTL_NUMBER_OF(pathBuf), DLL_IPC_SIGNAL_FILE_FMT, NtCurrentProcessId());
 	WCHAR eventFile[MAX_PATH] = { 0 };

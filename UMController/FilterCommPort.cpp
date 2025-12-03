@@ -72,7 +72,7 @@ Filter::Filter() {
 	// Immediately inform kernel of our user-mode base directory where DLLs live.
 	{
 		// Use current module directory as the base; GetModuleFileName then strip filename
-		WCHAR buf[MAX_PATH];
+		WCHAR buf[MAX_PATH] = { 0 };
 		DWORD n = GetModuleFileNameW(NULL, buf, MAX_PATH);
 		if (n > 0 && n < MAX_PATH) {
 			// strip to directory

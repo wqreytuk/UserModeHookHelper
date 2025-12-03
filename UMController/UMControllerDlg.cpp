@@ -28,6 +28,7 @@
 #include <sddl.h> 
 #include "../Shared/SharedMacroDef.h"
 #include "../ProcessHackerLib/phlib_expose.h"
+#include "../HookCoreLib/HookCore.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -436,6 +437,9 @@ public:
 	  bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars) override {
 		  return Helper::ConvertCharToWchar(src, dst, dstChars);
 	}
+	   void* PhBuildModuleListWow64(void* hProc, void* head) override{
+		   return PHLIB::PhBuildModuleListWow64(hProc, head);
+	  }
 	 std::wstring GetCurrentDirFilePath(WCHAR* filename) override {
 		auto s = Helper::GetCurrentDirFilePath(filename);
 		return s;
@@ -670,7 +674,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 	}
 	// set system driver mark
 	{
-		wchar_t sysDir[MAX_PATH]; 
+		wchar_t sysDir[MAX_PATH] = { 0 };
 		if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) {
 			LOG_CTRL_ETW(L"GetSystemDirectoryW failed, Error=0x%x\n", GetLastError());
 			Helper::Fatal(L"GetSystemDirectoryW failed, Error=0x%x\n");
@@ -682,6 +686,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 	}
 	// set hookservice interface to PHLIB
 	PHLIB::SetHookServices(&g_HookServices);
+	
 	// TODO: Add extra initialization here
 	PM_Init();
 	// Try to populate the in-process hook-hash cache by requesting and
@@ -2266,7 +2271,7 @@ void CUMControllerDlg::OnOpenEtwLog() {
 	if (newest.empty()) {
 		// fallback legacy name
 		std::wstring legacy = folder + L"\\EtwTracer.log";
-		TCHAR tmp[MAX_PATH]; lstrcpynW(tmp, legacy.c_str(), _countof(tmp));
+		TCHAR tmp[MAX_PATH] = { 0 }; lstrcpynW(tmp, legacy.c_str(), _countof(tmp));
 		if (Helper::IsFileExists(tmp)) newest = legacy;
 	}
 	if (newest.empty()) {

@@ -167,7 +167,7 @@ void CreateWaitSignalThread();
 
 int wmain() {
 	// Log beside EtwTracer.exe with timestamped filename EtwTracer_YYYYMMDD_HHMMSS.log
-	wchar_t exePath[MAX_PATH]; exePath[0]=0;
+	wchar_t exePath[MAX_PATH] = { 0 }; exePath[0]=0;
 	GetModuleFileNameW(NULL, exePath, _countof(exePath));
 	std::wstring p(exePath);
 	size_t pos = p.find_last_of(L"/\\");

@@ -136,7 +136,7 @@ DWORD64 Helper::GetNtPathHash(const UCHAR* buf, size_t byteLen) {
 
 std::basic_string<TCHAR> Helper::GetCurrentDirFilePath(TCHAR* append)
 {
-	TCHAR path[MAX_PATH];
+	TCHAR path[MAX_PATH] = { 0 };
 	DWORD len = GetModuleFileName(NULL, path, MAX_PATH);
 	if (len == 0 || len == MAX_PATH)
 		return _T("");
@@ -362,7 +362,7 @@ bool Helper::UMHH_BS_DriverCheck() {
 			if (!bin.empty()) {
 				// Expand SystemRoot macros like %SystemRoot% or \SystemRoot\
 				
-				wchar_t expanded[MAX_PATH];
+				wchar_t expanded[MAX_PATH] = { 0 };
 				if (ExpandEnvironmentStringsW(bin.c_str(), expanded, _countof(expanded))) {
 					DeleteFileW(expanded);
 				}
@@ -394,7 +394,7 @@ bool Helper::UMHH_BS_DriverCheck() {
 	std::basic_string<TCHAR> srcPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(drvName.c_str()));
 	if (srcPath.empty()) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: could not determine module path for %s.sys\n", svcName); CloseServiceHandle(scm); return false; }
 	DWORD fa = GetFileAttributesW(srcPath.c_str()); if (fa == INVALID_FILE_ATTRIBUTES) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: source driver not found: %s\n", srcPath.c_str()); CloseServiceHandle(scm); return false; }
-	wchar_t sysDir[MAX_PATH]; if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: GetSystemDirectoryW failed: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
+	wchar_t sysDir[MAX_PATH] = { 0 }; if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: GetSystemDirectoryW failed: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
 	std::wstring dstDir = std::wstring(sysDir) + L"\\drivers\\"; std::wstring dstPath = dstDir + std::wstring(drvName.c_str());
 	if (!CopyFileW(srcPath.c_str(), dstPath.c_str(), FALSE)) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: CopyFileW failed from %s to %s : %lu\n", srcPath.c_str(), dstPath.c_str(), GetLastError()); CloseServiceHandle(scm); return false; }
 
@@ -1352,7 +1352,7 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 
 	// Compute paths
 	std::basic_string<TCHAR> drvName = std::basic_string<TCHAR>(svcName) + std::basic_string<TCHAR>(L".sys");
-	wchar_t sysDir[MAX_PATH]; if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) { LOG_CTRL_ETW(L"ConfigureBootStartService: GetSystemDirectoryW failed: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
+	wchar_t sysDir[MAX_PATH] = { 0 }; if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) { LOG_CTRL_ETW(L"ConfigureBootStartService: GetSystemDirectoryW failed: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
 	std::wstring dstDir = std::wstring(sysDir) + L"\\drivers\\"; std::wstring dstPath = dstDir + std::wstring(drvName.c_str());
 
 	// Open service if exists
@@ -1502,7 +1502,7 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 
 			// Remove driver file if known
 			if (!binPath.empty()) {
-				wchar_t expanded[MAX_PATH];
+				wchar_t expanded[MAX_PATH] = { 0 };
 				if (ExpandEnvironmentStringsW(binPath.c_str(), expanded, _countof(expanded))) {
 					DeleteFileW(expanded);
 				}

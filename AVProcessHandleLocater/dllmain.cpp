@@ -92,7 +92,7 @@ VOID EntryCode() {
 		&g_ProviderHandle);
 
 
-	WCHAR signalPath[MAX_PATH];
+	WCHAR signalPath[MAX_PATH] = { 0 };
 	FormatObjectName(signalPath, RTL_NUMBER_OF(signalPath), SIGNAL_FILENAME, (unsigned)GetCurrentProcessId());
 	// read out to get to be tested pid
 	HANDLE hFile = CreateFileW(signalPath, GENERIC_READ, 0, 0, OPEN_ALWAYS, 0, 0);
@@ -120,7 +120,7 @@ VOID EntryCode() {
 		Log(L"can not open target process with READ|WRITE\n");
 	}
 	else {
-		WCHAR path[MAX_PATH];
+		WCHAR path[MAX_PATH] = { 0 };
 		DWORD len = GetModuleFileNameW(NULL, path, MAX_PATH);
 		Log(L"AVProcessHandleLocater success, PID=%u Path=%s can open %u", GetCurrentProcessId(), path, targetPid);
 	}
@@ -199,7 +199,7 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 
 		std::wstring pathToInjectX64;
 		{
-			wchar_t modPathBuf[MAX_PATH];
+			wchar_t modPathBuf[MAX_PATH] = { 0 };
 			DWORD modLen = GetModuleFileNameW(hThis, modPathBuf, _countof(modPathBuf));
 			std::wstring folder;
 			std::wstring base_folder;
@@ -240,7 +240,7 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 
 		std::wstring pathToInjectX86;
 		{
-			wchar_t modPathBuf[MAX_PATH];
+			wchar_t modPathBuf[MAX_PATH] = { 0 };
 			DWORD modLen = GetModuleFileNameW(hThis, modPathBuf, _countof(modPathBuf));
 			std::wstring folder;
 			std::wstring base_folder;
@@ -366,7 +366,7 @@ extern "C" __declspec(dllexport) BOOL WINAPI PluginMain(HWND hwnd, IHookServices
 
 			Log(L"Candidate PID=%u arch=%s Dll=%s\n", targetPid, is64 ? L"x64" : L"x86", is64 ? pathToInjectX64.c_str() : pathToInjectX86.c_str());
 
-			WCHAR signalPath[MAX_PATH];
+			WCHAR signalPath[MAX_PATH] = { 0 };
 			FormatObjectName(signalPath, RTL_NUMBER_OF(signalPath), SIGNAL_FILENAME, (unsigned)targetPid);
 			if (!WriteSignalFile(servicesLocal, signalPath, pidLocal)) {
 				DeleteFile(signalPath);

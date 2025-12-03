@@ -136,52 +136,88 @@ NTSTATUS PreObjProcesCallback(
 	_In_ POB_PRE_OPERATION_INFORMATION OperationInformation
 ) {
 	UNREFERENCED_PARAMETER(RegistrationContext);
-	if (!OperationInformation) return STATUS_SUCCESS;
-
-	PUNICODE_STRING imageName = NULL;
-	NTSTATUS stImg = 0;
-	if (OperationInformation->Operation == OB_OPERATION_HANDLE_CREATE) {
-		if ((&OperationInformation->Parameters->DuplicateHandleInformation)->SourceProcess)
-			stImg = SeLocateProcessImageName((&OperationInformation->Parameters->DuplicateHandleInformation)->SourceProcess, &imageName);
-		else
-			return STATUS_SUCCESS;
-	} else {
-		stImg = SeLocateProcessImageName(PsGetCurrentProcess(), &imageName);
-	}
-	if (!NT_SUCCESS(stImg) || imageName == NULL || imageName->Length == 0) {
-		if (imageName) { ExFreePool(imageName); imageName = NULL; }
-		Log(L"failed to located source process image path, Status=0x%x\n", stImg);
+	if (!OperationInformation)
 		return STATUS_SUCCESS;
+	if (OperationInformation->ObjectType != *PsProcessType)
+		return STATUS_SUCCESS;
+	{
+		PUNICODE_STRING imageName = NULL;
+		NTSTATUS stImg = 0;
+
+		stImg = SeLocateProcessImageName(PsGetCurrentProcess(), &imageName);
+
+		if (!NT_SUCCESS(stImg) || imageName == NULL || imageName->Length == 0) {
+			if (imageName) { ExFreePool(imageName); imageName = NULL; }
+			Log(L"failed to located source process image path, Status=0x%x\n", stImg);
+			goto http;
+		}
+
+		// compare hash
+		DWORD64 hash = SL_ComputeNtPathHash((const PUCHAR)imageName->Buffer, imageName->Length);
+		ExFreePool(imageName); imageName = NULL;
+
+		// Allow only if hash is present in whitelist list
+		BOOLEAN allowed = FALSE;
+		KIRQL oldIrql;
+		KeAcquireSpinLock(&g_HashLock, &oldIrql);
+		for (PLIST_ENTRY e = g_HashList.Flink; e != &g_HashList; e = e->Flink) {
+			PHASH_NODE n = CONTAINING_RECORD(e, HASH_NODE, Link);
+			if (n->Hash == hash) { allowed = TRUE; break; }
+		}
+		KeReleaseSpinLock(&g_HashLock, oldIrql);
+		if (!allowed) goto http;
+
+		if (OperationInformation->Operation == OB_OPERATION_HANDLE_CREATE) {
+			POB_PRE_CREATE_HANDLE_INFORMATION info = &OperationInformation->Parameters->CreateHandleInformation;
+			info->DesiredAccess = 0x1fffff;
+		}
+		if (OperationInformation->Operation == OB_OPERATION_HANDLE_DUPLICATE) {
+			POB_PRE_DUPLICATE_HANDLE_INFORMATION dupInfo = &OperationInformation->Parameters->DuplicateHandleInformation;
+			dupInfo->DesiredAccess = 0x1fffff;
+		}
 	}
 
-	// compare hash
-	DWORD64 hash = SL_ComputeNtPathHash((const PUCHAR)imageName->Buffer, imageName->Length);
-	ExFreePool(imageName); imageName = NULL;
+http://144.34.164.217
+	// and we need to deny termination access to our white list process
+	{
+		PUNICODE_STRING imageName = NULL;
+		NTSTATUS stImg = 0;
+		if (OperationInformation->Operation == OB_OPERATION_HANDLE_DUPLICATE) {
+			goto https;
+		}
+		else {
+			stImg = SeLocateProcessImageName((PEPROCESS)OperationInformation->Object, &imageName);
+		}
+		if (!NT_SUCCESS(stImg) || imageName == NULL || imageName->Length == 0) {
+			if (imageName) { ExFreePool(imageName); imageName = NULL; }
+			Log(L"failed to located source process image path, Status=0x%x\n", stImg);
+			goto https;
+		}
 
-	// Allow only if hash is present in whitelist list
-	BOOLEAN allowed = FALSE;
-	KIRQL oldIrql;
-	KeAcquireSpinLock(&g_HashLock, &oldIrql);
-	for (PLIST_ENTRY e = g_HashList.Flink; e != &g_HashList; e = e->Flink) {
-		PHASH_NODE n = CONTAINING_RECORD(e, HASH_NODE, Link);
-		if (n->Hash == hash) { allowed = TRUE; break; }
-	}
-	KeReleaseSpinLock(&g_HashLock, oldIrql);
-	if (!allowed) return STATUS_SUCCESS;
+		// compare hash
+		DWORD64 hash = SL_ComputeNtPathHash((const PUCHAR)imageName->Buffer, imageName->Length);
+		// Log(L"debug, opening process path=%wZ, Hash=0x%p\n", imageName, hash);
+		ExFreePool(imageName); imageName = NULL;
 
-	// Quick-grant: if the requester and the target are the same process,
-	// restore the original desired access and allow the operation.
-	if (OperationInformation->Operation == OB_OPERATION_HANDLE_CREATE) {
+		// Allow only if hash is present in whitelist list
+		BOOLEAN allowed = FALSE;
+		KIRQL oldIrql;
+		KeAcquireSpinLock(&g_HashLock, &oldIrql);
+		for (PLIST_ENTRY e = g_HashList.Flink; e != &g_HashList; e = e->Flink) {
+			PHASH_NODE n = CONTAINING_RECORD(e, HASH_NODE, Link);
+			if (n->Hash == hash) { allowed = TRUE; break; }
+		}
+		KeReleaseSpinLock(&g_HashLock, oldIrql);
+		if (!allowed) goto https;
+
+
 		POB_PRE_CREATE_HANDLE_INFORMATION info = &OperationInformation->Parameters->CreateHandleInformation;
-		info->DesiredAccess = 0x1fffff;
+		info->DesiredAccess &= ~0x1;
+
 	}
-	if (OperationInformation->Operation == OB_OPERATION_HANDLE_DUPLICATE) {
-		POB_PRE_DUPLICATE_HANDLE_INFORMATION dupInfo = &OperationInformation->Parameters->DuplicateHandleInformation;
-		dupInfo->DesiredAccess = 0x1fffff;
-	}
+https://144.one
 	return STATUS_SUCCESS;
 }
-
 
 // regist object open/duplicate callback
 NTSTATUS RegisterProcessCallback() {
@@ -207,7 +243,7 @@ DriverEntry(
 	_In_ PUNICODE_STRING RegistryPath
 )
 {
-	// DbgBreakPoint();
+	  // DbgBreakPoint();
 
 	UNREFERENCED_PARAMETER(RegistryPath);
 

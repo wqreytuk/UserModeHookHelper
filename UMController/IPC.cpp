@@ -25,7 +25,7 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	LOG_CTRL_ETW(L"IPC_SendInject: pid=%u dll=%s\n", pid, dllPath);
 
 	// Build signal filename in Win32 form
-	WCHAR signalPath[MAX_PATH];
+	WCHAR signalPath[MAX_PATH] = { 0 };
 	FormatObjectName(signalPath, RTL_NUMBER_OF(signalPath), USER_IPC_SIGNAL_FILE_FMT, (unsigned)pid);
 
 	// Convert wide DLL path to ANSI bytes because the injector widens bytes back
@@ -107,7 +107,7 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	CloseHandle(hFile);
 	delete[] asciiBuf;
 
-	WCHAR event_name[MAX_PATH];
+	WCHAR event_name[MAX_PATH] = { 0 };
 	FormatObjectName(event_name, RTL_NUMBER_OF(event_name), USER_MODE_INJECTION_SIGNAL_EVENT L"%d", (unsigned)pid);
 	HANDLE h = OpenEventW(EVENT_MODIFY_STATE, FALSE, event_name);
 	if (h) {

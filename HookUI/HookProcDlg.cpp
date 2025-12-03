@@ -85,6 +85,8 @@ BOOL HookProcDlg::OnInitDialog() {
     m_HookList.InsertColumn(2, L"Module", LVCFMT_LEFT, 180);
     m_HookList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
     PopulateHookList();
+	// set hook core lib service interface
+	HookCore::SetHookServices(m_services);
     // Load persisted hook rows for this PID (use PID + startTime key stored by controller)
     // Attempt to obtain process creation FILETIME to form the key components
     FILETIME createTime{0,0};
@@ -299,10 +301,10 @@ void HookProcDlg::PopulateModuleList() {
 					size_t pos = module_name.find_last_of("\\");
 					std::string justName = (pos != std::string::npos) ? module_name.substr(pos + 1) : module_name;
 
-					WCHAR full_path_wide[MAX_PATH];
+					WCHAR full_path_wide[MAX_PATH] = { 0 };
 					m_services->ConvertCharToWchar(szModName, full_path_wide, MAX_PATH);
 
-					WCHAR module_name_wide[MAX_PATH];
+					WCHAR module_name_wide[MAX_PATH] = { 0 };
 					m_services->ConvertCharToWchar(justName.c_str(), module_name_wide, MAX_PATH);
 
 					int idx = m_ModuleList.InsertItem(i, (std::wstring(L"0x") + Hex64((ULONGLONG)mi.lpBaseOfDll)).c_str());
@@ -667,7 +669,7 @@ void HookProcDlg::OnBnClickedApplyHook() {
     std::wstring pathToInject = selectedPath.GetString();
 	wchar_t* temp_hook_code_dll_name = 0;
     {
-        wchar_t modPathBuf[MAX_PATH];
+        wchar_t modPathBuf[MAX_PATH] = { 0 };
         DWORD modLen = GetModuleFileNameW(AfxGetInstanceHandle(), modPathBuf, _countof(modPathBuf));
         std::wstring folder;
         if (modLen == 0) {

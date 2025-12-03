@@ -16,7 +16,7 @@ void Log(_In_ PCWSTR Format, ...) {
 	Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0';
 
 	WCHAR Prefixed[1100];
-	_snwprintf_s(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[HookCode]  %s", Buffer);
+	_snwprintf_s(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[HookCode]   %s", Buffer);
 	Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
 	EventWriteString(g_ProviderHandle, 0, 0, Prefixed);
 }
