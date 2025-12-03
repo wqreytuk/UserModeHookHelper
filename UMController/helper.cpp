@@ -729,20 +729,10 @@ bool Helper::ResolveNtCreateThreadExSyscallNum(DWORD* sys_call_num) {
 	*sys_call_num = res;
 	return true;
 }
-bool Helper::GetModuleBase(bool is64, HANDLE hProc, const wchar_t* target_module, DWORD64* base) {
-	if (is64) {
-		char _[MAX_PATH] = { 0 };
-		ConvertWcharToChar(target_module, _, MAX_PATH);
-		if (!GetModuleBaseWithPathEx(hProc, _, (PVOID*)base)) {
-			LOG_CTRL_ETW(L"failed to call GetModuleBaseWithPathEx\n");
-			return false;
-		}
-	}
-	else {
-		if (0 != PHLIB::GetModuleBase((PVOID)hProc, (PVOID)target_module, (PVOID)base)) {
-			LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase CPU=x86\n");
-			return false;
-		}
+bool Helper::GetModuleBase(bool is64, DWORD pid, const wchar_t* target_module, DWORD64* base) {
+	if (0 != PHLIB::GetModuleBase((PVOID)(ULONG_PTR)pid, (PVOID)target_module, (PVOID)base)) {
+		LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase, Pid=%u\n",pid);
+		return false;
 	}
 	return true;
 }

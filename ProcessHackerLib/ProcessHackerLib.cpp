@@ -223,8 +223,10 @@ namespace PHLIB {
 			PHLog(L"failed to call GetHighAccessProcHandle\n");
 			return STATUS_UNSUCCESSFUL;
 		}
-		return is64 ? PhBuildModuleListX64(hProc, OutHead)
+		NTSTATUS st= is64 ? PhBuildModuleListX64(hProc, OutHead)
 			: PhBuildModuleListWin32(hProc, OutHead);
+		CloseHandle(hProc);
+		return st;
 	}
 	NTSTATUS PhpEnumProcessModules(
 		 DWORD pid, WCHAR* target_module, unsigned long long* ModuleBase
@@ -243,8 +245,10 @@ namespace PHLIB {
 			PHLog(L"failed to call GetHighAccessProcHandle\n");
 			return STATUS_UNSUCCESSFUL;
 		}
-		return is64 ? PhpEnumProcessModulesX64(hProc, target_module, ModuleBase)
+		NTSTATUS st = is64 ? PhpEnumProcessModulesX64(hProc, target_module, ModuleBase)
 			: PhpEnumProcessModulesWin32(hProc, target_module, ModuleBase);
+		CloseHandle(hProc);
+		return st;
 	}
 	NTSTATUS PhpEnumProcessModulesWin32(
 		_In_ HANDLE ProcessHandle, wchar_t *target_module, DWORD64* ModuleBase

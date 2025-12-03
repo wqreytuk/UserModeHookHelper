@@ -57,6 +57,7 @@ namespace HookCore {
 		}
 		// Free list
 		while (head) { auto* next = head->Next; if (head->Path) free(head->Path); free(head); head = next; }
+		return true;
 	}
 	std::wstring FindOwningModule(DWORD pid, ULONGLONG address, PVOID* moduleBase) {
 		std::vector<ModuleInfo> mods; if (!EnumerateModules(pid, mods)) return L"";
@@ -187,7 +188,7 @@ namespace HookCore {
 				const int maxIterations = 50; bool loaded = false;
 				for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
 					//  GetModuleBase(bool is64, HANDLE hProc, wchar_t* target_module, DWORD64* base) = 0;
-					services->GetModuleBase(is64, hProc, trampName.c_str(), (DWORD64*)&trampoline_dll_base);
+					services->GetModuleBase(is64, pid, trampName.c_str(), (DWORD64*)&trampoline_dll_base);
 
 					if (trampoline_dll_base != NULL) {
 						loaded = true;

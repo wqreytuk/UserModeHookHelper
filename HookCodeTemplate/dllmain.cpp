@@ -26,7 +26,17 @@ extern "C" __declspec(dllexport) VOID HookCodeWin32(ULONG esp) {
 		Log(L"Fatal Error, RSP==NULL\n");
 		return;
 	}
+	// original_esp can be used to access original parameter
 	ULONG original_esp = esp + 0x20;
+
+	// original rigster value and location
+	ULONG ebp = *(PULONG)((UCHAR*)esp + 0x0);
+	ULONG edi = *(PULONG)((UCHAR*)esp + 0x4);
+	ULONG esi = *(PULONG)((UCHAR*)esp + 0x8);
+	ULONG edx = *(PULONG)((UCHAR*)esp + 0xC);
+	ULONG ecx = *(PULONG)((UCHAR*)esp + 0x10);
+	ULONG ebx = *(PULONG)((UCHAR*)esp + 0x14);
+	ULONG eax = *(PULONG)((UCHAR*)esp + 0x18);
 
 
 	// WRITE YOUR CODE HERE
@@ -41,6 +51,8 @@ extern "C" __declspec(dllexport) VOID HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8
 		Log(L"Fatal Error, RSP==NULL\n");
 		return;
 	}
+
+	// original rigster value and location
 	PVOID r15 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x0);
 	PVOID r14 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x8);
 	PVOID r13 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x10);
