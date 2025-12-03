@@ -153,7 +153,8 @@ void HookProcDlg::UpdateLayoutForSplitter(int cx, int cy) {
         CRect rcLabel; modulesLabel->GetWindowRect(&rcLabel); ScreenToClient(&rcLabel);
         listTop = rcLabel.bottom + 2; // small gap to avoid overlap
     }
-    int listHeight = cy - listTop - 20; if (listHeight < 80) listHeight = 80;
+    // Make module list bottom align with dialog bottom using same margin as hooks list
+    int listHeight = cy - listTop - margin; if (listHeight < 80) listHeight = 80;
     m_ModuleList.MoveWindow(margin, listTop, leftWidth, listHeight);
     int panelX = margin + leftWidth + margin;
     auto moveCtrl = [&](int id, int x, int y, int w, int h) { CWnd* c = GetDlgItem(id); if (c) c->MoveWindow(x, y, w, h); };
@@ -748,7 +749,8 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
         CRect rcLabel; modulesLabel->GetWindowRect(&rcLabel); ScreenToClient(&rcLabel);
         listTop = rcLabel.bottom + 2;
     }
-    int listH = cy - listTop - 60; if(listH < 80) listH = 80;
+    // Keep module list bottom aligned with hook list bottom by using same bottom margin
+    int listH = cy - listTop - margin; if(listH < 80) listH = 80;
     HDWP hdwp = BeginDeferWindowPos(10);
     if (!hdwp) { m_ModuleList.MoveWindow(margin, listTop, listW, listH); }
     int panelX = margin + listW + margin;
