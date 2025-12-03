@@ -29,7 +29,7 @@
 #define ID_MENU_OPEN_ETW_LOG     40007
 // Extra menu command
 #define ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE 40020
-#define ID_MENU_RE_REGISTER_OBCALLBACK 40021
+#define ID_MENU_EXTRA_SELFDEFENSE       40022
 #define ID_TOOLS_ADD_WHITELIST         40031
 #define ID_TOOLS_REMOVE_WHITELIST      40032
 // Plugin menu base (reserve a small range for plugin items)

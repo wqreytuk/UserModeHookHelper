@@ -25,6 +25,12 @@
  *   synchronization. If you plan concurrent mutations, add synchronization.
  */
 
+typedef struct _ACG_MitigationOffPos {
+	ULONG mitigation;
+	UCHAR acg_pos;
+}ACG_MitigationOffPos, PACG_MitigationOffPos;
+VOID DriverCtx_GetACGMitigationOffPosInfo(ACG_MitigationOffPos* out);
+VOID DriverCtx_SetACGMitigationOffPosInfo(ACG_MitigationOffPos* acg);
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter);
 PFLT_FILTER DriverCtx_GetFilter(VOID);
 DWORD64 DriverCtx_GetSSDT();

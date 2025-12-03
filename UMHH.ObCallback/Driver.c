@@ -17,6 +17,11 @@ typedef struct _HASH_NODE {
 } HASH_NODE, *PHASH_NODE;
 LIST_ENTRY g_HashList; // list of whitelist hashes
 KSPIN_LOCK g_HashLock; // protects g_HashList
+// Global SelfDefense toggle loaded from registry and runtime IOCTL
+static BOOLEAN gSelfDefense = FALSE;
+// Simple control device for runtime toggling
+static PDEVICE_OBJECT gCtlDevice = NULL;
+static UNICODE_STRING gCtlSymLink;
 void Log(const WCHAR* format, ...);
 PFLT_FILTER gFilter;
 NTSYSAPI
@@ -103,6 +108,13 @@ MiniUnload(
 	}
 	KeReleaseSpinLock(&g_HashLock, oldIrql);
 
+	// Cleanup control device
+	if (gCtlDevice) {
+		IoDeleteSymbolicLink(&gCtlSymLink);
+		IoDeleteDevice(gCtlDevice);
+		gCtlDevice = NULL;
+	}
+
 	Log(L"successfully unloaded UMHH.ObCallback driver\n");
 	return STATUS_SUCCESS;
 }
@@ -130,6 +142,8 @@ CONST FLT_REGISTRATION FilterRegistration = {
 	NULL            //  SectionNotificationCallback
 };
 
+
+// this callback function will make sure UMController.exe can always get the requested handle access
 // this callback function will make sure UMController.exe can always get the requested handle access
 NTSTATUS PreObjProcesCallback(
 	_In_ PVOID RegistrationContext,
@@ -141,7 +155,9 @@ NTSTATUS PreObjProcesCallback(
 	if (OperationInformation->ObjectType != *PsProcessType)
 		return STATUS_SUCCESS;
 
+
 	// and we need to deny termination access to our white list process
+	if(gSelfDefense) // only delete termination access when self defense is on
 	{
 		PUNICODE_STRING imageName = NULL;
 		NTSTATUS stImg = 0;
@@ -221,7 +237,44 @@ http://144.34.164.217
 	return STATUS_SUCCESS;
 }
 
-// regist object open/duplicate callback
+// IOCTL codes for SelfDefense toggle
+#ifndef UMHH_IOCTL_SET_SELFDEFENSE
+#define UMHH_IOCTL_SET_SELFDEFENSE CTL_CODE(FILE_DEVICE_UNKNOWN, 0x900, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#endif
+#ifndef UMHH_IOCTL_GET_SELFDEFENSE
+#define UMHH_IOCTL_GET_SELFDEFENSE CTL_CODE(FILE_DEVICE_UNKNOWN, 0x901, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#endif
+
+static NTSTATUS UMHHObCtl_CreateClose(_In_ PDEVICE_OBJECT Dev, _Inout_ PIRP Irp) {
+	UNREFERENCED_PARAMETER(Dev);
+	Irp->IoStatus.Status = STATUS_SUCCESS;
+	Irp->IoStatus.Information = 0;
+	IoCompleteRequest(Irp, IO_NO_INCREMENT);
+	return STATUS_SUCCESS;
+}
+
+static NTSTATUS UMHHObCtl_DeviceControl(_In_ PDEVICE_OBJECT Dev, _Inout_ PIRP Irp) {
+	UNREFERENCED_PARAMETER(Dev);
+	PIO_STACK_LOCATION irpSp = IoGetCurrentIrpStackLocation(Irp);
+	ULONG code = irpSp->Parameters.DeviceIoControl.IoControlCode;
+	NTSTATUS st = STATUS_INVALID_DEVICE_REQUEST;
+	if (code == UMHH_IOCTL_SET_SELFDEFENSE) {
+		if (irpSp->Parameters.DeviceIoControl.InputBufferLength >= sizeof(ULONG) && Irp->AssociatedIrp.SystemBuffer) {
+			ULONG v = *(ULONG*)Irp->AssociatedIrp.SystemBuffer; gSelfDefense = (v != 0) ? TRUE : FALSE;
+			st = STATUS_SUCCESS; Irp->IoStatus.Information = 0;
+		}
+		else { st = STATUS_BUFFER_TOO_SMALL; Irp->IoStatus.Information = 0; }
+	}
+	else if (code == UMHH_IOCTL_GET_SELFDEFENSE) {
+		if (irpSp->Parameters.DeviceIoControl.OutputBufferLength >= sizeof(ULONG) && Irp->AssociatedIrp.SystemBuffer) {
+			*(ULONG*)Irp->AssociatedIrp.SystemBuffer = (gSelfDefense ? 1u : 0u);
+			st = STATUS_SUCCESS; Irp->IoStatus.Information = sizeof(ULONG);
+		}
+		else { st = STATUS_BUFFER_TOO_SMALL; Irp->IoStatus.Information = 0; }
+	}
+	Irp->IoStatus.Status = st; IoCompleteRequest(Irp, IO_NO_INCREMENT); return st;
+}
+// regist object open / duplicate callback
 NTSTATUS RegisterProcessCallback() {
 	OB_OPERATION_REGISTRATION operations[1] = { 0 };
 
@@ -245,7 +298,7 @@ DriverEntry(
 	_In_ PUNICODE_STRING RegistryPath
 )
 {
-	  // DbgBreakPoint();
+	// DbgBreakPoint();
 
 	UNREFERENCED_PARAMETER(RegistryPath);
 
@@ -262,6 +315,23 @@ DriverEntry(
 		HANDLE hKey = NULL;
 		NTSTATUS st = ZwOpenKey(&hKey, KEY_READ, &oa);
 		if (NT_SUCCESS(st)) {
+			// Read SelfDefense toggle (REG_DWORD EnableSelfDefense)
+			UNICODE_STRING sdName; RtlInitUnicodeString(&sdName, L"EnableSelfDefense");
+			ULONG sdLen = 0;
+			NTSTATUS stSd = ZwQueryValueKey(hKey, &sdName, KeyValuePartialInformation, NULL, 0, &sdLen);
+			if (stSd == STATUS_BUFFER_TOO_SMALL || stSd == STATUS_BUFFER_OVERFLOW) {
+				PKEY_VALUE_PARTIAL_INFORMATION kvpiSd = (PKEY_VALUE_PARTIAL_INFORMATION)ExAllocatePoolWithTag(NonPagedPoolNx, sdLen, 'vSDC');
+				if (kvpiSd) {
+					stSd = ZwQueryValueKey(hKey, &sdName, KeyValuePartialInformation, kvpiSd, sdLen, &sdLen);
+					if (NT_SUCCESS(stSd) && kvpiSd->Type == REG_DWORD && kvpiSd->DataLength >= sizeof(ULONG)) {
+						ULONG v = *(ULONG*)kvpiSd->Data; gSelfDefense = (v != 0) ? TRUE : FALSE;
+						Log(L"SelfDefense loaded: %d\n", (int)gSelfDefense);
+					}
+					ExFreePoolWithTag(kvpiSd, 'vSDC');
+				}
+			}
+			// (no duplicate read)
+
 			UNICODE_STRING valName;
 			RtlInitUnicodeString(&valName, L"WhitelistHashes");
 			// Query as REG_QWORD or REG_SZ numeric; allocate buffer for value info
@@ -279,7 +349,7 @@ DriverEntry(
 							while (i < wc) {
 								if (p[i] == L'\0') { i++; continue; }
 								PWCH start = &p[i]; SIZE_T len = 0;
-								while (i+len < wc && p[i+len] != L'\0') len++;
+								while (i + len < wc && p[i + len] != L'\0') len++;
 								ULONGLONG hv = 0; ULONGLONG tmp = 0; swscanf_s(start, L"%llx", &tmp); hv = tmp;
 								if (hv == 0) { tmp = 0; swscanf_s(start, L"%llu", &tmp); hv = tmp; }
 								if (hv != 0) {
@@ -289,7 +359,8 @@ DriverEntry(
 								i += (len + 1);
 							}
 							Log(L"WhitelistHashes loaded (entries appended)\n");
-						} else {
+						}
+						else {
 							Log(L"WhitelistHashes missing or wrong type=%u\n", kvpi->Type);
 						}
 					}
@@ -297,9 +368,24 @@ DriverEntry(
 				}
 			}
 			ZwClose(hKey);
-		} else {
+		}
+		else {
 			Log(L"Open registry failed for WhitelistHashes: 0x%x\n", st);
 		}
+	}
+
+	// Create control device for runtime toggling
+	// Setup simple dispatch for CREATE/CLOSE/IOCTL
+	DriverObject->MajorFunction[IRP_MJ_CREATE] = UMHHObCtl_CreateClose;
+	DriverObject->MajorFunction[IRP_MJ_CLOSE] = UMHHObCtl_CreateClose;
+	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = UMHHObCtl_DeviceControl;
+	UNICODE_STRING devName; RtlInitUnicodeString(&devName, L"\\Device\\UMHHObCallbackCtl");
+	RtlInitUnicodeString(&gCtlSymLink, L"\\DosDevices\\UMHHObCallbackCtl");
+	PDEVICE_OBJECT dev = NULL;
+	status = IoCreateDevice(DriverObject, 0, &devName, FILE_DEVICE_UNKNOWN, 0, FALSE, &dev);
+	if (NT_SUCCESS(status)) {
+		gCtlDevice = dev; (void)IoCreateSymbolicLink(&gCtlSymLink, &devName);
+		Log(L"Control device created for UMHH.ObCallback\n");
 	}
 
 

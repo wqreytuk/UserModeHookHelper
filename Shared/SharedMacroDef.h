@@ -59,3 +59,7 @@ typedef struct _PH_MODULE_LIST_NODE {
 	unsigned long Size; // SizeOfImage if known; 0 if unknown
 	wchar_t* Path;      // Full NT path of module
 } PH_MODULE_LIST_NODE, *PPH_MODULE_LIST_NODE;
+
+#ifndef UMHH_OB_CALLBACK_DEVICE
+#define UMHH_OB_CALLBACK_DEVICE L"\\\\.\\UMHHObCallbackCtl"
+#endif

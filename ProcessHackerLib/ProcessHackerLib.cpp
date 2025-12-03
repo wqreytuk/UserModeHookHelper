@@ -348,7 +348,7 @@ namespace PHLIB {
 				}
 				if (g_hookServices->wstrcasestr_check(mode_path, target_module)) {
 					*ModuleBase = currentEntry.DllBase;
-					PHLog(L"target module Path=%s Base=0x%x\n", mode_path, *ModuleBase);
+					PHLog(L"target module Path=%s Base=0x%p\n", mode_path, *ModuleBase);
 					break;
 				}
 			}
@@ -456,7 +456,7 @@ namespace PHLIB {
 				}
 				if (g_hookServices->wstrcasestr_check(mode_path, target_module)) {
 					*ModuleBase = (DWORD64)(ULONG_PTR)currentEntry.DllBase;
-					PHLog(L"target module Path=%s Base=0x%x\n", mode_path, *ModuleBase);
+					PHLog(L"target module Path=%s Base=0x%p\n", mode_path, *ModuleBase);
 					break;
 				}
 			}

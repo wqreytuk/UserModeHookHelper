@@ -83,7 +83,7 @@ VOID PortCtx_Dereference(PCOMM_CONTEXT ctx) {
     if (!ctx) return;
     LONG v = InterlockedDecrement(&ctx->m_RefCount);
     if (v == 0) {
-		Log(L"disconnected,port Context=0x%p release\n", ctx);
+		Log(L"Disconnected, Port Context=0x%p release\n", ctx);
         ExFreePoolWithTag(ctx, tag_ctx);
     }
 }

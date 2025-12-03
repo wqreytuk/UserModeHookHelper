@@ -6,6 +6,7 @@ static PWSTR s_UserDir = NULL;
 static BOOLEAN s_GlobalHookMode = FALSE;
 static DWORD64 s_ssdt;
 static DRIVERCTX_OSVER s_OsVer = {0};
+static ACG_MitigationOffPos acg_mitigation = { 0 };
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter) {
     s_Filter = Filter;
 }
@@ -17,6 +18,14 @@ DWORD64 DriverCtx_GetSSDT() {
 }
 VOID DriverCtx_SetSSDT(DWORD64 ssdt) {
 	s_ssdt = ssdt;
+}
+VOID DriverCtx_SetACGMitigationOffPosInfo(ACG_MitigationOffPos* acg) {
+	acg_mitigation.mitigation = acg->mitigation;
+	acg_mitigation.acg_pos = acg->acg_pos;
+}
+VOID DriverCtx_GetACGMitigationOffPosInfo(ACG_MitigationOffPos* out) {
+	out->mitigation = acg_mitigation.mitigation;
+	out->acg_pos = acg_mitigation.acg_pos;
 }
 VOID DriverCtx_SetServerPort(PFLT_PORT ServerPort) {
     s_ServerPort = ServerPort;

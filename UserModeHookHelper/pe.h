@@ -31,6 +31,11 @@ PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName);
 //   unreferenced PEPROCESS must ensure it remains valid for the call.
 BOOLEAN PE_IsProcessX86(IN PEPROCESS Process);
 PULONGLONG PE_GetSSDT();
+NTSTATUS PE_GetDriverBase(
+	PCSTR DriverName,
+	PVOID* DriverBaseAddress
+);
+ULONG PE_MiArbitraryCodeBlockedOffsetAndBitpos(UCHAR* pos);
 // Wrapper kept for compatibility; PE_GetExport auto-detects 32/64 images.
 // PE_GetExport auto-detects 32/64 images; PE_GetExport32 removed.
 

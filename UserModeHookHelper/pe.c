@@ -120,7 +120,84 @@ PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName)
     return NULL;
 }
 
+ULONG PE_MiArbitraryCodeBlockedOffsetAndBitpos(UCHAR* pos) {
+	// DbgBreakPoint();
+	if (!pos) {
+		Log(L"required parameter pos can not be NULL\n");
+		return 0;
+	}
+	*pos = 0;
 
+	PVOID ntkrnl_base = 0;
+	PE_GetDriverBase("ntoskrnl.exe", &ntkrnl_base);
+	if (!ntkrnl_base) {
+		Log(L"failed to call PE_GetDriverBase\n");
+		return 0;
+	}
+	PVOID fn_NtMapViewOfSection_addr = 0;
+	fn_NtMapViewOfSection_addr = PE_GetExport(ntkrnl_base, "NtMapViewOfSection");
+	if (!fn_NtMapViewOfSection_addr) {
+		Log(L"failed to get export function NtMapViewOfSection address\n");
+		return 0;
+	}
+
+	// begin search
+	INT32 Limit = 4096;
+
+	// Increase that address until you hit "0x8b 0xd8"
+	// which is asm code mov ebx, eax
+	// this pattern only appears after nt!MiMapViewOfSection being called
+	for (int i = 0; i < Limit; i++) {		      
+		if (*(PUINT8)((ULONG_PTR)fn_NtMapViewOfSection_addr + i) == 0x8b
+			&& *(PUINT8)((ULONG_PTR)fn_NtMapViewOfSection_addr + i + 1) == 0xd8)
+		{
+			// next instruction rip + offset
+			DWORD64 MiMapViewOfSection = (DWORD64)(ULONG_PTR)fn_NtMapViewOfSection_addr + i +
+				(DWORD64)(ULONG_PTR)(INT64)(INT32)(*(DWORD*)(DWORD64)((ULONG_PTR)fn_NtMapViewOfSection_addr + i - 0x5 + 1));
+			// now search from MiMapViewOfSection until get 0x8b 0xf8, which is  asm code mov edi, eax
+			// then search back to check if there is two mov qword ptr instruction whit a 0x20 back search limit
+			for ( i = 0; i < Limit; i++) {
+				if (*(PUINT8)((ULONG_PTR)MiMapViewOfSection + i) == 0x8b
+					&& *(PUINT8)((ULONG_PTR)MiMapViewOfSection + i + 1) == 0xf8) {
+				// back search to match certain pattern
+					if (*(PUINT8)((ULONG_PTR)MiMapViewOfSection + i - 5 - 5 - 5) == 0x48
+						&& * (PUINT8)((ULONG_PTR)MiMapViewOfSection + i - 5 - 5 - 5 + 1) == 0x89) {
+						if (*(PUINT8)((ULONG_PTR)MiMapViewOfSection + i - 5 - 5 - 5+5) == 0x48
+							&& * (PUINT8)((ULONG_PTR)MiMapViewOfSection + i - 5 - 5 - 5 +5+ 1) == 0x89) {
+							DWORD64 call_ins_addr = (ULONG_PTR)MiMapViewOfSection + i - 5;
+							DWORD64 nex_ins_addr = call_ins_addr + 5;
+							DWORD64 MiMapViewOfImageSection = nex_ins_addr +
+								(DWORD64)(ULONG_PTR)(INT64)(INT32)(*(DWORD*)(DWORD64)((ULONG_PTR)call_ins_addr + 1));
+							for ( i = 0; i < Limit; i++) {
+								if (*(PUINT8)((ULONG_PTR)MiMapViewOfImageSection + i) == 0x85
+									&& *(PUINT8)((ULONG_PTR)MiMapViewOfImageSection + i + 1) == 0xc0) {
+									if (*(PUINT8)((ULONG_PTR)MiMapViewOfImageSection + i - 5) == 0xe8
+										&& *(PUINT8)((ULONG_PTR)MiMapViewOfImageSection + i - 5-5) == 0x49) {
+										call_ins_addr = MiMapViewOfImageSection+i - 5;
+										nex_ins_addr = MiMapViewOfImageSection+i;
+										DWORD64 MiArbitraryCodeBlocked = nex_ins_addr +
+											(DWORD64)(ULONG_PTR)(INT64)(INT32)(*(DWORD*)(DWORD64)((ULONG_PTR)call_ins_addr + 1));
+										for ( i = 0; i < Limit; i++) {
+											if (*(PUINT8)((ULONG_PTR)MiArbitraryCodeBlocked + i) == 0xf
+												&& *(PUINT8)((ULONG_PTR)MiArbitraryCodeBlocked + i + 1) == 0xba
+												&& *(PUINT8)((ULONG_PTR)MiArbitraryCodeBlocked + i + 2) == 0xe2) {
+												*pos = *(PUINT8)((ULONG_PTR)MiArbitraryCodeBlocked + i + 3);
+												return *(DWORD*)((ULONG_PTR)MiArbitraryCodeBlocked + i - 4);
+											}
+										}
+									}
+								}
+							}
+						}
+					
+					}
+				
+				}
+			}
+		}
+	}
+	return 0;
+}
 PULONGLONG PE_GetSSDT()
 {
     // Decide path based on OS version persisted in driver context.
@@ -141,8 +218,9 @@ PULONGLONG PE_GetSSDT()
 				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 3) == 0x25)
 			{
 				KiSystemCall64 = KiSystemCall64 + i;
-				KiSystemServiceUser = KiSystemCall64 + 4 + 4 + 1 +1 + 4 + 
-					(0xFFFFFFFF00000000 | *(DWORD*)((ULONG_PTR)KiSystemCall64 + 4 + 4 + 1 + 1));
+				KiSystemServiceUser = KiSystemCall64 + 4 + 4 + 1 + 1 + 4 +
+					// sign extend
+					(DWORD64)(ULONG_PTR)(INT64)((INT32)(*(DWORD*)((ULONG_PTR)KiSystemCall64 + 4 + 4 + 1 + 1))); 
 				for ( i = 0; i < Limit; i++) {		        // Increase that address until you hit "0x4c/0x8d/0x15"
 					if (*(PUINT8)((ULONG_PTR)KiSystemServiceUser + i) == 0x4C
 						&& *(PUINT8)((ULONG_PTR)KiSystemServiceUser + i + 1) == 0x8D
@@ -194,4 +272,91 @@ BOOLEAN PE_IsProcessX86(IN PEPROCESS Process)
     // PsGetProcessWow64Process returns the WoW64 context pointer if present.
     PVOID wow64 = PsGetProcessWow64Process(Process);
     return (wow64 != NULL) ? TRUE : FALSE;
+}
+
+
+
+// Structure to hold module information entry
+typedef struct _SYSTEM_MODULE_INFORMATION_ENTRY {
+	HANDLE Section;
+	PVOID MappedBase;
+	PVOID ImageBase;
+	ULONG ImageSize;
+	ULONG Flags;
+	USHORT LoadOrderIndex;
+	USHORT InitOrderIndex;
+	USHORT LoadCount;
+	USHORT OffsetToFileName;
+	UCHAR  FullPathName[256];
+} SYSTEM_MODULE_INFORMATION_ENTRY, *PSYSTEM_MODULE_INFORMATION_ENTRY;
+
+typedef struct _SYSTEM_MODULE_INFORMATION {
+	ULONG NumberOfModules;
+	SYSTEM_MODULE_INFORMATION_ENTRY Modules[1];
+} SYSTEM_MODULE_INFORMATION, *PSYSTEM_MODULE_INFORMATION;
+
+FORCEINLINE const char* stristr(const char* haystack, const char* needle) {
+	if (!haystack || !needle) return NULL;
+
+	size_t needleLen = 0;
+	while (needle[needleLen]) ++needleLen;
+	if (needleLen == 0) return haystack;
+
+	for (; *haystack; ++haystack) {
+		size_t i = 0;
+		while (i < needleLen && tolower(haystack[i]) == tolower(needle[i])) {
+			++i;
+		}
+		if (i == needleLen) return haystack;
+	}
+
+	return NULL;
+}
+#define SystemModuleInformation 11
+NTSTATUS ZwQuerySystemInformation(
+	ULONG SystemInformationClass,
+	PVOID SystemInformation,
+	ULONG SystemInformationLength,
+	PULONG ReturnLength
+);
+NTSTATUS PE_GetDriverBase(
+	PCSTR DriverName,
+	PVOID* DriverBaseAddress
+)
+{
+	NTSTATUS status;
+	ULONG bufferSize = 0;
+	PVOID buffer = NULL;
+
+	// Query the size of the buffer needed
+	status = ZwQuerySystemInformation(SystemModuleInformation, NULL, 0, &bufferSize);
+	if (status != STATUS_INFO_LENGTH_MISMATCH) {
+		return status;
+	}
+
+	// Allocate memory for the system module information
+	buffer = ExAllocatePoolWithTag(NonPagedPool, bufferSize, 'modL');
+	if (buffer == NULL) {
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	// Query the system module information
+	status = ZwQuerySystemInformation(SystemModuleInformation, buffer, bufferSize, &bufferSize);
+	if (!NT_SUCCESS(status)) {
+		ExFreePool(buffer);
+		return status;
+	}
+
+	PSYSTEM_MODULE_INFORMATION pSystemModuleInfo = (PSYSTEM_MODULE_INFORMATION)buffer;
+	for (ULONG i = 0; i < pSystemModuleInfo->NumberOfModules; i++) {
+		PSYSTEM_MODULE_INFORMATION_ENTRY pModuleEntry = &pSystemModuleInfo->Modules[i];
+
+		if (stristr((PCSTR)pModuleEntry->FullPathName, DriverName)) {
+			*DriverBaseAddress = pModuleEntry->ImageBase;
+			break;
+		}
+	}
+
+	ExFreePool(buffer);
+	return status;
 }
