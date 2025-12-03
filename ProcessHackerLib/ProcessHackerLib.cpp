@@ -20,7 +20,38 @@ namespace PHLIB {
 	}
 
 #define PHLog(...) g_hookServices->LogPhlib(__VA_ARGS__);
-	
+	NTSTATUS
+		PhGetProcessIsWow64Internal(
+			_In_ DWORD pid,
+			_Out_ PBOOLEAN IsWow64
+		)
+	{
+		NTSTATUS status;
+		ULONG_PTR wow64;
+		if (!g_hookServices) {
+			PHLog(L"g_hookServices NULL\n");
+			return STATUS_UNSUCCESSFUL;
+		}
+		HANDLE ProcessHandle = NULL;
+		if (!g_hookServices->GetHighAccessProcHandle(pid, &ProcessHandle)) {
+			PHLog(L"failed to call GetHighAccessProcHandle\n");
+			return STATUS_UNSUCCESSFUL;
+		}
+		status = NtQueryInformationProcess(
+			ProcessHandle,
+			ProcessWow64Information,
+			&wow64,
+			sizeof(ULONG_PTR),
+			NULL
+		);
+
+		if (NT_SUCCESS(status))
+		{
+			*IsWow64 = !!wow64;
+		}
+		CloseHandle(ProcessHandle);
+		return status;
+	}
 	 
 	NTSTATUS PhReadVirtualMemory(
 		_In_ HANDLE ProcessHandle,

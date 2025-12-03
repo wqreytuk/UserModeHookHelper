@@ -23,6 +23,7 @@
 #include <memory>
 #include <winerror.h>   // For HRESULT macros 
 #include <cstddef>
+#include "../ProcessHackerLib/phlib_expose.h"
 // Use LONG to represent NT-style status values in this user-mode file to
 // avoid requiring nt headers (which may not be present in all environments).
 
@@ -525,37 +526,16 @@ bool Filter::FLTCOMM_MapHookSectionToSet(std::unordered_set<unsigned long long>&
 	return true;
 }
 bool Filter::FLTCOMM_IsProcessWow64(DWORD pid, bool& outIsWow64) {
-	// Build message (payload: DWORD pid)
-	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
-	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
-	if (!msg) return false;
-	memset(msg, 0, msgSize);
-	msg->m_Cmd = CMD_IS_PROCESS_WOW64;
-	memcpy(msg->m_Data, &pid, sizeof(DWORD));
-
-	// Allow for drivers that might return a DWORD or BOOLEAN; pad to avoid stack stomp
-	struct WOW64_REPLY { BOOLEAN isWow64; UCHAR pad[3]; } replyBuf; // 4 bytes
-	memset(&replyBuf, 0, sizeof(replyBuf));
-	DWORD bytesOut = 0;
-	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, &replyBuf, (DWORD)sizeof(replyBuf), &bytesOut);
-	free(msg);
-
-	if (hr != S_OK) {
-		if (0x80070057 == hr)
-			return false;
-		LOG_CTRL_ETW(L"FLTCOMM_IsProcessWow64: FilterSendMessage failed hr=0x%08x pid=%u\n", hr, pid);
+	// I'll give up requesting kernel for this info, copied some code from process hacker project
+	BOOLEAN IsWow64 = FALSE;
+	ULONG status = (ULONG)(ULONG_PTR)PHLIB::PhGetProcessIsWow64((void*)(ULONG_PTR)pid,
+		(void*)(ULONG_PTR)&IsWow64);
+	if (0 != status) {
+		LOG_CTRL_ETW(L"failed to call PHLIB::PhGetProcessIsWow64, Pid=%u Status=0x%x\n", pid, status);
 		return false;
 	}
-	if (bytesOut == 0) {
-		LOG_CTRL_ETW(L"FLTCOMM_IsProcessWow64: empty reply pid=%u\n", pid);
-		return false;
-	}
-	// Interpret first byte as BOOLEAN; driver may have written 1 or 4 bytes.
-	BOOLEAN b = replyBuf.isWow64;
-	outIsWow64 = (b ? true : false);
-	if (bytesOut != 1 && bytesOut != sizeof(replyBuf)) {
-		LOG_CTRL_ETW(L"FLTCOMM_IsProcessWow64: unexpected reply size=%u (expected 1 or %u) pid=%u\n", bytesOut, (UINT)sizeof(replyBuf), pid);
-	}
+	outIsWow64 = IsWow64;
+	
 	return true;
 }
 
@@ -596,7 +576,8 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
 	DWORD bytesOut = 0;
 	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, reply.get(), (DWORD)replySize, &bytesOut);
 	free(msg);
-	if (hr != S_OK || bytesOut < (DWORD)replySize) return false;
+	if (hr != S_OK || bytesOut < (DWORD)replySize) 
+		return false;
 	HANDLE h = NULL;
 	RtlCopyMemory(&h, reply.get(), sizeof(HANDLE));
 	if (!h) return false;

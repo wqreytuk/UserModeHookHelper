@@ -26,4 +26,16 @@ namespace PHLIB {
 	void SetHookServices(void* services) {
 		SetHookServicesInternal((IHookServices*)(ULONG_PTR)services);
 	}
+	/*	NTSTATUS
+		PhGetProcessIsWow64Internal(
+			_In_ DWORD pid,
+			_Out_ PBOOLEAN IsWow64
+		);*/
+	void *PhGetProcessIsWow64( void* pid,
+		 void* IsWow64){
+		return 	(void*)(ULONG_PTR)PhGetProcessIsWow64Internal(
+			(DWORD)(ULONG_PTR)pid,
+			(BOOLEAN*)(ULONG_PTR)IsWow64
+		);
+	}
 }

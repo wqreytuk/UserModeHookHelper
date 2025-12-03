@@ -7,4 +7,6 @@ namespace PHLIB {
 		 void* pid,
 		 void* OutHead
 	 );
+	 void *PhGetProcessIsWow64(void* pid,
+		 void* IsWow64);
 }

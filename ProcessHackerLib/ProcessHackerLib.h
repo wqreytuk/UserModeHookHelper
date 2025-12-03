@@ -54,7 +54,11 @@ namespace PHLIB {
 			_Out_ PPROCESS_BASIC_INFORMATION BasicInformation
 		);
 	// Logging integration: allow host to provide IHookServices for logging
-
+	NTSTATUS
+		PhGetProcessIsWow64Internal(
+			_In_ DWORD pid,
+			_Out_ PBOOLEAN IsWow64
+		);
 	void SetHookServicesInternal(IHookServices* services);
 	void PHLog(const wchar_t* fmt, ...);
 

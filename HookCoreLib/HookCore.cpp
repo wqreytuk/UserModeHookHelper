@@ -8,6 +8,7 @@
 #include "Trampoline.h"
 #include "../Shared/SharedMacroDef.h"
 #include <psapi.h>"
+#include "../ProcessHackerLib/phlib_expose.h"
 
 namespace HookCore {
 #define E9_JMP_INSTRUCTION_SIZE 0x5
@@ -33,104 +34,29 @@ namespace HookCore {
 	}
 	bool EnumerateModules(DWORD pid, std::vector<ModuleInfo>& out) {
 		out.clear();
-
-		if (!g_hookServices) {
-			MessageBoxW(NULL,L"g_hookServices NULL", L"HookDlg", MB_ICONERROR);
+		PPH_MODULE_LIST_NODE head = NULL;
+		LONG status = (LONG)(ULONG_PTR)PHLIB::PhBuildModuleList((void*)(ULONG_PTR)pid, (void*)(ULONG_PTR)&head);
+		if (status != 0) {
+			LOG_CORE(g_hookServices, L"failed to call PHLIB::PhBuildModuleList, Status=0x%x\n", status);
+			MessageBoxW(NULL,L"failed to call PHLIB::PhBuildModuleList", L"HookDlg", MB_ICONERROR);
 			return false;
 		}
+		for (PPH_MODULE_LIST_NODE n = head; n != NULL; n = n->Next) {
+			// Extract module name from path
+			std::wstring name = n->Path ? std::wstring(n->Path) : L"";
+			size_t pos = name.find_last_of(L"\\");
+			std::wstring justName = (pos != std::wstring::npos) ? name.substr(pos + 1) : name;
+			
 
-
-		HANDLE hProc = NULL;
-		bool is64 = false;
-		if (!g_hookServices->IsProcess64(pid, is64)) {
-			LOG_UI(g_hookServices, L"failed to call IsProcess64\n");
-			return false;
+			ModuleInfo mi;
+			mi.name = justName;
+			mi.path = name;
+			mi.base = (ULONGLONG)n->Base;
+			mi.size = (ULONGLONG)n->Size;
+			out.push_back(std::move(mi));
 		}
-		// for WOW64 process, use this:
-		if (!is64) {
-			// get high privilege process handle first
-			if (!g_hookServices->GetHighAccessProcHandle(pid, &hProc)) {
-				LOG_UI(g_hookServices, L"failed to call GetHighAccessProcHandle\n");
-				return false;
-			}
-			PPH_MODULE_LIST_NODE head = NULL;
-			LONG status = (LONG)(ULONG_PTR)g_hookServices->PhBuildModuleListWow64((void*)(ULONG_PTR)hProc, (void*)(ULONG_PTR)&head);
-			if (status != 0) {
-				LOG_UI(g_hookServices, L"failed to call PhBuildModuleListWow64, Status=0x%x\n", status);
-				CloseHandle(hProc);
-				return false;
-			}
-			for (PPH_MODULE_LIST_NODE n = head; n != NULL; n = n->Next) {
-				std::wstring baseStr = L"0x" + Hex64((ULONGLONG)n->Base);
-				// Extract module name from path
-				std::wstring name = n->Path ? std::wstring(n->Path) : L"";
-				size_t pos = name.find_last_of(L"\\");
-				std::wstring justName = (pos != std::wstring::npos) ? name.substr(pos + 1) : name;
-				
-				ModuleInfo mi;
-				mi.name = justName;
-				mi.path = name;
-				mi.base = (ULONGLONG)n->Base;
-				mi.size = (ULONGLONG)n->Size;
-				out.push_back(std::move(mi));
-			}
-			// Free list
-			while (head) { auto* next = head->Next; if (head->Path) free(head->Path); free(head); head = next; }
-		}
-		else {
-			if (!g_hookServices->GetHighAccessProcHandle(pid, &hProc)) {
-				LOG_UI(g_hookServices, L"failed to call GetHighAccessProcHandle\n");
-				return false;
-			}
-			int i = 0;
-			HMODULE hMods[4096];
-			DWORD cbNeeded = 0;
-
-			wchar_t wide[MAX_PATH] = { 0 };
-			// Use LIST_MODULES_ALL to be robust across WoW64 and different module visibility
-			if (EnumProcessModulesEx(hProc, hMods, sizeof(hMods), &cbNeeded, LIST_MODULES_ALL)) {
-				DWORD count = cbNeeded / sizeof(HMODULE);
-				for (DWORD i = 0; i < count; ++i) {
-					char szModName[MAX_PATH] = { 0 };
-					if (GetModuleFileNameExA(hProc, hMods[i], szModName, _countof(szModName))) {
-						MODULEINFO mi;
-						if (!GetModuleInformation(hProc, hMods[i], &mi, sizeof(mi))) {
-							LOG_UI(g_hookServices, L"failed to call GetModuleInformation, Error=0x%x\n", GetLastError());
-							CloseHandle(hProc);
-							return false;
-						}
-						std::string module_name = szModName;
-						size_t pos = module_name.find_last_of("\\");
-						std::string justName = (pos != std::string::npos) ? module_name.substr(pos + 1) : module_name;
-
-						WCHAR full_path_wide[MAX_PATH] = { 0 };
-						g_hookServices->ConvertCharToWchar(szModName, full_path_wide, MAX_PATH);
-
-						WCHAR module_name_wide[MAX_PATH] = { 0 };
-						g_hookServices->ConvertCharToWchar(justName.c_str(), module_name_wide, MAX_PATH);
-
-						ModuleInfo m;
-						m.name = module_name_wide;
-						m.path = full_path_wide;
-						m.base = (ULONGLONG)mi.lpBaseOfDll;
-						m.size = (ULONGLONG)mi.SizeOfImage;
-						out.push_back(std::move(m));
-					}
-					else {
-						CloseHandle(hProc);
-						LOG_UI(g_hookServices, L"failed to call GetModuleFileNameExA, Error=0x%x\n", GetLastError());
-						return false;
-					}
-				}
-			}
-			else {
-				CloseHandle(hProc);
-				LOG_UI(g_hookServices, L"failed to call EnumProcessModulesEx, Error=0x%x\n", GetLastError());
-				return false;
-			}
-		}
-		CloseHandle(hProc);
-		return true;
+		// Free list
+		while (head) { auto* next = head->Next; if (head->Path) free(head->Path); free(head); head = next; }
 	}
 	std::wstring FindOwningModule(DWORD pid, ULONGLONG address, PVOID* moduleBase) {
 		std::vector<ModuleInfo> mods; if (!EnumerateModules(pid, mods)) return L"";

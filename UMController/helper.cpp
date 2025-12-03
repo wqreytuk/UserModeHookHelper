@@ -771,21 +771,12 @@ bool Helper::ForceInject(DWORD pid) {
 	}
 
 	PVOID kernel32_base = NULL;
-	if (is64) {
-		if (!GetModuleBaseWithPathEx(hProc, is64 ? KERNEL_32_X64 : KERNEL_32_X86, &kernel32_base)) {
-			LOG_CTRL_ETW(L"failed to call GetModuleBaseWithPathEx PID=%u\n", pid);
-			CloseHandle(hProc);
-			return false;
-		}
-	}
-	else {
-		WCHAR _[] = WIDEN(KERNEL_32_X86);
-		if (0 != PHLIB::GetModuleBase((PVOID)hProc, (PVOID)_, (PVOID)&kernel32_base)) {
+
+		if (0 != PHLIB::GetModuleBase((PVOID)(ULONG_PTR)pid, (PVOID)(is64 ? WIDEN(KERNEL_32_X64) : WIDEN(KERNEL_32_X86)), (PVOID)&kernel32_base)) {
 			LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase PID=%u, CPU=x86\n", pid);
 			CloseHandle(hProc);
 			return false;
 		}
-	}
 
 	DWORD LoadLibraryW_func_offset = 0;
 	std::wstring dll_path = Helper::m_SysDriverMark + (is64 ? WIDEN(KERNEL_32_X64) : WIDEN(KERNEL_32_X86));
