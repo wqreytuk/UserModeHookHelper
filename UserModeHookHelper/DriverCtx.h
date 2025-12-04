@@ -25,6 +25,10 @@
  *   synchronization. If you plan concurrent mutations, add synchronization.
  */
 
+typedef struct _ResolveAcgWork_WORKITEM {
+	WORK_QUEUE_ITEM Item;
+} ResolveAcgWork_WORKITEM, *PResolveAcgWork_WORKITEM;
+
 VOID DriverCtx_GetACGMitigationOffPosInfo(ACG_MitigationOffPos* out);
 VOID DriverCtx_SetACGMitigationOffPosInfo(ACG_MitigationOffPos* acg);
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter);

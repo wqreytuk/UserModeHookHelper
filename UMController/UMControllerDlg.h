@@ -142,6 +142,9 @@ private:
 	std::unordered_set<std::wstring> m_EarlyBreakSet;
 	// Cached forced marks (PID:HIGH:LOW) compacted into 64-bit keys
 	std::unordered_set<unsigned long long> m_ForcedSet;
+	// Cached manual PPL actions (PID:HIGH:LOW) compacted into 64-bit keys
+	std::unordered_set<unsigned long long> m_PplElevatedSet;
+	std::unordered_set<unsigned long long> m_PplUnprotectedSet;
 
 	// Plugin system
 	CMenu m_PluginsSubMenu; // submenu showing discovered plugins

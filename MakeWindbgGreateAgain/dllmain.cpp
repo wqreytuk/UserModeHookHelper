@@ -70,14 +70,15 @@ extern "C" __declspec(dllexport) VOID HookCodeWin32(ULONG esp) {
 	DWORD pid = *(DWORD*)((ULONG_PTR)ebp + 8);
 	HANDLE hProc = NULL;
 	if (!FLTCOMM_GetProcessHandle(m_Port, pid, &hProc)) {
+		CloseHandle(m_Port);
 		Log(L"failed to call FLTCOMM_GetProcessHandle\n");
 		return;
 	}
 	// after successfully get high access handle, modify original eax value with it
 	*(PULONG)((UCHAR*)(ULONG_PTR)esp + 0x18) = (ULONG)(ULONG_PTR)hProc;
 	Log(L"process handle is replaced with 0x%x\n", hProc);
+	CloseHandle(m_Port);
 	// HOOK CODE END
-
 
 	return;
 }

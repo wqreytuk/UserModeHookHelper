@@ -107,10 +107,17 @@ DriverEntry(
 
 	Inject_CheckWin7();
 
-	WORK_QUEUE_ITEM WorkItem;
-	ExInitializeWorkItem(&WorkItem, ResolveAcgWorkRoutine, NULL);
-	ExQueueWorkItem(&WorkItem, DelayedWorkQueue);
-	
+
+	PResolveAcgWork_WORKITEM wi = ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(ResolveAcgWork_WORKITEM), tag_driver_ctx);
+	if (wi) {
+		ExInitializeWorkItem(&wi->Item, ResolveAcgWorkRoutine, wi);
+		ExQueueWorkItem(&wi->Item, DelayedWorkQueue);
+	}
+	else {
+		Log(L"failed to call ExAllocatePoolWithTag\n");
+		return STATUS_UNSUCCESSFUL;
+	}
+
 
 	DriverCtx_SetSSDT((DWORD64)PE_GetSSDT());
 	if(!DriverCtx_GetSSDT()) {

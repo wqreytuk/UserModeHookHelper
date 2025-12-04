@@ -66,4 +66,25 @@ namespace RegistryStore {
     bool WriteForcedMarks(const std::vector<std::tuple<DWORD, DWORD, DWORD>>& entries);
     bool AddForcedMark(DWORD pid, DWORD hi, DWORD lo);
     bool RemoveForcedMark(DWORD pid, DWORD hi, DWORD lo);
+
+    // Persist manual PPL operations keyed by PID + creation FILETIME.
+    // Value name: PplElevatedList (REG_MULTI_SZ), entries formatted as PID:HIGH:LOW
+    bool ReadPplElevatedMarks(std::vector<std::tuple<DWORD, DWORD, DWORD>>& outEntries);
+    bool WritePplElevatedMarks(const std::vector<std::tuple<DWORD, DWORD, DWORD>>& entries);
+    bool AddPplElevatedMark(DWORD pid, DWORD hi, DWORD lo);
+    bool RemovePplElevatedMark(DWORD pid, DWORD hi, DWORD lo);
+
+    // Value name: PplUnprotectedList (REG_MULTI_SZ), entries formatted as PID:HIGH:LOW
+    bool ReadPplUnprotectedMarks(std::vector<std::tuple<DWORD, DWORD, DWORD>>& outEntries);
+    bool WritePplUnprotectedMarks(const std::vector<std::tuple<DWORD, DWORD, DWORD>>& entries);
+    bool AddPplUnprotectedMark(DWORD pid, DWORD hi, DWORD lo);
+    bool RemovePplUnprotectedMark(DWORD pid, DWORD hi, DWORD lo);
+
+    // Persist original PPL Protection value keyed by PID + FILETIME.
+    // Value name: PplOriginalProtList (REG_MULTI_SZ), entries formatted as PID:HIGH:LOW=HEX32
+    bool ReadPplOriginalProt(std::vector<std::tuple<DWORD, DWORD, DWORD, DWORD>>& outEntries);
+    bool WritePplOriginalProt(const std::vector<std::tuple<DWORD, DWORD, DWORD, DWORD>>& entries);
+    bool AddPplOriginalProt(DWORD pid, DWORD hi, DWORD lo, DWORD prot);
+    bool GetPplOriginalProt(DWORD pid, DWORD hi, DWORD lo, DWORD& outProt);
+    bool RemovePplOriginalProt(DWORD pid, DWORD hi, DWORD lo);
 }

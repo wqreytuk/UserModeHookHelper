@@ -766,6 +766,26 @@ BOOL CUMControllerDlg::OnInitDialog()
 		}
 	}
 	catch (...) {}
+	// Load persisted PPL elevated/unprotected marks into compact sets
+	try {
+		std::vector<std::tuple<DWORD, DWORD, DWORD>> pplElevated;
+		if (RegistryStore::ReadPplElevatedMarks(pplElevated)) {
+			for (auto &t : pplElevated) {
+				DWORD pid = std::get<0>(t); DWORD hi = std::get<1>(t); DWORD lo = std::get<2>(t);
+				unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+				m_PplElevatedSet.insert(key);
+			}
+		}
+		std::vector<std::tuple<DWORD, DWORD, DWORD>> pplUnprot;
+		if (RegistryStore::ReadPplUnprotectedMarks(pplUnprot)) {
+			for (auto &t : pplUnprot) {
+				DWORD pid = std::get<0>(t); DWORD hi = std::get<1>(t); DWORD lo = std::get<2>(t);
+				unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+				m_PplUnprotectedSet.insert(key);
+			}
+		}
+	}
+	catch (...) {}
 	LoadProcessList(); // inline resolution attempts (does not auto-complete all)
 
 	// Launch background cleanup to remove duplicates / exited processes shortly after enumeration
@@ -1754,7 +1774,7 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	menu.AppendMenu(MF_STRING, ID_MENU_FORCE_INJECT, L"Force Inject");
 	// PPL operations
 	menu.AppendMenu(MF_SEPARATOR, 0, L"");
-	menu.AppendMenu(MF_STRING, ID_MENU_ELEVATE_TO_PPL, L"Elevate To PPL");
+	menu.AppendMenu(MF_STRING, ID_MENU_ELEVATE_TO_PPL, L"Recover PPL");
 	menu.AppendMenu(MF_STRING, ID_MENU_UNPROTECT_PPL, L"Unprotect PPL");
 
 	// grey out certai menu based on bInHookList
@@ -1787,9 +1807,14 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 
 	// Force inject enabled whenever the master DLL is NOT loaded (inHook irrelevant)
 	menu.EnableMenuItem(ID_MENU_FORCE_INJECT, (!dllLoaded) ? MF_ENABLED : MF_GRAYED);
-	// PPL operations are always shown; enable/disable could be refined later (e.g., based on protection state)
-	menu.EnableMenuItem(ID_MENU_ELEVATE_TO_PPL, MF_ENABLED);
-	menu.EnableMenuItem(ID_MENU_UNPROTECT_PPL, MF_ENABLED);
+	// PPL menu mutual exclusivity based on persisted state (PID+start FILETIME)
+	DWORD hi = item.startTime.dwHighDateTime;
+	DWORD lo = item.startTime.dwLowDateTime;
+	unsigned long long pplKey = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+	// Enable Unprotect when no original prot saved; enable Recover when original prot exists
+	DWORD origProt = 0; bool hasOrig = RegistryStore::GetPplOriginalProt(pid, hi, lo, origProt);
+	menu.EnableMenuItem(ID_MENU_UNPROTECT_PPL, hasOrig ? MF_GRAYED : MF_ENABLED);
+	menu.EnableMenuItem(ID_MENU_ELEVATE_TO_PPL, hasOrig ? MF_ENABLED : MF_GRAYED);
 
 	// Ensure UI reflects persisted mark (some update paths may not have applied the persisted bit).
 	if (marked) {
@@ -1817,21 +1842,25 @@ void CUMControllerDlg::OnElevateToPpl() {
 	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
 	DWORD pid = PID_FROM_ITEMDATA(packed);
 	// protect process is not supported
-	bool is_protected = false;
-	if (!m_Filter.FLTCOMM_IsProtectedProcess(pid, is_protected)) {
-		LOG_CTRL_ETW(L"Failed to call FLTCOMM_IsProtectedProcess\n");
-		MessageBoxW(L"Failed to call FLTCOMM_IsProtectedProcess", L"Kernel Request", MB_ICONERROR | MB_OK);
+	
+	
+	// Recover: fetch saved original protection and send recover command
+	ProcessEntry e; int idx = -1; if (!PM_GetEntryCopyByPid(pid, e, &idx)) return;
+	DWORD origProt = 0; if (!RegistryStore::GetPplOriginalProt(pid, e.startTime.dwHighDateTime, e.startTime.dwLowDateTime, origProt)) {
+		MessageBoxW(L"No saved original protection for this process.", L"Recover PPL", MB_ICONWARNING | MB_OK);
 		return;
 	}
-	if (is_protected) {
-		LOG_CTRL_ETW(L"unsupported operation to protected process\n");
-		MessageBoxW(L"unsupported operation to protected process", L"Kernel Request", MB_ICONERROR | MB_OK);
+	if (!origProt) {
+		LOG_CTRL_ETW(L"only protected process is supported\n");
+		MessageBoxW(L"only protected process is supported", L"PPLRecovery", MB_ICONERROR | MB_OK);
 		return;
 	}
-	if (!m_Filter.FLTCOMM_ElevateToPpl(pid)) {
+	if (!m_Filter.FLTCOMM_RecoverPpl(pid, origProt)) {
 		MessageBoxW(L"Elevate To PPL failed.", L"Kernel Request", MB_ICONERROR | MB_OK);
 	} else {
 		MessageBoxW(L"Elevate To PPL request sent.", L"Kernel Request", MB_ICONINFORMATION | MB_OK);
+		// On recover, clear original prot record so Unprotect becomes available again
+		RegistryStore::RemovePplOriginalProt(pid, e.startTime.dwHighDateTime, e.startTime.dwLowDateTime);
 	}
 }
 
@@ -1844,18 +1873,28 @@ void CUMControllerDlg::OnUnprotectPpl() {
 	bool is_protected = false;
 	if (!m_Filter.FLTCOMM_IsProtectedProcess(pid, is_protected)) {
 		LOG_CTRL_ETW(L"Failed to call FLTCOMM_IsProtectedProcess\n");
-		MessageBoxW(L"Failed to call FLTCOMM_IsProtectedProcess", L"Kernel Request", MB_ICONERROR | MB_OK);
+		MessageBoxW(L"Failed to call FLTCOMM_IsProtectedProcess", L"OnUnprotectPpl", MB_ICONERROR | MB_OK);
 		return;
 	}
-	if (is_protected) {
-		LOG_CTRL_ETW(L"unsupported operation to protected process\n");
-		MessageBoxW(L"unsupported operation to protected process", L"Kernel Request", MB_ICONERROR | MB_OK);
+	if (!is_protected) {
+		LOG_CTRL_ETW(L"only protected process is supported\n");
+		MessageBoxW(L"only protected process is supported", L"OnUnprotectPpl", MB_ICONERROR | MB_OK);
 		return;
 	}
+	// Before unprotect, query current protection and persist for recovery
+	ProcessEntry e; int idx = -1; DWORD curProt = 0;
+	if (!PM_GetEntryCopyByPid(pid, e, &idx)) return;
+	if (!m_Filter.FLTCOMM_QueryPplProtection(pid, curProt)) {
+		MessageBoxW(L"Failed to query current PPL protection.", L"Kernel Request", MB_ICONERROR | MB_OK);
+		return;
+	}
+	RegistryStore::AddPplOriginalProt(pid, e.startTime.dwHighDateTime, e.startTime.dwLowDateTime, curProt);
+
 	if (!m_Filter.FLTCOMM_UnprotectPpl(pid)) {
 		MessageBoxW(L"Unprotect PPL failed.", L"Kernel Request", MB_ICONERROR | MB_OK);
 	} else {
 		MessageBoxW(L"Unprotect PPL request sent.", L"Kernel Request", MB_ICONINFORMATION | MB_OK);
+		// No HookState annotation changes per request
 	}
 }
 
@@ -2270,6 +2309,50 @@ void CUMControllerDlg::FinishStartupIfDone() {
 					}
 				}
 				catch (...) { LOG_CTRL_ETW(L"Background purge: failed while purging NtProcCache\n"); }
+
+				// Purge PPL-related lists (OriginalProt, Elevated, Unprotected)
+				try {
+					// Original protection list
+					std::vector<std::tuple<DWORD, DWORD, DWORD, DWORD>> origs;
+					if (RegistryStore::ReadPplOriginalProt(origs)) {
+						std::vector<std::tuple<DWORD, DWORD, DWORD, DWORD>> kept;
+						for (auto &o : origs) {
+							DWORD pid = std::get<0>(o); DWORD hi = std::get<1>(o); DWORD lo = std::get<2>(o);
+							unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+							if (knownKeys.find(key) != knownKeys.end()) kept.emplace_back(o);
+							else LOG_CTRL_ETW(L"Purging stale PplOriginalProtList entry for pid=%u hi=%08X lo=%08X\n", pid, hi, lo);
+						}
+						RegistryStore::WritePplOriginalProt(kept);
+					}
+					// Elevated and Unprotected marks (PID:HI:LO)
+					{
+						std::vector<std::tuple<DWORD, DWORD, DWORD>> list;
+						if (RegistryStore::ReadPplElevatedMarks(list)) {
+							std::vector<std::tuple<DWORD, DWORD, DWORD>> kept;
+							for (auto &t : list) {
+								DWORD pid = std::get<0>(t); DWORD hi = std::get<1>(t); DWORD lo = std::get<2>(t);
+								unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+								if (knownKeys.find(key) != knownKeys.end()) kept.emplace_back(t);
+								else LOG_CTRL_ETW(L"Purging stale PplElevatedList entry for pid=%u hi=%08X lo=%08X\n", pid, hi, lo);
+							}
+							RegistryStore::WritePplElevatedMarks(kept);
+						}
+					}
+					{
+						std::vector<std::tuple<DWORD, DWORD, DWORD>> list;
+						if (RegistryStore::ReadPplUnprotectedMarks(list)) {
+							std::vector<std::tuple<DWORD, DWORD, DWORD>> kept;
+							for (auto &t : list) {
+								DWORD pid = std::get<0>(t); DWORD hi = std::get<1>(t); DWORD lo = std::get<2>(t);
+								unsigned long long key = (static_cast<unsigned long long>(pid) << 48) ^ (static_cast<unsigned long long>(hi) << 24) ^ static_cast<unsigned long long>(lo);
+								if (knownKeys.find(key) != knownKeys.end()) kept.emplace_back(t);
+								else LOG_CTRL_ETW(L"Purging stale PplUnprotectedList entry for pid=%u hi=%08X lo=%08X\n", pid, hi, lo);
+							}
+							RegistryStore::WritePplUnprotectedMarks(kept);
+						}
+					}
+				}
+				catch (...) { LOG_CTRL_ETW(L"Background purge: failed while purging PPL lists\n"); }
 			}
 			catch (...) {
 				LOG_CTRL_ETW(L"Background purge: failed to purge stale ProcHookList entries\n");

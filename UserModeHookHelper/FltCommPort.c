@@ -22,8 +22,9 @@ static NTSTATUS Handle_GetProcessHandle(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_M
 static NTSTATUS Handle_CreateRemoteThread(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_GetSyscallAddr(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_WriteDllPathToTargetProcess(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
-static NTSTATUS Handle_ElevateToPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_UnprotectPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_QueryPplProtection(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_RecoverPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
 
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -306,11 +307,14 @@ Comm_MessageNotify(
 	case CMD_WRITE_DLL_PATH:
 		status = Handle_WriteDllPathToTargetProcess(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
-	case CMD_ELEVATE_TO_PPL:
-		status = Handle_ElevateToPpl(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
-		break;
 	case CMD_UNPROTECT_PPL:
 		status = Handle_UnprotectPpl(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_QUERY_PPL_PROTECTION:
+		status = Handle_QueryPplProtection(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_RECOVER_PPL:
+		status = Handle_RecoverPpl(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
 		break;
 	case CMD_SET_GLOBAL_HOOK_MODE:
@@ -670,25 +674,6 @@ Handle_IsProtectedProcess(
 		}
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER) {
-		isProtected = FALSE;
-	}
-	EPROCESS_OFFSETS off;
-	if (!KO_GetEprocessOffsets(&off)) {
-		ObDereferenceObject(process);
-		DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
-		Log(L"Handle_IsProtectedProcess: unsupported OS version Major=%u Build=%u\n", ver.Major, ver.Build);
-		return STATUS_NOT_SUPPORTED;
-	}
-	// also, we need to check if it is mannual elevated protected process, these kind of process's protection fiedl value is 0xff
-	UCHAR check_prot_value = 0;
-	if (!Mini_ReadKernelMemory((PVOID)((ULONG_PTR)process + off.ProtectionOffset), &check_prot_value, sizeof(UCHAR))) {
-		Log(L"failed to call Mini_ReadKernelMemory to read out Protection value, target PID=%u\n", pid);
-		ObDereferenceObject(process);
-		return STATUS_UNSUCCESSFUL;
-	}
-	// this process should not be considered as Protected Process
-	if (0xff == check_prot_value) {
-		Log(L"manually eleveated process is not considered as Protected Process\n");
 		isProtected = FALSE;
 	}
 	ObDereferenceObject(process);
@@ -1422,48 +1407,10 @@ CLEAN_UP:
 }
 
 // Elevate current process protection to match target PID's Protection value (PPL-like).
-static NTSTATUS Handle_ElevateToPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
-
-	UNREFERENCED_PARAMETER(OutputBufferSize);
-	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
-	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
-		return STATUS_BUFFER_TOO_SMALL;
-	}
-	DWORD pid = 0; RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
-	PEPROCESS target = NULL;
-	NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &target);
-	if (!NT_SUCCESS(st) || target == NULL) {
-		RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
-		return st;
-	}
-	// Get offsets for EPROCESS fields
-	EPROCESS_OFFSETS off;
-	if (!KO_GetEprocessOffsets(&off)) {
-		ObDereferenceObject(target);
-		DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
-		Log(L"Handle_ElevateToPpl: unsupported OS version Major=%u Build=%u\n", ver.Major, ver.Build);
-		st = STATUS_NOT_SUPPORTED;
-		RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
-		return st; 
-	}
-	UCHAR targetProt = 0xff;
-	if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)target + off.ProtectionOffset), &targetProt, sizeof(UCHAR))) {
-		ObDereferenceObject(target);
-		Log(L"Handle_ElevateToPpl: failed to call Mini_WriteKernelMemory target Pid=%u\n", (unsigned)targetProt);
-		st = STATUS_UNSUCCESSFUL;
-		RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
-		return st;
-	}
-	Log(L"Handle_ElevateToPpl: elevated target Pid=%u to Protection=%u\n", pid, (unsigned)targetProt);
-	ObDereferenceObject(target);
-	st = STATUS_SUCCESS;
-	RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
-	return st;
-}
 
 // Unprotect target process by zeroing SectionSignatureLevel (and optionally ACG bits if present).
 static NTSTATUS Handle_UnprotectPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
-	UNREFERENCED_PARAMETER(OutputBuffer);
+	 
 	UNREFERENCED_PARAMETER(OutputBufferSize);
 	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
 	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
@@ -1472,7 +1419,10 @@ static NTSTATUS Handle_UnprotectPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBuffer
 	DWORD pid = 0; RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
 	PEPROCESS ep = NULL;
 	NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &ep);
-	if (!NT_SUCCESS(st) || ep == NULL) return st;
+	if (!NT_SUCCESS(st) || ep == NULL) { 
+		RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
+	}
 
 	// Get offsets
 	EPROCESS_OFFSETS off;
@@ -1480,17 +1430,74 @@ static NTSTATUS Handle_UnprotectPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBuffer
 		DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
 		Log(L"Handle_UnprotectPpl: unsupported OS version Major=%u Build=%u\n", ver.Major, ver.Build);
 		ObDereferenceObject(ep);
-		return STATUS_NOT_SUPPORTED;
+		st = STATUS_NOT_SUPPORTED;
+		RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
 	}
-	// Zero SectionSignatureLevel to allow code loading
+	// Zero Protection to unprotect
 	UCHAR zero = 0;
 	if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &zero, sizeof(UCHAR))) {
-		Log(L"Handle_UnprotectPpl: failed to clear SectionSignatureLevel PID=%u\n", pid);
+		Log(L"Handle_UnprotectPpl: failed to clear Protection PID=%u\n", pid);
 		ObDereferenceObject(ep);
-		return STATUS_UNSUCCESSFUL;
+		st = STATUS_UNSUCCESSFUL;
+		RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
 	}
 
 	Log(L"Handle_UnprotectPpl: cleared Protection PID=%u\n", pid);
 	ObDereferenceObject(ep);
-	return STATUS_SUCCESS;
+
+	st = STATUS_SUCCESS;
+	RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+	return st;
+}
+
+// Query current EPROCESS->Protection value and return as DWORD.
+static NTSTATUS Handle_QueryPplProtection(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
+	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(DWORD);
+	if (InputBufferSize < ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(DWORD))) {
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	DWORD pid = 0; 
+	RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+	PEPROCESS ep = NULL; 
+	NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &ep);
+	if (!NT_SUCCESS(st) || ep == NULL) { 
+		return st; 
+	}
+	EPROCESS_OFFSETS off; 
+	if (!KO_GetEprocessOffsets(&off)) { 
+		ObDereferenceObject(ep); 
+		return STATUS_NOT_SUPPORTED;
+	}
+	UCHAR prot = 0;
+	if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &prot, sizeof(UCHAR))) { 
+		ObDereferenceObject(ep); 
+		return STATUS_UNSUCCESSFUL;
+	}
+	ObDereferenceObject(ep);
+	DWORD out = (DWORD)prot;
+	if (OutputBuffer && OutputBufferSize >= sizeof(DWORD)) {
+		RtlCopyMemory(OutputBuffer, &out, sizeof(DWORD));
+		return STATUS_SUCCESS; }
+	return STATUS_BUFFER_TOO_SMALL;
+}
+
+// Recover PPL by setting Protection to provided byte in payload after PID.
+static NTSTATUS Handle_RecoverPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
+	(OutputBufferSize);
+	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
+	ULONG need = (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(DWORD) + sizeof(DWORD));
+	if (InputBufferSize < need) return STATUS_BUFFER_TOO_SMALL;
+	DWORD pid = 0; DWORD prot = 0;
+	RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+	RtlCopyMemory(&prot, msg->m_Data + sizeof(DWORD), sizeof(DWORD));
+	PEPROCESS ep = NULL; NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &ep);
+	if (!NT_SUCCESS(st) || ep == NULL) { RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS)); return st; }
+	EPROCESS_OFFSETS off; if (!KO_GetEprocessOffsets(&off)) { ObDereferenceObject(ep); st = STATUS_NOT_SUPPORTED; RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS)); return st; }
+	UCHAR pv = (UCHAR)(prot & 0xFF);
+	if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.ProtectionOffset), &pv, sizeof(UCHAR))) { ObDereferenceObject(ep); st = STATUS_UNSUCCESSFUL; RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS)); return st; }
+	ObDereferenceObject(ep);
+	st = STATUS_SUCCESS; RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+	return st;
 }

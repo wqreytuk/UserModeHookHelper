@@ -61,9 +61,12 @@ public:
 	// handle (caller must CloseHandle when done). Requires caller privileges.
 	bool FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle);
 	// Request kernel to elevate a process to PPL protection (driver-defined semantics).
-	bool FLTCOMM_ElevateToPpl(DWORD pid);
 	// Request kernel to remove PPL protection from a process (driver-defined semantics).
 	bool FLTCOMM_UnprotectPpl(DWORD pid);
+	// Recover PPL by setting Protection to a saved original value.
+	bool FLTCOMM_RecoverPpl(DWORD pid, DWORD protValue);
+	// Query current PPL Protection value (driver returns EPROCESS->Protection byte/ULONG)
+	bool FLTCOMM_QueryPplProtection(DWORD pid, DWORD& outProt);
 	// Ask kernel to log a simple hello-world message for diagnostics. 
 	// Request kernel to create a remote thread in target process. Payload: DWORD pid, PVOID startRoutine, PVOID parameter.
 	// If outThreadHandle != NULL, kernel will return a duplicated HANDLE (valid in this process) in reply buffer.

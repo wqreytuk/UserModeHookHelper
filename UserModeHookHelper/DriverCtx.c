@@ -22,15 +22,18 @@ VOID DriverCtx_SetSSDT(DWORD64 ssdt) {
 	s_ssdt = ssdt;
 }
 VOID ResolveAcgWorkRoutine(PVOID Context) {
-	(Context);
+	PResolveAcgWork_WORKITEM wi = (PResolveAcgWork_WORKITEM)Context;
 	ACG_MitigationOffPos acg = { 0 };
 	PE_MiArbitraryCodeBlockedOffsetAndBitpos(&acg);
-	
+
 	if (!acg.acg_audit_pos) {
 		Log(L"failed to call PE_MiArbitraryCodeBlockedOffsetAndBitpos\n");
-		return;
+		goto BACK_HOME;
 	}
 	DriverCtx_SetACGMitigationOffPosInfo(&acg);
+
+BACK_HOME:
+	ExFreePoolWithTag(wi, tag_driver_ctx);
 }
 VOID DriverCtx_SetACGMitigationOffPosInfo(ACG_MitigationOffPos* acg) {
 	acg_mitigation.mitigation = acg->mitigation;

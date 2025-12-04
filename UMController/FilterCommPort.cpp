@@ -589,21 +589,10 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
 	return true;
 }
 
-bool Filter::FLTCOMM_ElevateToPpl(DWORD pid) {
-	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
-	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
-	if (!msg) return false;
-	memset(msg, 0, msgSize);
-	msg->m_Cmd = CMD_ELEVATE_TO_PPL;
-	memcpy(msg->m_Data, &pid, sizeof(DWORD));
-	DWORD bytesOut = 0;
-	LONG ntstatus = STATUS_UNSUCCESSFUL;
-	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, &ntstatus, (DWORD)sizeof(ntstatus), &bytesOut);
-	free(msg);
-	if (hr != S_OK) return false;
-	// Treat any NT_SUCCESS as success; kernel may choose not to return a status.
-	return (bytesOut == sizeof(ntstatus)) ? NT_SUCCESS(ntstatus) : true;
-}
+	// The implementation of FLTCOMM_ElevateToPpl has been removed as it used deprecated CMD_ELEVATE_TO_PPL.
+	// void Filter::FLTCOMM_ElevateToPpl(DWORD pid) {
+	//     // Implementation removed
+	// }
 
 bool Filter::FLTCOMM_UnprotectPpl(DWORD pid) {
 	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
@@ -618,6 +607,39 @@ bool Filter::FLTCOMM_UnprotectPpl(DWORD pid) {
 	free(msg);
 	if (hr != S_OK) return false;
 	return (bytesOut == sizeof(ntstatus)) ? NT_SUCCESS(ntstatus) : true;
+}
+
+bool Filter::FLTCOMM_RecoverPpl(DWORD pid, DWORD protValue) {
+	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD) + sizeof(DWORD);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_RECOVER_PPL;
+	size_t off = 0;
+	memcpy(msg->m_Data + off, &pid, sizeof(DWORD)); off += sizeof(DWORD);
+	memcpy(msg->m_Data + off, &protValue, sizeof(DWORD));
+	DWORD bytesOut = 0; LONG ntstatus = STATUS_UNSUCCESSFUL;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, &ntstatus, (DWORD)sizeof(ntstatus), &bytesOut);
+	free(msg);
+	if (hr != S_OK) return false;
+	return (bytesOut == sizeof(ntstatus)) ? NT_SUCCESS(ntstatus) : true;
+}
+
+bool Filter::FLTCOMM_QueryPplProtection(DWORD pid, DWORD& outProt) {
+	outProt = 0;
+	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_QUERY_PPL_PROTECTION;
+	memcpy(msg->m_Data, &pid, sizeof(DWORD));
+	DWORD bytesOut = 0;
+	DWORD replyProt = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, &replyProt, (DWORD)sizeof(replyProt), &bytesOut);
+	free(msg);
+	if (hr != S_OK || bytesOut != sizeof(replyProt)) return false;
+	outProt = replyProt;
+	return true;
 }
 
 bool Filter::FLTCOMM_CreateRemoteThread(DWORD pid, PVOID startRoutine, PVOID parameter, PVOID ntCreateThreadExAddr,
