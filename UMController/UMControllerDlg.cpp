@@ -357,6 +357,8 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_MENU_PLUGIN_UNLOAD_ALL, &CUMControllerDlg::OnPluginUnloadAll)
 	ON_COMMAND(ID_TOOLS_ADD_WHITELIST, &CUMControllerDlg::OnAddWhitelist)
 	ON_COMMAND(ID_TOOLS_REMOVE_WHITELIST, &CUMControllerDlg::OnRemoveWhitelist)
+	ON_COMMAND(ID_MENU_ELEVATE_TO_PPL, &CUMControllerDlg::OnElevateToPpl)
+	ON_COMMAND(ID_MENU_UNPROTECT_PPL, &CUMControllerDlg::OnUnprotectPpl)
 END_MESSAGE_MAP()
 // Adapter implementing IHookServices for current process (bridges to ETW tracer)
 class HookServicesAdapter : public IHookServices {
@@ -1750,6 +1752,10 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 
 	// Add Force Inject menu for entries that are not in hook list and master DLL not loaded
 	menu.AppendMenu(MF_STRING, ID_MENU_FORCE_INJECT, L"Force Inject");
+	// PPL operations
+	menu.AppendMenu(MF_SEPARATOR, 0, L"");
+	menu.AppendMenu(MF_STRING, ID_MENU_ELEVATE_TO_PPL, L"Elevate To PPL");
+	menu.AppendMenu(MF_STRING, ID_MENU_UNPROTECT_PPL, L"Unprotect PPL");
 
 	// grey out certai menu based on bInHookList
 	DWORD flags = FLAGS_FROM_ITEMDATA(packed);
@@ -1781,6 +1787,9 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 
 	// Force inject enabled whenever the master DLL is NOT loaded (inHook irrelevant)
 	menu.EnableMenuItem(ID_MENU_FORCE_INJECT, (!dllLoaded) ? MF_ENABLED : MF_GRAYED);
+	// PPL operations are always shown; enable/disable could be refined later (e.g., based on protection state)
+	menu.EnableMenuItem(ID_MENU_ELEVATE_TO_PPL, MF_ENABLED);
+	menu.EnableMenuItem(ID_MENU_UNPROTECT_PPL, MF_ENABLED);
 
 	// Ensure UI reflects persisted mark (some update paths may not have applied the persisted bit).
 	if (marked) {
@@ -1800,6 +1809,54 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	menu.TrackPopupMenu(TPM_RIGHTBUTTON, point.x, point.y, this);
 
 	*pResult = 0;
+}
+
+void CUMControllerDlg::OnElevateToPpl() {
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) return;
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+	// protect process is not supported
+	bool is_protected = false;
+	if (!m_Filter.FLTCOMM_IsProtectedProcess(pid, is_protected)) {
+		LOG_CTRL_ETW(L"Failed to call FLTCOMM_IsProtectedProcess\n");
+		MessageBoxW(L"Failed to call FLTCOMM_IsProtectedProcess", L"Kernel Request", MB_ICONERROR | MB_OK);
+		return;
+	}
+	if (is_protected) {
+		LOG_CTRL_ETW(L"unsupported operation to protected process\n");
+		MessageBoxW(L"unsupported operation to protected process", L"Kernel Request", MB_ICONERROR | MB_OK);
+		return;
+	}
+	if (!m_Filter.FLTCOMM_ElevateToPpl(pid)) {
+		MessageBoxW(L"Elevate To PPL failed.", L"Kernel Request", MB_ICONERROR | MB_OK);
+	} else {
+		MessageBoxW(L"Elevate To PPL request sent.", L"Kernel Request", MB_ICONINFORMATION | MB_OK);
+	}
+}
+
+void CUMControllerDlg::OnUnprotectPpl() {
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) return;
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+	// protect process is not supported
+	bool is_protected = false;
+	if (!m_Filter.FLTCOMM_IsProtectedProcess(pid, is_protected)) {
+		LOG_CTRL_ETW(L"Failed to call FLTCOMM_IsProtectedProcess\n");
+		MessageBoxW(L"Failed to call FLTCOMM_IsProtectedProcess", L"Kernel Request", MB_ICONERROR | MB_OK);
+		return;
+	}
+	if (is_protected) {
+		LOG_CTRL_ETW(L"unsupported operation to protected process\n");
+		MessageBoxW(L"unsupported operation to protected process", L"Kernel Request", MB_ICONERROR | MB_OK);
+		return;
+	}
+	if (!m_Filter.FLTCOMM_UnprotectPpl(pid)) {
+		MessageBoxW(L"Unprotect PPL failed.", L"Kernel Request", MB_ICONERROR | MB_OK);
+	} else {
+		MessageBoxW(L"Unprotect PPL request sent.", L"Kernel Request", MB_ICONINFORMATION | MB_OK);
+	}
 }
 
 void CUMControllerDlg::OnNMDblclkListProc(NMHDR* pNMHDR, LRESULT* pResult)

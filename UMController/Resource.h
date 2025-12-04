@@ -27,6 +27,9 @@
 // Clear ETW log via Tools menu
 #define ID_MENU_CLEAR_ETW       40006
 #define ID_MENU_OPEN_ETW_LOG     40007
+// Process context: PPL operations
+#define ID_MENU_ELEVATE_TO_PPL    40023
+#define ID_MENU_UNPROTECT_PPL     40024
 // Extra menu command
 #define ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE 40020
 #define ID_MENU_EXTRA_SELFDEFENSE       40022
