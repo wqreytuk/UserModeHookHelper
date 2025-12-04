@@ -917,6 +917,11 @@ Handle_GetProcessHandle(
 ) {
 	UNREFERENCED_PARAMETER(msg);
 	UNREFERENCED_PARAMETER(InputBufferSize);
+	// when requestor is x86, OutputBufferSize is sizeof(HANDLE)=4, it will be smaller than kernel code sizeof(HANDLE)
+	// which will fail in this check, in fact, there is no need to use 8bytes to save a handle, 4 bytes is enough
+	// it is only a user mode handle, so DWORD can store it
+	// no, this is not a good way to solve this issue, we need force client to use a 8 bytes handle, otherwise
+	// the memory will fucked up
 	if (!OutputBuffer || OutputBufferSize < sizeof(HANDLE)) {
 		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
 		return STATUS_BUFFER_TOO_SMALL;
@@ -1186,7 +1191,7 @@ Handle_CreateRemoteThread(
 	// check if acg mitigation enabled
 	ACG_MitigationOffPos acg = { 0 };
 	 DriverCtx_GetACGMitigationOffPosInfo(&acg);
-	 if (acg.acg_pos) {
+	 if (acg.acg_audit_pos) {
 		 DWORD ori_acg_value = 0;
 		 if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + acg.mitigation), &ori_acg_value, sizeof(DWORD))) {
 			 Log(L"failed to call Mini_ReadKernelMemory to read out original acg mitigation value, target PID=%u\n", targetPid);
@@ -1195,11 +1200,56 @@ Handle_CreateRemoteThread(
 		 }
 		 Log(L"get target PID=%u's original acg mitigation value=%d\n",
 			 targetPid, ori_acg_value);
-		 DWORD erased = ori_acg_value & (~(1 << acg.acg_pos));
-		 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + acg.mitigation), &erased, sizeof(DWORD))) {
-			 Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
-			 ObDereferenceObject(ep);
-			 return STATUS_UNSUCCESSFUL;
+		 if (ori_acg_value & (1 << acg.acg_pos)) {
+			 Log(L"target process Pid=%u enabled ACG mitigation\n", targetPid);
+			 DWORD erased = ori_acg_value & (~(1 << acg.acg_pos));
+			 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + acg.mitigation), &erased, sizeof(DWORD))) {
+				 Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
+				 ObDereferenceObject(ep);
+				 return STATUS_UNSUCCESSFUL;
+			 }
+
+
+			 // normally, have acg enabled process may have SectionSignatureLevel non-zero
+			 {
+				 EPROCESS_OFFSETS off;
+				 if (KO_GetEprocessOffsets(&off)) {
+					 if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &ori_value.SectionSignatureLevelValue, sizeof(UCHAR))) {
+						 Log(L"failed to call Mini_ReadKernelMemory to read out SectionSignatureLevel value, target PID=%u\n", targetPid);
+						 ObDereferenceObject(ep);
+						 return STATUS_UNSUCCESSFUL;
+					 }
+
+					 Log(L"get target PID=%u's original SectionSignatureLevel=%d\n",
+						 targetPid, ori_value.SectionSignatureLevelValue);
+					 if (ori_value.SectionSignatureLevelValue) {
+						 UCHAR _ = 0;
+
+						 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &_, sizeof(UCHAR))) {
+							 Log(L"failed to call Mini_WriteKernelMemory to write in SectionSignatureLeve, target PID=%u\n", targetPid);
+							 ObDereferenceObject(ep);
+							 return STATUS_UNSUCCESSFUL;
+						 }
+						 Log(L"successfully zero out SectionSignatureLevel field of target process, PID=%u\n", targetPid);
+					 }
+				 }
+				 else {
+					 ObDereferenceObject(ep);
+					 DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
+					 Log(L"unsupported windows version, Major=%u Build=%u", ver.Major, ver.Build);
+					 return STATUS_UNSUCCESSFUL;
+				 }
+			 }
+		 }
+
+		 if (ori_acg_value & (1 << acg.acg_audit_pos)) {
+			 Log(L"target process Pid=%u enabled ACG_AUDIT mitigation\n", targetPid);
+			 DWORD erased = ori_acg_value & (~(1 << acg.acg_audit_pos));
+			 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + acg.mitigation), &erased, sizeof(DWORD))) {
+				 Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
+				 ObDereferenceObject(ep);
+				 return STATUS_UNSUCCESSFUL;
+			 }
 		 }
 	 }
 	NTSTATUS status = pfnNtCreateThreadEx(extraValue, THREAD_ALL_ACCESS, NULL, proc_handle, startRoutine, parameter, 0, 0, 0, 0, NULL);

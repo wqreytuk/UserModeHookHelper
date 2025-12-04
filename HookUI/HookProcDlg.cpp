@@ -612,6 +612,18 @@ void HookProcDlg::OnBnClickedApplyHook() {
 		MessageBox(L"failed to get required export function from HookCode dll", L"Hook", MB_OK | MB_ICONERROR);
 		return;
 	}
+	// we also need to check hookcode.dll meet the arch of target process
+	bool is_pe_64;
+	if (!m_services->CheckPeArch(selectedPath.GetString(), is_pe_64)){
+		  LOG_UI(m_services, L"failed to call CheckPeArch, PE_Path=%s, CPU=%s\n", selectedPath.GetString(), is64 ? L"x64" : L"x86");
+		MessageBox(L"failed to call CheckPeArch", L"Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
+	if (is_pe_64 != is64) {
+		LOG_UI(m_services, L"target process Arch=%s mismatch HookCode.dll Arch=%s\n", is64 ? L"x64" : L"x86", is_pe_64 ? L"x64" : L"x86");
+		return;
+	}
+
     // Copy the selected DLL to a local temp folder beside this module so the
     // master DLL can reliably open it. Use a timestamped filename to avoid
     // collisions. If the copy fails, fall back to the original selected path.
@@ -655,7 +667,7 @@ void HookProcDlg::OnBnClickedApplyHook() {
             LOG_UI(m_services, L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", selectedPath.GetString(), dest.c_str(), err);
             // keep pathToInject as original selectedPath
         }
-    }
+    } 
 	DWORD64 hook_code_dll_base = 0;
     // Signal master DLL (via IHookServices) to load the selected DLL inside target process
     if (m_services) {

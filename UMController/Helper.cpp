@@ -1315,6 +1315,37 @@ SIZE_T Helper::RvaToOffset(void* base, IMAGE_NT_HEADERS64* nth, DWORD rva) {
 Filter* Helper::GetFilterInstance() {
 	return Helper::m_filterInstance;
 }
+
+// Determine whether a PE file on disk is PE32 (x86) or PE32+ (x64).
+// Returns true on success and sets outIs64 accordingly.
+bool Helper::IsPeFile64(const std::wstring& filePath, bool& outIs64) {
+	if (filePath.empty()) return false;
+	HANDLE hFile = CreateFileW(filePath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) return false;
+	HANDLE hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+	if (!hMap) { CloseHandle(hFile); return false; }
+	LPVOID base = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
+	if (!base) { CloseHandle(hMap); CloseHandle(hFile); return false; }
+	bool ok = false; bool is64 = false;
+	__try {
+		PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)base;
+		if (dos->e_magic != IMAGE_DOS_SIGNATURE) __leave;
+		PIMAGE_NT_HEADERS nth = (PIMAGE_NT_HEADERS)((PBYTE)base + dos->e_lfanew);
+		if (nth->Signature != IMAGE_NT_SIGNATURE) __leave;
+		WORD magic = nth->OptionalHeader.Magic;
+		if (magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) { is64 = true; ok = true; }
+		else if (magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) { is64 = false; ok = true; }
+		else { ok = false; }
+	}
+	__finally {
+		UnmapViewOfFile(base);
+		CloseHandle(hMap);
+		CloseHandle(hFile);
+	}
+	if (ok) outIs64 = is64;
+	return ok;
+}
 // Configure/Toggle the boot-start service (UMHH.BootStart or SERVICE_NAME fallback)
 bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 	// disable for now, seems like I fucked up file system when using global injection

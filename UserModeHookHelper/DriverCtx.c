@@ -1,4 +1,6 @@
 #include "DriverCtx.h"
+#include "PE.h"
+#include "Trace.h"
 
 static PFLT_FILTER s_Filter = NULL;
 static PFLT_PORT s_ServerPort = NULL;
@@ -19,13 +21,26 @@ DWORD64 DriverCtx_GetSSDT() {
 VOID DriverCtx_SetSSDT(DWORD64 ssdt) {
 	s_ssdt = ssdt;
 }
+VOID ResolveAcgWorkRoutine(PVOID Context) {
+	(Context);
+	ACG_MitigationOffPos acg = { 0 };
+	PE_MiArbitraryCodeBlockedOffsetAndBitpos(&acg);
+	
+	if (!acg.acg_audit_pos) {
+		Log(L"failed to call PE_MiArbitraryCodeBlockedOffsetAndBitpos\n");
+		return;
+	}
+	DriverCtx_SetACGMitigationOffPosInfo(&acg);
+}
 VOID DriverCtx_SetACGMitigationOffPosInfo(ACG_MitigationOffPos* acg) {
 	acg_mitigation.mitigation = acg->mitigation;
 	acg_mitigation.acg_pos = acg->acg_pos;
+	acg_mitigation.acg_audit_pos = acg->acg_audit_pos;
 }
 VOID DriverCtx_GetACGMitigationOffPosInfo(ACG_MitigationOffPos* out) {
 	out->mitigation = acg_mitigation.mitigation;
 	out->acg_pos = acg_mitigation.acg_pos;
+	out->acg_audit_pos = acg_mitigation.acg_audit_pos;
 }
 VOID DriverCtx_SetServerPort(PFLT_PORT ServerPort) {
     s_ServerPort = ServerPort;

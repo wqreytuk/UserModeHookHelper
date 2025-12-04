@@ -5,4 +5,6 @@
 // Port context pool tag
 #define tag_ctx			'CtxP'
 #define tag_apc			'KaPc'
+// Driver context pool tag
+#define tag_driver_ctx 'CtxD'
 #endif 

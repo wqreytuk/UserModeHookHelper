@@ -12,7 +12,7 @@ public:
 	// NOTE: The caller must provide the byte length of the buffer. Do not
 	// rely on zero bytes within UTF-16LE strings as a terminator for byte
 	// buffers.
-	static DWORD64 GetNtPathHash(const UCHAR* buf, size_t byteLen);
+	static DWORD64 GetNtPathHash(const UCHAR* buf, size_t byteLen); 
 	static bool CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset);
 	// NEW: get NT (native) image path for a PID. Returns true on success and
 	// fills outNtPath with an NT-style path (e.g. "\Device\HarddiskVolume2\...").
@@ -93,6 +93,10 @@ public:
 	// If DesiredEnabled==false: stop the service if running and set Start to disabled.
 	static bool ConfigureBootStartService(bool DesiredEnabled);
 	static Filter* GetFilterInstance();
+	// Check whether a PE file on disk is PE32 (x86) or PE32+ (x64).
+	// Returns true on success and sets outIs64 to true for PE32+ (64-bit),
+	// false for PE32 (32-bit). Returns false on I/O or format errors.
+	static bool IsPeFile64(const std::wstring& filePath, bool& outIs64);
 private:
 	// Shared reusable buffer for path queries. Protected by m_bufMutex.
 	static std::unique_ptr<TCHAR[]> m_sharedBuf;

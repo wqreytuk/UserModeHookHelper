@@ -120,13 +120,12 @@ PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName)
     return NULL;
 }
 
-ULONG PE_MiArbitraryCodeBlockedOffsetAndBitpos(UCHAR* pos) {
+ULONG PE_MiArbitraryCodeBlockedOffsetAndBitpos(ACG_MitigationOffPos* acg) {
 	// DbgBreakPoint();
-	if (!pos) {
+	if (!acg) {
 		Log(L"required parameter pos can not be NULL\n");
 		return 0;
-	}
-	*pos = 0;
+	} 
 
 	PVOID ntkrnl_base = 0;
 	PE_GetDriverBase("ntoskrnl.exe", &ntkrnl_base);
@@ -181,8 +180,18 @@ ULONG PE_MiArbitraryCodeBlockedOffsetAndBitpos(UCHAR* pos) {
 											if (*(PUINT8)((ULONG_PTR)MiArbitraryCodeBlocked + i) == 0xf
 												&& *(PUINT8)((ULONG_PTR)MiArbitraryCodeBlocked + i + 1) == 0xba
 												&& *(PUINT8)((ULONG_PTR)MiArbitraryCodeBlocked + i + 2) == 0xe2) {
-												*pos = *(PUINT8)((ULONG_PTR)MiArbitraryCodeBlocked + i + 3);
-												return *(DWORD*)((ULONG_PTR)MiArbitraryCodeBlocked + i - 4);
+												acg->acg_pos = *(PUINT8)((ULONG_PTR)MiArbitraryCodeBlocked + i + 3);
+												acg->mitigation= *(DWORD*)((ULONG_PTR)MiArbitraryCodeBlocked + i - 4);
+												// continue search to get AuditDisableDynamicCode bit position
+												DWORD64 ACG_POS = (DWORD64)(ULONG_PTR)MiArbitraryCodeBlocked + i+4;
+												for (i = 0; i < Limit; i++) {
+													if (*(PUINT8)((ULONG_PTR)ACG_POS + i) == 0xf
+														&& *(PUINT8)((ULONG_PTR)ACG_POS + i + 1) == 0xba
+														&& *(PUINT8)((ULONG_PTR)ACG_POS + i + 2) == 0xe2) {
+														acg->acg_audit_pos = *(PUINT8)((ULONG_PTR)ACG_POS + i + 3);
+														return acg->mitigation;
+													}
+												}
 											}
 										}
 									}

@@ -571,17 +571,21 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
 	msg->m_Cmd = CMD_GET_PROCESS_HANDLE;
 	memcpy(msg->m_Data, &pid, sizeof(DWORD));
 
-	SIZE_T replySize = sizeof(HANDLE);
+	// Protocol: driver returns an 8-byte handle value regardless of client arch.
+	// Read 8 bytes and cast down safely on x86.
+	const SIZE_T replySize = 8; // fixed-width handle field
 	std::unique_ptr<BYTE[]> reply(new BYTE[replySize]);
 	DWORD bytesOut = 0;
 	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, reply.get(), (DWORD)replySize, &bytesOut);
 	free(msg);
-	if (hr != S_OK || bytesOut < (DWORD)replySize) 
+	if (hr != S_OK || bytesOut != (DWORD)replySize) {
+		LOG_CTRL_ETW(L"FLTCOMM_GetProcessHandle: FilterSendMessage hr=0x%x bytesOut=%u (expected %u)\n", hr, bytesOut, (unsigned)replySize);
 		return false;
-	HANDLE h = NULL;
-	RtlCopyMemory(&h, reply.get(), sizeof(HANDLE));
-	if (!h) return false;
-	*outHandle = h;
+	}
+	unsigned long long h64 = 0;
+	memcpy(&h64, reply.get(), replySize);
+	if (h64 == 0) return false;
+	*outHandle = (HANDLE)(ULONG_PTR)h64;
 	return true;
 }
 

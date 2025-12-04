@@ -35,7 +35,7 @@ NTSTATUS PE_GetDriverBase(
 	PCSTR DriverName,
 	PVOID* DriverBaseAddress
 );
-ULONG PE_MiArbitraryCodeBlockedOffsetAndBitpos(UCHAR* pos);
+ULONG PE_MiArbitraryCodeBlockedOffsetAndBitpos(ACG_MitigationOffPos* acg);
 // Wrapper kept for compatibility; PE_GetExport auto-detects 32/64 images.
 // PE_GetExport auto-detects 32/64 images; PE_GetExport32 removed.
 

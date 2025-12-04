@@ -377,6 +377,9 @@ public:
 		// Keep legacy behavior to avoid refactoring existing LogCore call sites yet.
 		app.GetETW().Log(L"[HookCore]   %s", buffer);
 	}
+	bool CheckPeArch(const wchar_t* dllPath, bool& is64) override {
+		return Helper::IsPeFile64(dllPath, is64);
+	}
 	void LogPhlib(const wchar_t* fmt, ...) override {
 		wchar_t buffer[1024];
 		va_list ap; va_start(ap, fmt);

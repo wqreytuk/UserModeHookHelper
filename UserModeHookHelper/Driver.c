@@ -96,26 +96,22 @@ const FLT_REGISTRATION FilterRegistration = {
 
 // mainn
 NTSTATUS
-	DriverEntry(
-		_In_ PDRIVER_OBJECT  DriverObject,
-		_In_ PUNICODE_STRING RegistryPath
-	)
+DriverEntry(
+	_In_ PDRIVER_OBJECT  DriverObject,
+	_In_ PUNICODE_STRING RegistryPath
+)
 {
 	// DbgBreakPoint();
-	(RegistryPath); 
+	(RegistryPath);
 	Log(L"DriverEntry\n");
 
 	Inject_CheckWin7();
-	UCHAR pos = 0;
-	ULONG acg_mitigation=PE_MiArbitraryCodeBlockedOffsetAndBitpos(&pos);
-	if (!acg_mitigation) {
-		Log(L"failed to call PE_MiArbitraryCodeBlockedOffsetAndBitpos\n");
-		return STATUS_UNSUCCESSFUL;
-	}
-	ACG_MitigationOffPos acg = { 0 };
-	acg.mitigation = acg_mitigation;
-	acg.acg_pos = pos;
-	DriverCtx_SetACGMitigationOffPosInfo(&acg);
+
+	WORK_QUEUE_ITEM WorkItem;
+	ExInitializeWorkItem(&WorkItem, ResolveAcgWorkRoutine, NULL);
+	ExQueueWorkItem(&WorkItem, DelayedWorkQueue);
+	
+
 	DriverCtx_SetSSDT((DWORD64)PE_GetSSDT());
 	if(!DriverCtx_GetSSDT()) {
 		Log(L"failed to get SSDT\n");
