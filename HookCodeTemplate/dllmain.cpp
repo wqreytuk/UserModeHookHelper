@@ -30,17 +30,17 @@ extern "C" __declspec(dllexport) VOID HookCodeWin32(ULONG esp) {
 	ULONG original_esp = esp + 0x20;
 
 	// original rigster value and location
-	ULONG ebp = *(PULONG)((UCHAR*)esp + 0x0);
-	ULONG edi = *(PULONG)((UCHAR*)esp + 0x4);
-	ULONG esi = *(PULONG)((UCHAR*)esp + 0x8);
-	ULONG edx = *(PULONG)((UCHAR*)esp + 0xC);
-	ULONG ecx = *(PULONG)((UCHAR*)esp + 0x10);
-	ULONG ebx = *(PULONG)((UCHAR*)esp + 0x14);
-	ULONG eax = *(PULONG)((UCHAR*)esp + 0x18);
+	ULONG ebp = *(PULONG)((UCHAR*)(ULONG_PTR)esp + 0x0);
+	ULONG edi = *(PULONG)((UCHAR*)(ULONG_PTR)esp + 0x4);
+	ULONG esi = *(PULONG)((UCHAR*)(ULONG_PTR)esp + 0x8);
+	ULONG edx = *(PULONG)((UCHAR*)(ULONG_PTR)esp + 0xC);
+	ULONG ecx = *(PULONG)((UCHAR*)(ULONG_PTR)esp + 0x10);
+	ULONG ebx = *(PULONG)((UCHAR*)(ULONG_PTR)esp + 0x14);
+	ULONG eax = *(PULONG)((UCHAR*)(ULONG_PTR)esp + 0x18);
 
 
 	// WRITE YOUR CODE HERE
-	Log(L"CreateFileW opening: %s\n", *(DWORD*)(original_esp + 0x4));
+	Log(L"CreateFileW opening: %s\n", *(DWORD*)((ULONG_PTR)original_esp + 0x4));
 	// HOOK CODE END
 
 
@@ -52,18 +52,20 @@ extern "C" __declspec(dllexport) VOID HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8
 		return;
 	}
 
+	PVOID original_rsp = (PVOID)((DWORD64)rsp + 0x80);
+
 	// original rigster value and location
-	PVOID r15 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x0);
-	PVOID r14 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x8);
-	PVOID r13 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x10);
-	PVOID r12 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x18);
-	PVOID r11 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x20);
-	PVOID r10 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x28);
-	PVOID rbp = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x40);
-	PVOID rdi = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x48);
-	PVOID rsi = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x50);
-	PVOID rbx = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x68);
-	PVOID rax = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x70);
+	PVOID r15 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x0);
+	PVOID r14 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x8);
+	PVOID r13 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x10);
+	PVOID r12 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x18);
+	PVOID r11 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x20);
+	PVOID r10 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x28);
+	PVOID rbp = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x40);
+	PVOID rdi = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x48);
+	PVOID rsi = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x50);
+	PVOID rbx = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x68);
+	PVOID rax = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x70);
 
 
 	// WRITE YOUR CODE HERE

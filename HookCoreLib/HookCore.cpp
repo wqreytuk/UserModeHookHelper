@@ -180,7 +180,9 @@ namespace HookCore {
 			auto s = services->GetCurrentDirFilePath(temp_tramp_name);
 
 			trampFullPath = s;
-			if (services) services->LogCore(L"ApplyHook: requesting trampoline inject %s (path=%s).\n", trampName.c_str(), trampFullPath.c_str());
+			if (services) 
+				services->LogCore(L"ApplyHook: requesting trampoline inject %s (path=%s).\n",
+					trampName.c_str(), trampFullPath.c_str());
 			bool signaled = services ? services->InjectTrampoline(pid, trampFullPath.c_str()) : false;
 			if (services) services->LogCore(L"ApplyHook: InjectTrampoline result: %s.\n", signaled ? L"success" : L"failure");
 			if (signaled) {

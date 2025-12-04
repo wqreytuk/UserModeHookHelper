@@ -1841,8 +1841,6 @@ void CUMControllerDlg::OnElevateToPpl() {
 	if (nItem == -1) return;
 	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
 	DWORD pid = PID_FROM_ITEMDATA(packed);
-	// protect process is not supported
-	
 	
 	// Recover: fetch saved original protection and send recover command
 	ProcessEntry e; int idx = -1; if (!PM_GetEntryCopyByPid(pid, e, &idx)) return;

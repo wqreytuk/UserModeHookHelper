@@ -676,7 +676,7 @@ void HookProcDlg::OnBnClickedApplyHook() {
             MessageBox(L"Failed to request master DLL to load selected DLL. Check logs.", L"Hook", MB_OK | MB_ICONERROR);
             return;
         }
-        LOG_UI(m_services, L"InjectTrampoline signaled pid=%u path=%s\n", m_pid, pathToInject.c_str());
+        LOG_UI(m_services, L"HookCode injection signaled pid=%u path=%s\n", m_pid, pathToInject.c_str());
         // check if HookCode injected
 
 			// Poll up to 5 seconds (50 * 100ms) for trampoline module presence.

@@ -21,7 +21,7 @@ void Log(_In_ PCWSTR Format, ...) {
 	Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0';
 
 	WCHAR Prefixed[1100];
-	_snwprintf_s(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[MWGA]       %s", Buffer);
+	_snwprintf_s(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[HookCode]   %s", Buffer);
 	Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
 	EventWriteString(g_ProviderHandle, 0, 0, Prefixed);
 }
@@ -80,6 +80,7 @@ extern "C" __declspec(dllexport) VOID HookCodeWin32(ULONG esp) {
 	CloseHandle(m_Port);
 	// HOOK CODE END
 
+
 	return;
 }
 extern "C" __declspec(dllexport) VOID HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8, PVOID r9, PVOID rsp) {
@@ -88,22 +89,56 @@ extern "C" __declspec(dllexport) VOID HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8
 		return;
 	}
 
+	PVOID original_rsp = (PVOID)((DWORD64)rsp + 0x80);
+
 	// original rigster value and location
-	PVOID r15 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x0);
-	PVOID r14 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x8);
-	PVOID r13 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x10);
-	PVOID r12 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x18);
-	PVOID r11 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x20);
-	PVOID r10 = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x28);
-	PVOID rbp = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x40);
-	PVOID rdi = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x48);
-	PVOID rsi = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x50);
-	PVOID rbx = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x68);
-	PVOID rax = (PVOID)*(DWORD64*)((UCHAR*)rsp + 0x70);
+	PVOID r15 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x0);
+	PVOID r14 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x8);
+	PVOID r13 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x10);
+	PVOID r12 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x18);
+	PVOID r11 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x20);
+	PVOID r10 = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x28);
+	PVOID rbp = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x40);
+	PVOID rdi = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x48);
+	PVOID rsi = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x50);
+	PVOID rbx = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x68);
+	PVOID rax = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x70);
 
 
 	// WRITE YOUR CODE HERE
-	Log(L"CreateFileW opening: %s\n", rcx);
+	// connect to minifilter port
+	HRESULT hResult = S_OK;
+	HANDLE m_Port = INVALID_HANDLE_VALUE;
+	hResult = FilterConnectCommunicationPort(
+		UMHHLP_PORT_NAME,
+		0,
+		NULL,
+		0,
+		NULL,
+		&m_Port
+	);
+	if (hResult != S_OK) {
+		Log(L"failed to call FilterConnectCommunicationPort: 0x%x\n", hResult);
+		return;
+	}
+	else
+		Log(L"successfully connect to minifilterport: 0x%p\n", m_Port);
+
+
+	// get process handle
+	// pid is save in r11-0x48, r11 is original_rsp+0x68
+	DWORD pid =(DWORD) *(DWORD64*)((ULONG_PTR)original_rsp + 0x68-0x48);
+	HANDLE hProc = NULL;
+	if (!FLTCOMM_GetProcessHandle(m_Port, pid, &hProc)) {
+		CloseHandle(m_Port);
+		Log(L"failed to call FLTCOMM_GetProcessHandle\n");
+		return;
+	}
+	// after successfully get high access handle, modify original rax value with it
+	*(DWORD64*)((UCHAR*)rsp + 0x70) = (DWORD64)(ULONG_PTR)hProc;
+	Log(L"process handle is replaced with 0x%x\n", hProc);
+	CloseHandle(m_Port);
+
 	// HOOK CODE END
 
 
