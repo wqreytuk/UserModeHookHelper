@@ -8,7 +8,7 @@
 #include "tag.h"
 #include "mini.h"
 #include "../UserModeHookHelper/KernelOffsets.h"
-
+DWORD gDebugPid = 0;
 
 #define LdrLoadDllRoutineName "LdrLoadDll"
 
@@ -55,7 +55,9 @@ UNICODE_STRING ExcludedSysProtectedProcess[] = {
 	RTL_CONSTANT_STRING(L"csrss.exe"),
 	RTL_CONSTANT_STRING(L"svchost.exe"),
 	RTL_CONSTANT_STRING(L"SecurityHealthService.exe"),
-	RTL_CONSTANT_STRING(L"lsass.exe")
+	RTL_CONSTANT_STRING(L"lsass.exe"),
+	RTL_CONSTANT_STRING(L"sppsvc.exe"),
+	RTL_CONSTANT_STRING(L"upfc.exe")
 };
 
 BOOLEAN
@@ -273,6 +275,9 @@ BOOLEAN Inject_CanInject(PPENDING_INJECT injInfo) {
 // Placeholder injection function to be implemented later
 NTSTATUS Inject_Perform(PPENDING_INJECT InjectionInfo)
 {
+	if ((DWORD)(ULONG_PTR)PsGetProcessId(InjectionInfo->Process) == gDebugPid) {
+		DbgBreakPoint();
+	}
 	NTSTATUS status = STATUS_SUCCESS;
 
 	// Validate parameters
@@ -619,6 +624,13 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 {
 	if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
 	if (DriverCtx_GetGlobalHookMode()) {
+		// I found that after enable global hook mode, I always stuck on autochk.exe process after inject to it
+		// so I'm considering skip this process for injection
+		UNICODE_STRING atuochk = RTL_CONSTANT_STRING(L"\\Windows\\System32\\autochk.exe");
+		if (SL_RtlSuffixUnicodeString(&atuochk, ImageName, TRUE)) {
+			Log(L"Skip autochk.exe process");
+			return;
+		}
 		// we should exclude windows system protected process out
 		// but we need to supported other protected process, that's the point of early break feature
 		if (PsIsProtectedProcess(Process)) {
@@ -633,6 +645,15 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 					return;
 				}
 			}
+			//DEBUG
+			// check if avp.exe
+			// UNICODE_STRING avp= RTL_CONSTANT_STRING(L"avp.exe");
+			// 
+			// if (SL_RtlSuffixUnicodeString(&avp, ImageName, TRUE)) {
+			// 	DbgBreakPoint();
+			// }
+
+
 			// erase section signature level and ACG mitigation
 			{
 				EPROCESS_ORI_VALUE ori_value = { 0 };
@@ -692,7 +713,6 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 					}
 				}
 			}
-			return;
 		}
 		PendingInject_Add_Internal(Process);
 	}
@@ -703,6 +723,7 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 
 VOID Inject_OnImageLoad(PUNICODE_STRING FullImageName, PEPROCESS Process, PIMAGE_INFO ImageInfo)
 {
+
 	if (!FullImageName || FullImageName->Length == 0) return;
 	// get injection info and check if we can inject now
 	PPENDING_INJECT injectionInfo = Inject_GetPendingInj(Process);
@@ -782,8 +803,7 @@ VOID Inject_OnImageLoad(PUNICODE_STRING FullImageName, PEPROCESS Process, PIMAGE
 			// because MapViewOfSection locks EPROCESS->AddressCreationLock, if we call MapViewOfSection on a call stack that
 			// MapViewOfSection has already been called, there will be a dead lock, this is a risk that we CAN NOT take
 			Log(L"Process %d WOW64: %s can be injected now\n", PsGetProcessId(Process),
-				injectionInfo->x64 ? L"TRUE" : L"FALSE",
-				PsGetProcessImageFileName(Process));
+				injectionInfo->x64 ? L"FALSE" : L"TRUE");
 
 			if (!NT_SUCCESS(Inject_QueueInjectionApc(KernelMode,
 				&Inject_InjectionApcNormalRoutine,

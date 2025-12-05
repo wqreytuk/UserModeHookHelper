@@ -2010,7 +2010,7 @@ void CUMControllerDlg::OnMarkEarlyBreak()
 	size_t len = ntpath.size() * sizeof(wchar_t);
 	unsigned long long hval = Helper::GetNtPathHash(bytes, len);
 	WCHAR pathBuf[MAX_PATH] = { 0 };
-	_snwprintf_s(pathBuf, RTL_NUMBER_OF(pathBuf), USER_MODE_EARLY_BREAK_SIGNAL_FILE_FMT, (void*)hval);
+	_snwprintf_s(pathBuf, RTL_NUMBER_OF(pathBuf), USER_MODE_EARLY_BREAK_SIGNAL_FILE_FMT, hval);
 	HANDLE hfile;
 	if (!Helper::CreateLowPrivReqFile(pathBuf, &hfile)) {
 		LOG_CTRL_ETW(L"Failed to create early break signal file path=%s\n", pathBuf);
@@ -2067,7 +2067,7 @@ void CUMControllerDlg::OnUnmarkEarlyBreak()
 	size_t len = ntpath.size() * sizeof(wchar_t);
 	unsigned long long hval = Helper::GetNtPathHash(bytes, len);
 	WCHAR pathBuf[MAX_PATH] = { 0 };
-	_snwprintf_s(pathBuf, RTL_NUMBER_OF(pathBuf), USER_MODE_EARLY_BREAK_SIGNAL_FILE_FMT, (void*)hval);
+	_snwprintf_s(pathBuf, RTL_NUMBER_OF(pathBuf), USER_MODE_EARLY_BREAK_SIGNAL_FILE_FMT, hval);
 	DeleteFile(pathBuf);
 }
 

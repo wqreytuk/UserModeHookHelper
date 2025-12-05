@@ -2,6 +2,11 @@
 
 [下载链接](https://github.com/wqreytuk/UMHH_Release)
 
+**special thanks to these great open source projects:**
+
+- [https://github.com/wbenny/injdrv](https://github.com/wbenny/injdrv)
+- [ProcessHacker](https://sourceforge.net/projects/processhacker/)
+
 **驱动使用的是测试签名，需要开启测试模式，不然无法加载**
 
 ```c
@@ -41,6 +46,35 @@ hook成功后会出现在hooklist列表中
 
 ![image-20251205143744424](README.assets/image-20251205143744424.png)
 
-此时我们已经hook了Notepad.exe进程的Kernelbase!CreateFileW函数，只要Notepad进行打开文件的操作，我们就能从[EtwTracer](https://github.com/wqreytuk/UMHH_Release/blob/main/EtwTracer.exe)中看到日志记录
+此时我们已经hook了`Notepad.exe`进程的`Kernelbase!CreateFileW`函数，只要Notepad进行打开文件的操作，我们就能从[EtwTracer](https://github.com/wqreytuk/UMHH_Release/blob/main/EtwTracer.exe)中看到日志记录
 
 ![image-20251205144016600](README.assets/image-20251205144016600.png)
+
+
+# Early Break
+
+在调试受保护进程时，我们有时候想要在程序早期启动阶段断下来以调试启动阶段的代码
+
+对于这种需求，可以通过我们的early break功能来实现
+
+比如，我们想要在avp.exe启动的时候断下来，只需要选中之后右键点击Mark Early Break
+
+![image-20251205144525709](README.assets/image-20251205144525709.png)
+
+如果此时未开启全局注入，程序会提示你启用全局注入选项
+
+![image-20251205144611835](README.assets/image-20251205144611835.png)
+
+全局注入开启之后，所有新启动的进程都会被注入Master DLL（相当于我们工具的一个agent）
+
+![image-20251205144814880](README.assets/image-20251205144814880.png)
+
+开启之后再次点击Mark Early Break即可，标记之后，这里会出现一个记号
+
+![image-20251205145238778](README.assets/image-20251205145238778.png)
+
+然后我们重启电脑，我们的Masert DLL(agent)会在目标进程启动初期注入并触发INT 3断点
+
+![image-20251205185355186](README.assets/image-20251205185355186.png)
+
+可以看到此时目标程序仅加载了必要的一些系统函数，自己本身的dll还未加载

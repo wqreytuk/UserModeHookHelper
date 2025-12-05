@@ -794,7 +794,9 @@ BOOLEAN CheckEarlyBreak(UCHAR* ntPath, size_t len) {
 	// then we check if a file with this hash as name exist
 	WCHAR pathBuf[MAX_PATH] = { 0 };
 
-	_snwprintf(pathBuf, RTL_NUMBER_OF(pathBuf), EARLY_BREAK_SIGNAL_FILE_FMT, hash);
+	unsigned long long h = (unsigned long long)hash;
+	_snwprintf(pathBuf, RTL_NUMBER_OF(pathBuf), EARLY_BREAK_SIGNAL_FILE_FMT, h);
+
 	if (!FileExistsViaNtOpenFile(pathBuf)) {
 		return FALSE;
 	}
