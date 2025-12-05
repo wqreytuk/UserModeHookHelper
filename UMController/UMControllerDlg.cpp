@@ -466,6 +466,9 @@ public:
 	bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) override {
 		return RegistryStore::RemoveProcHookEntry(pid, filetimeHi, filetimeLo, hookId);
 	}
+	bool RemoveProcHookList(DWORD pid, DWORD filetimeHi, DWORD filetimeLo) override {
+		return RegistryStore::RemoveProcHookList(pid, filetimeHi, filetimeLo);
+	}
 	 bool LoadProcHookList(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, std::vector<HookRow>& outEntries) override {
 		std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> tmp;
 		if (!RegistryStore::ReadProcHookList(tmp)) return false;
@@ -950,6 +953,10 @@ BOOL CUMControllerDlg::OnInitDialog()
 		if (GetMenu()) {
 			HMENU h = GetMenu()->m_hMenu;
 			if (h) {
+				// Temporarily remove the entire Tools popup to hide all its items
+				// Tools is the first popup in IDR_MAIN_MENU
+				RemoveMenu(h, 0, MF_BYPOSITION);
+				DrawMenuBar();
 				CheckMenuItem(h, ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, MF_BYCOMMAND | (m_globalHookMode ? MF_CHECKED : MF_UNCHECKED));
 				DrawMenuBar();
 				LOG_CTRL_ETW(L"SetMenu: applied GlobalHookMode check immediately: enabled=%d\n", (int)m_globalHookMode);
@@ -1761,9 +1768,8 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 
 	CMenu menu;
 	menu.CreatePopupMenu();
-	menu.AppendMenu(MF_STRING, ID_MENU_ADD_HOOK, L"Add to Hook List");
-	// Use single-item remove ID for context menu so Tools->Remove remains the batch dialog
-	menu.AppendMenu(MF_STRING, ID_MENU_REMOVE_HOOK_SINGLE, L"Remove from Hook List");
+	// Temporarily hide Add/Remove Hook actions from context menu
+	// (requested: do not display these menu items)
 	menu.AppendMenu(MF_STRING, ID_MENU_INJECT_DLL, L"Inject DLL");
 	// Early-break marking
 	menu.AppendMenu(MF_SEPARATOR, 0, L"");
@@ -1772,10 +1778,7 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 
 	// Add Force Inject menu for entries that are not in hook list and master DLL not loaded
 	menu.AppendMenu(MF_STRING, ID_MENU_FORCE_INJECT, L"Force Inject");
-	// PPL operations
-	menu.AppendMenu(MF_SEPARATOR, 0, L"");
-	menu.AppendMenu(MF_STRING, ID_MENU_ELEVATE_TO_PPL, L"Recover PPL");
-	menu.AppendMenu(MF_STRING, ID_MENU_UNPROTECT_PPL, L"Unprotect PPL");
+	// Temporarily hide PPL operations (Recover/Unprotect) from context menu
 
 	// grey out certai menu based on bInHookList
 	DWORD flags = FLAGS_FROM_ITEMDATA(packed);

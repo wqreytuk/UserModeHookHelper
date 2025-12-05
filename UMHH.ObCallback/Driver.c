@@ -323,7 +323,7 @@ static NTSTATUS UMHHObCtl_DeviceControl(_In_ PDEVICE_OBJECT Dev, _Inout_ PIRP Ir
 }
 // regist object open / duplicate callback
 NTSTATUS RegisterProcessCallback() {
-	OB_OPERATION_REGISTRATION operations[2] = { 0 };
+	OB_OPERATION_REGISTRATION operations[1] = { 0 };
 	RtlZeroMemory(operations, sizeof(operations));
 
 	operations[0].ObjectType = PsProcessType;  // Monitor process objects (pointer)
@@ -331,9 +331,9 @@ NTSTATUS RegisterProcessCallback() {
 	operations[0].PreOperation = (POB_PRE_OPERATION_CALLBACK)PreObjProcesCallback;  // Callback for process deletion
 
 
-	operations[1].ObjectType = PsThreadType;
-	operations[1].Operations = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
-	operations[1].PreOperation = (POB_PRE_OPERATION_CALLBACK)PreObjThreadCallback;
+	// operations[1].ObjectType = PsThreadType;
+	// operations[1].Operations = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
+	// operations[1].PreOperation = (POB_PRE_OPERATION_CALLBACK)PreObjThreadCallback;
 
 
 	OB_CALLBACK_REGISTRATION callbackRegistration = { 0 };

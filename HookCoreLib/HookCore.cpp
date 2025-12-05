@@ -352,7 +352,7 @@ namespace HookCore {
 				}
 				if (!loaded) Sleep(100);
 			}
-			services->LogCore(L"ApplyHook: trampoline DLL %s %s after signaling.\n", trampName.c_str(), loaded ? L"detected" : L"NOT detected within 5s");
+			services->LogCore(L"RemoveHook: trampoline DLL %s %s\n", trampName.c_str(), loaded ? L"detected" : L"NOT detected within 5s");
 			if (!loaded) {
 				LOG_CORE(services, L"RemoveHook: can not continue because trampoline DLL is not laoded");
 				return false;

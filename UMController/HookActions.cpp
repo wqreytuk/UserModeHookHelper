@@ -28,8 +28,7 @@ void HookActions::HandleNMRClick(CUMControllerDlg* dlg, CListCtrl* list, NMHDR* 
 
     CMenu menu;
     menu.CreatePopupMenu();
-    menu.AppendMenu(MF_STRING, ID_MENU_ADD_HOOK, L"Add to Hook List");
-    menu.AppendMenu(MF_STRING, ID_MENU_REMOVE_HOOK, L"Remove from Hook List");
+    // Temporarily hide Add/Remove Hook items from this context menu
     menu.AppendMenu(MF_STRING, ID_MENU_INJECT_DLL, L"Inject DLL");
 
     DWORD flags = FLAGS_FROM_ITEMDATA(packed);

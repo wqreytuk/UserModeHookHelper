@@ -46,6 +46,9 @@ struct IHookServices {
     virtual bool SaveProcHookList(DWORD pid, DWORD hi, DWORD lo, const std::vector<HookRow>& entries) = 0;
     // Remove a single persisted ProcHookList entry matching PID+FILETIME+HOOKID
     virtual bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId) = 0;
+    // Remove all persisted ProcHookList entries for a specific PID+FILETIME key
+    // This counters SaveProcHookList and clears the entire list for that process instance
+    virtual bool RemoveProcHookList(DWORD pid, DWORD filetimeHi, DWORD filetimeLo) = 0;
     // Load persisted ProcHookList entries for a specific PID + creation time
     virtual bool LoadProcHookList(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, std::vector<HookRow>& outEntries) = 0;
 	virtual bool ForceInject(DWORD pid) = 0;
