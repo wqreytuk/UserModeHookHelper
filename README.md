@@ -78,3 +78,9 @@ hook成功后会出现在hooklist列表中
 ![image-20251205185355186](README.assets/image-20251205185355186.png)
 
 可以看到此时目标程序仅加载了必要的一些系统函数，自己本身的dll还未加载
+
+# 插件支持
+
+参考[AVProcessHandleLocater](https://github.com/wqreytuk/UserModeHookHelper/tree/main/AVProcessHandleLocater)
+
+该插件可以搜索当前系统中可以获取目标进程高权限句柄的进程
