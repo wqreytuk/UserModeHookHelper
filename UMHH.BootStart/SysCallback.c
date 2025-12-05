@@ -1,4 +1,3 @@
-#include <ntifs.h>
 #include "mini.h"
 #include "SysCallback.h"
 #include "Trace.h" 
@@ -74,13 +73,14 @@ ProcessCrNotify(
 				imageName = NULL;
 			}
 		}
-		// check if created process is whoami.exe, if so, check C:\\users\\public\\stop_umhh_boot_start exist
-		// if so, stop injection
-		UNICODE_STRING whoami_image_name = RTL_CONSTANT_STRING(L"whoami.exe");
+		// we should disable global hook mode once Windows done booting
+		// global hook may cause system unstable, and there is no need to use this method while running
+		// we can use hook list in UserModeHookHelper driver to replace it in that case
+		UNICODE_STRING whoami_image_name = RTL_CONSTANT_STRING(L"userinit.exe");
 		if (SL_RtlSuffixUnicodeString(&whoami_image_name, imageName, TRUE)) {
-			if (FileExists(DRIVER_STOP_SIGNAL_FILE_PATH)) {
+			Log(L"Windows has done booting, disable global hook mode, stop injection, you may re-enable global hook mode in UMController\n");
 				DriverCtx_SetGlobalHookMode(FALSE);
-			}
+			
 
 		}
 	}

@@ -353,8 +353,9 @@ bool Filter::FLTCOMM_CheckHookList(const std::wstring& ntPath) {
 
 	if (S_OK != hResult) {
 		free(msg);
-		LOG_CTRL_ETW(L"failed to call FilterSendMessage: 0x%p\n", hResult);
-		Helper::Fatal(L"FilterSendMessage failed in FLTCOMM_CheckHookList");
+		 LOG_CTRL_ETW(L"failed to call FilterSendMessage: 0x%p\n", hResult);
+		 Helper::Fatal(L"FilterSendMessage failed in FLTCOMM_CheckHookList");
+		return isInHookList;
 	}
 	free(msg);
 	return isInHookList;

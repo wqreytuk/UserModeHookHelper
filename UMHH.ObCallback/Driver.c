@@ -1,7 +1,8 @@
 ﻿
-#include <fltKernel.h>
-
-#include <ntifs.h> 
+#pragma warning(push)
+#pragma warning(disable:4141)
+#include <fltkernel.h>
+#pragma warning(pop)
 #include <ntstrsafe.h>
 #include "../UMHH.BootStart/MacroDef.h"
 // Avoid LOG_PREFIX conflict; use ObCallback-specific prefix

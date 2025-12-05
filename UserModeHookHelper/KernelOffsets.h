@@ -1,7 +1,7 @@
 #ifndef KERNELOFFSETS_H
 #define KERNELOFFSETS_H
 
-#include <ntifs.h>
+#include "Common.h"
 #include "DriverCtx.h"
 
 typedef struct _EPROCESS_OFFSETS {
