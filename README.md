@@ -5,6 +5,7 @@
 **special thanks to these great open source projects:**
 
 - [https://github.com/wbenny/injdrv](https://github.com/wbenny/injdrv)
+- [capstone](https://github.com/capstone-engine/capstone)
 - [ProcessHacker](https://sourceforge.net/projects/processhacker/)
 
 **驱动使用的是测试签名，需要开启测试模式，不然无法加载**
