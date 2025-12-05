@@ -1,11 +1,14 @@
 #include "DriverCtx.h"
-
+#include "pe.h"
+#include "Trace.h"
 static PFLT_FILTER s_Filter = NULL;
 static PFLT_PORT s_ServerPort = NULL;
 static PWSTR s_UserDir = NULL;
 static BOOLEAN s_GlobalHookMode = FALSE;
 static BOOLEAN s_SuspendInjectQueue = FALSE;
 
+static DRIVERCTX_OSVER s_OsVer = { 0 };
+static ACG_MitigationOffPos acg_mitigation = { 0 };
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter) {
     s_Filter = Filter;
 }
@@ -62,4 +65,40 @@ VOID DriverCtx_SetSuspendInjectQueue(BOOLEAN Suspend) {
 
 BOOLEAN DriverCtx_GetSuspendInjectQueue(VOID) {
     return s_SuspendInjectQueue;
+}
+
+
+VOID DriverCtx_SetOsVersion(ULONG Major, ULONG Minor, ULONG Build) {
+	s_OsVer.Major = Major;
+	s_OsVer.Minor = Minor;
+	s_OsVer.Build = Build;
+}
+
+DRIVERCTX_OSVER DriverCtx_GetOsVersion(VOID) {
+	return s_OsVer;
+}
+
+VOID DriverCtx_SetACGMitigationOffPosInfo(ACG_MitigationOffPos* acg) {
+	acg_mitigation.mitigation = acg->mitigation;
+	acg_mitigation.acg_pos = acg->acg_pos;
+	acg_mitigation.acg_audit_pos = acg->acg_audit_pos;
+}
+VOID DriverCtx_GetACGMitigationOffPosInfo(ACG_MitigationOffPos* out) {
+	out->mitigation = acg_mitigation.mitigation;
+	out->acg_pos = acg_mitigation.acg_pos;
+	out->acg_audit_pos = acg_mitigation.acg_audit_pos;
+}
+VOID ResolveAcgWorkRoutine(PVOID Context) {
+	PResolveAcgWork_WORKITEM wi = (PResolveAcgWork_WORKITEM)Context;
+	ACG_MitigationOffPos acg = { 0 };
+	PE_MiArbitraryCodeBlockedOffsetAndBitpos(&acg);
+
+	if (!acg.acg_audit_pos) {
+		Log(L"failed to call PE_MiArbitraryCodeBlockedOffsetAndBitpos\n");
+		goto BACK_HOME;
+	}
+	DriverCtx_SetACGMitigationOffPosInfo(&acg);
+
+BACK_HOME:
+	ExFreePoolWithTag(wi, tag_driver_ctx);
 }

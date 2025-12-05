@@ -23,6 +23,11 @@
 // to a valid mapped image in memory.
 PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName);
 
+NTSTATUS PE_GetDriverBase(
+	PCSTR DriverName,
+	PVOID* DriverBaseAddress
+);
+ULONG PE_MiArbitraryCodeBlockedOffsetAndBitpos(ACG_MitigationOffPos* acg);
 // PE_IsProcessX86
 // - Returns TRUE if the provided PEPROCESS corresponds to a 32-bit (WoW64)
 //   process. Returns FALSE if the process is 64-bit or on error.

@@ -2,7 +2,6 @@
 #define DRIVERCTX_H
 
 #include "Common.h"
-
 /*
  * DriverCtx module
  *
@@ -45,5 +44,21 @@ BOOLEAN DriverCtx_GetGlobalHookMode(VOID);
 // Suspend/resume inject queueing controlled by user-mode via IOCTL
 VOID DriverCtx_SetSuspendInjectQueue(BOOLEAN Suspend);
 BOOLEAN DriverCtx_GetSuspendInjectQueue(VOID);
+// OS version info stored in driver context
+typedef struct _DRIVERCTX_OSVER {
+	ULONG Major;
+	ULONG Minor;
+	ULONG Build;
+} DRIVERCTX_OSVER, *PDRIVERCTX_OSVER;
 
+typedef struct _ResolveAcgWork_WORKITEM {
+	WORK_QUEUE_ITEM Item;
+} ResolveAcgWork_WORKITEM, *PResolveAcgWork_WORKITEM;
+VOID DriverCtx_SetOsVersion(ULONG Major, ULONG Minor, ULONG Build);
+DRIVERCTX_OSVER DriverCtx_GetOsVersion(VOID);
+
+VOID ResolveAcgWorkRoutine(PVOID Context);
+
+VOID DriverCtx_SetACGMitigationOffPosInfo(ACG_MitigationOffPos* acg);
+VOID DriverCtx_GetACGMitigationOffPosInfo(ACG_MitigationOffPos* out);
 #endif

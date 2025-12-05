@@ -113,6 +113,19 @@ NTSTATUS
 	(DriverObject);
 	Log(L"DriverEntry\n");
 
+	  Inject_CheckWin7();
+
+	PResolveAcgWork_WORKITEM wi = ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(ResolveAcgWork_WORKITEM), tag_driver_ctx);
+	if (wi) {
+		ExInitializeWorkItem(&wi->Item, ResolveAcgWorkRoutine, wi);
+		ExQueueWorkItem(&wi->Item, DelayedWorkQueue);
+	}
+	else {
+		Log(L"failed to call ExAllocatePoolWithTag\n");
+		return STATUS_UNSUCCESSFUL;
+	}
+
+
 	// Set unload routine so the driver can be unloaded safely
 	DriverObject->DriverUnload = DriverUnload;
 

@@ -6,6 +6,8 @@
 #include "StrLib.h"
 #include "UKShared.h"
 #include "tag.h"
+#include "mini.h"
+#include "../UserModeHookHelper/KernelOffsets.h"
 
 
 #define LdrLoadDllRoutineName "LdrLoadDll"
@@ -46,6 +48,15 @@ INJ_SYSTEM_DLL_DESCRIPTOR InjpSystemDlls[] = {
   { RTL_CONSTANT_STRING(L"\\System32\\xtajit.dll"),   INJ_SYSTEM32_XTAJIT_LOADED   },
 };
 
+UNICODE_STRING ExcludedSysProtectedProcess[] = {
+	RTL_CONSTANT_STRING(L"wininit.exe"),
+	RTL_CONSTANT_STRING(L"smss.exe"),
+	RTL_CONSTANT_STRING(L"services.exe"),
+	RTL_CONSTANT_STRING(L"csrss.exe"),
+	RTL_CONSTANT_STRING(L"svchost.exe"),
+	RTL_CONSTANT_STRING(L"SecurityHealthService.exe"),
+	RTL_CONSTANT_STRING(L"lsass.exe")
+};
 
 BOOLEAN
 KeInsertQueueApc(
@@ -143,10 +154,14 @@ static INJ_THUNK       InjThunk[2] = {
 };
 
 VOID Inject_CheckWin7() {
-
 	RTL_OSVERSIONINFOW VersionInformation = { 0 };
 	VersionInformation.dwOSVersionInfoSize = sizeof(VersionInformation);
 	RtlGetVersion(&VersionInformation);
+
+	// Persist current OS version into driver context for later decisions
+	DriverCtx_SetOsVersion(VersionInformation.dwMajorVersion,
+		VersionInformation.dwMinorVersion,
+		VersionInformation.dwBuildNumber);
 
 	if (VersionInformation.dwMajorVersion == 6 &&
 		VersionInformation.dwMinorVersion == 1)
@@ -604,8 +619,79 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 {
 	if (!ImageName || !ImageName->Buffer || ImageName->Length == 0) return;
 	if (DriverCtx_GetGlobalHookMode()) {
+		// we should exclude windows system protected process out
+		// but we need to supported other protected process, that's the point of early break feature
 		if (PsIsProtectedProcess(Process)) {
-			Log(L"Proteced process injection is not supported\n");
+			// exclude out system process
+			/*
+			wininit.exe / smss.exe / services.exe / csrss.exe / svchost.exe / SecurityHealthService.exe / lsass.exe
+			*/
+			for (size_t i = 0; i < ARRAYSIZE(ExcludedSysProtectedProcess); i++)
+			{
+				if (SL_RtlSuffixUnicodeString(&ExcludedSysProtectedProcess[i], ImageName, TRUE)) {
+					Log(L"system Proteced process injection is not supported\n");
+					return;
+				}
+			}
+			// erase section signature level and ACG mitigation
+			{
+				EPROCESS_ORI_VALUE ori_value = { 0 };
+				EPROCESS_OFFSETS off;
+				if (KO_GetEprocessOffsets(&off)) {
+					if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)Process + off.SectionSignatureLevelOffset), &ori_value.SectionSignatureLevelValue, sizeof(UCHAR))) {
+						Log(L"failed to call Mini_ReadKernelMemory to read out SectionSignatureLevel value, target EP=0x%p\n", Process);
+						return;
+					}
+					Log(L"get target EP=0x%p's original SectionSignatureLevel=%d, original Protection=%d\n",
+						Process, ori_value.SectionSignatureLevelValue, ori_value.ProtectionValue);
+					UCHAR _ = 0;
+					if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)Process + off.SectionSignatureLevelOffset), &_, sizeof(UCHAR))) {
+						Log(L"failed to call Mini_WriteKernelMemory to write in SectionSignatureLeve, target EP=0x%p\n", Process);
+
+						return;
+					}
+					Log(L"successfully zero out SectionSignatureLevel field of target process, EP=0x%p\n", Process);
+				}
+				else {
+					DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
+					Log(L"unsupported windows version, Major=%u Build=%u", ver.Major, ver.Build);
+					return;
+				}
+			}
+			// erase ACG
+			{
+				ACG_MitigationOffPos acg = { 0 };
+				DriverCtx_GetACGMitigationOffPosInfo(&acg);
+				if (acg.acg_audit_pos) {
+					DWORD ori_acg_value = 0;
+					if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)Process + acg.mitigation), &ori_acg_value, sizeof(DWORD))) {
+						Log(L"failed to call Mini_ReadKernelMemory to read out original acg mitigation value, target EP=0x%p\n", Process);
+
+						return;
+					}
+					Log(L"get target EP=0x%p's original acg mitigation value=%d\n",
+						Process, ori_acg_value);
+					if (ori_acg_value & (1 << acg.acg_pos)) {
+						Log(L"target process EP=0x%p enabled ACG mitigation\n", Process);
+						DWORD erased = ori_acg_value & (~(1 << acg.acg_pos));
+						if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)Process + acg.mitigation), &erased, sizeof(DWORD))) {
+							Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
+
+							return;
+						}
+					}
+
+					if (ori_acg_value & (1 << acg.acg_audit_pos)) {
+						Log(L"target process EP=0x%p enabled ACG_AUDIT mitigation\n", Process);
+						DWORD erased = ori_acg_value & (~(1 << acg.acg_audit_pos));
+						if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)Process + acg.mitigation), &erased, sizeof(DWORD))) {
+							Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
+
+							return;
+						}
+					}
+				}
+			}
 			return;
 		}
 		PendingInject_Add_Internal(Process);

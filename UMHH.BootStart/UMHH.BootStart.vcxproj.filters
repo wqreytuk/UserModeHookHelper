@@ -54,6 +54,9 @@
     <ClCompile Include="Trace.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\UserModeHookHelper\KernelOffsets.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Common.h">
@@ -90,6 +93,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Trace.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\UserModeHookHelper\KernelOffsets.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

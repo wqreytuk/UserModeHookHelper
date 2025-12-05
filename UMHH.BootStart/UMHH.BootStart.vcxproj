@@ -35,6 +35,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\UserModeHookHelper\KernelOffsets.c" />
     <ClCompile Include="Driver.c" />
     <ClCompile Include="DriverCtx.c" />
     <ClCompile Include="HookList.c" />
@@ -224,6 +225,7 @@
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\UserModeHookHelper\KernelOffsets.h" />
     <ClInclude Include="Common.h" />
     <ClInclude Include="DriverCtx.h" />
     <ClInclude Include="HookList.h" />
