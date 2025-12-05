@@ -18,6 +18,6 @@ hook逻辑代码在下面这两行注释标记之间编写即可
 如果你需要在hook代码中修改原始的寄存器的值，比如在x64下，你想修改原始的rax寄存器的值，你只需要在hook代码中编写如下代码即可：
 
 ```c
-*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x70) new_rax_register_value
+*(DWORD64*)((UCHAR*)(ULONG_PTR)rsp + 0x70) = new_rax_register_value
 ```
 
