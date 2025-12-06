@@ -647,11 +647,11 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 			}
 			//DEBUG
 			// check if avp.exe
-			// UNICODE_STRING avp= RTL_CONSTANT_STRING(L"avp.exe");
-			// 
-			// if (SL_RtlSuffixUnicodeString(&avp, ImageName, TRUE)) {
-			// 	DbgBreakPoint();
-			// }
+			UNICODE_STRING avp= RTL_CONSTANT_STRING(L"msmpeng.exe");
+			
+			if (SL_RtlSuffixUnicodeString(&avp, ImageName, TRUE)) {
+				DbgBreakPoint();
+			}
 
 
 			// erase section signature level and ACG mitigation
