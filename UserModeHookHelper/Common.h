@@ -12,9 +12,4 @@
 // - PortCtx (client port contexts)
 // - HookList (hook entries)
 
-typedef struct _ACG_MitigationOffPos {
-	ULONG mitigation;
-	UCHAR acg_pos;
-	UCHAR acg_audit_pos;
-}ACG_MitigationOffPos, PACG_MitigationOffPos;
 #endif

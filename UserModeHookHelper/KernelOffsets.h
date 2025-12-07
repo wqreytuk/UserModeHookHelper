@@ -6,7 +6,12 @@
 
 typedef struct _EPROCESS_OFFSETS {
 	ULONG ProtectionOffset;
-	ULONG SectionSignatureLevelOffset;
+	ULONG SectionSignatureLevelOffset;	
+	struct _ACG_MitigationOffPos {
+		ULONG mitigation_offset;
+		UCHAR acg_pos;
+		UCHAR acg_audit_pos;
+	}ACG_MitigationOffPos;
 } EPROCESS_OFFSETS, *PEPROCESS_OFFSETS;
 typedef struct _EPROCESS_ORI_VALUE {
 	UCHAR  ProtectionValue;

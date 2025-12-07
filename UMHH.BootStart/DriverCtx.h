@@ -58,7 +58,4 @@ VOID DriverCtx_SetOsVersion(ULONG Major, ULONG Minor, ULONG Build);
 DRIVERCTX_OSVER DriverCtx_GetOsVersion(VOID);
 
 VOID ResolveAcgWorkRoutine(PVOID Context);
-
-VOID DriverCtx_SetACGMitigationOffPosInfo(ACG_MitigationOffPos* acg);
-VOID DriverCtx_GetACGMitigationOffPosInfo(ACG_MitigationOffPos* out);
 #endif

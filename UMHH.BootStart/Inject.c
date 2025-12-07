@@ -681,31 +681,42 @@ VOID Inject_CheckAndQueue(PUNICODE_STRING ImageName, PEPROCESS Process)
 			}
 			// erase ACG
 			{
-				ACG_MitigationOffPos acg = { 0 };
-				DriverCtx_GetACGMitigationOffPosInfo(&acg);
-				if (acg.acg_audit_pos) {
+				EPROCESS_OFFSETS off;
+				if (!KO_GetEprocessOffsets(&off)) {
+					DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
+					Log(L"unsupported windows version, Major=%u Build=%u", ver.Major, ver.Build);
+					return;
+				}
+				typedef struct _ACG_MitigationOffPos {
+					ULONG mitigation_offset;
+					UCHAR acg_pos;
+					UCHAR acg_audit_pos;
+				}ACG_MitigationOffPos;
+				ACG_MitigationOffPos* acg =(ACG_MitigationOffPos*) &off.ACG_MitigationOffPos;
+
+				if (acg->acg_audit_pos) {
 					DWORD ori_acg_value = 0;
-					if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)Process + acg.mitigation), &ori_acg_value, sizeof(DWORD))) {
+					if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)Process + acg->mitigation_offset), &ori_acg_value, sizeof(DWORD))) {
 						Log(L"failed to call Mini_ReadKernelMemory to read out original acg mitigation value, target EP=0x%p\n", Process);
 
 						return;
 					}
 					Log(L"get target EP=0x%p's original acg mitigation value=%d\n",
 						Process, ori_acg_value);
-					if (ori_acg_value & (1 << acg.acg_pos)) {
+					if (ori_acg_value & (1 << acg->acg_pos)) {
 						Log(L"target process EP=0x%p enabled ACG mitigation\n", Process);
-						DWORD erased = ori_acg_value & (~(1 << acg.acg_pos));
-						if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)Process + acg.mitigation), &erased, sizeof(DWORD))) {
+						DWORD erased = ori_acg_value & (~(1 << acg->acg_pos));
+						if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)Process + acg->mitigation_offset), &erased, sizeof(DWORD))) {
 							Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
 
 							return;
 						}
 					}
 
-					if (ori_acg_value & (1 << acg.acg_audit_pos)) {
+					if (ori_acg_value & (1 << acg->acg_audit_pos)) {
 						Log(L"target process EP=0x%p enabled ACG_AUDIT mitigation\n", Process);
-						DWORD erased = ori_acg_value & (~(1 << acg.acg_audit_pos));
-						if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)Process + acg.mitigation), &erased, sizeof(DWORD))) {
+						DWORD erased = ori_acg_value & (~(1 << acg->acg_audit_pos));
+						if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)Process + acg->mitigation_offset), &erased, sizeof(DWORD))) {
 							Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
 
 							return;

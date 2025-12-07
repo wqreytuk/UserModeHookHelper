@@ -1199,71 +1199,77 @@ Handle_CreateRemoteThread(
 		// after get original offset, we need save original value first, then we zero it our, then we call create thread
 		// then we deference EP
 	}
+	EPROCESS_OFFSETS off;
+	if (!KO_GetEprocessOffsets(&off)) {
+		ObDereferenceObject(ep);
+		DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
+		Log(L"unsupported windows version, Major=%u Build=%u", ver.Major, ver.Build);
+		return STATUS_UNSUCCESSFUL;
+	}
+	{
+		typedef struct _ACG_MitigationOffPos {
+			ULONG mitigation_offset;
+			UCHAR acg_pos;
+			UCHAR acg_audit_pos;
+		}ACG_MitigationOffPos;
+		ACG_MitigationOffPos* acg =(ACG_MitigationOffPos*) &off.ACG_MitigationOffPos;
+		if (acg->acg_audit_pos) {
+			DWORD ori_acg_value = 0;
+			if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + acg->mitigation_offset), &ori_acg_value, sizeof(DWORD))) {
+				Log(L"failed to call Mini_ReadKernelMemory to read out original acg mitigation value, target PID=%u\n", targetPid);
+				ObDereferenceObject(ep);
+				return STATUS_UNSUCCESSFUL;
+			}
+			Log(L"get target PID=%u's original acg mitigation value=%d\n",
+				targetPid, ori_acg_value);
+			if (ori_acg_value & (1 << acg->acg_pos)) {
+				Log(L"target process Pid=%u enabled ACG mitigation\n", targetPid);
+				DWORD erased = ori_acg_value & (~(1 << acg->acg_pos));
+				if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + acg->mitigation_offset), &erased, sizeof(DWORD))) {
+					Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
+					ObDereferenceObject(ep);
+					return STATUS_UNSUCCESSFUL;
+				}
 
+
+				// normally, have acg enabled process may have SectionSignatureLevel non-zero
+				{
+
+					if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &ori_value.SectionSignatureLevelValue, sizeof(UCHAR))) {
+						Log(L"failed to call Mini_ReadKernelMemory to read out SectionSignatureLevel value, target PID=%u\n", targetPid);
+						ObDereferenceObject(ep);
+						return STATUS_UNSUCCESSFUL;
+					}
+
+					Log(L"get target PID=%u's original SectionSignatureLevel=%d\n",
+						targetPid, ori_value.SectionSignatureLevelValue);
+					if (ori_value.SectionSignatureLevelValue) {
+						UCHAR _ = 0;
+
+						if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &_, sizeof(UCHAR))) {
+							Log(L"failed to call Mini_WriteKernelMemory to write in SectionSignatureLeve, target PID=%u\n", targetPid);
+							ObDereferenceObject(ep);
+							return STATUS_UNSUCCESSFUL;
+						}
+						Log(L"successfully zero out SectionSignatureLevel field of target process, PID=%u\n", targetPid);
+					}
+
+				}
+			}
+
+			if (ori_acg_value & (1 << acg->acg_audit_pos)) {
+				Log(L"target process Pid=%u enabled ACG_AUDIT mitigation\n", targetPid);
+				DWORD erased = ori_acg_value & (~(1 << acg->acg_audit_pos));
+				if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + acg->mitigation_offset), &erased, sizeof(DWORD))) {
+					Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
+					ObDereferenceObject(ep);
+					return STATUS_UNSUCCESSFUL;
+				}
+			}
+		}
+	}
 	// check if acg mitigation enabled
-	ACG_MitigationOffPos acg = { 0 };
-	 DriverCtx_GetACGMitigationOffPosInfo(&acg);
-	 if (acg.acg_audit_pos) {
-		 DWORD ori_acg_value = 0;
-		 if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + acg.mitigation), &ori_acg_value, sizeof(DWORD))) {
-			 Log(L"failed to call Mini_ReadKernelMemory to read out original acg mitigation value, target PID=%u\n", targetPid);
-			 ObDereferenceObject(ep);
-			 return STATUS_UNSUCCESSFUL;
-		 }
-		 Log(L"get target PID=%u's original acg mitigation value=%d\n",
-			 targetPid, ori_acg_value);
-		 if (ori_acg_value & (1 << acg.acg_pos)) {
-			 Log(L"target process Pid=%u enabled ACG mitigation\n", targetPid);
-			 DWORD erased = ori_acg_value & (~(1 << acg.acg_pos));
-			 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + acg.mitigation), &erased, sizeof(DWORD))) {
-				 Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
-				 ObDereferenceObject(ep);
-				 return STATUS_UNSUCCESSFUL;
-			 }
 
-
-			 // normally, have acg enabled process may have SectionSignatureLevel non-zero
-			 {
-				 EPROCESS_OFFSETS off;
-				 if (KO_GetEprocessOffsets(&off)) {
-					 if (!Mini_ReadKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &ori_value.SectionSignatureLevelValue, sizeof(UCHAR))) {
-						 Log(L"failed to call Mini_ReadKernelMemory to read out SectionSignatureLevel value, target PID=%u\n", targetPid);
-						 ObDereferenceObject(ep);
-						 return STATUS_UNSUCCESSFUL;
-					 }
-
-					 Log(L"get target PID=%u's original SectionSignatureLevel=%d\n",
-						 targetPid, ori_value.SectionSignatureLevelValue);
-					 if (ori_value.SectionSignatureLevelValue) {
-						 UCHAR _ = 0;
-
-						 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + off.SectionSignatureLevelOffset), &_, sizeof(UCHAR))) {
-							 Log(L"failed to call Mini_WriteKernelMemory to write in SectionSignatureLeve, target PID=%u\n", targetPid);
-							 ObDereferenceObject(ep);
-							 return STATUS_UNSUCCESSFUL;
-						 }
-						 Log(L"successfully zero out SectionSignatureLevel field of target process, PID=%u\n", targetPid);
-					 }
-				 }
-				 else {
-					 ObDereferenceObject(ep);
-					 DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
-					 Log(L"unsupported windows version, Major=%u Build=%u", ver.Major, ver.Build);
-					 return STATUS_UNSUCCESSFUL;
-				 }
-			 }
-		 }
-
-		 if (ori_acg_value & (1 << acg.acg_audit_pos)) {
-			 Log(L"target process Pid=%u enabled ACG_AUDIT mitigation\n", targetPid);
-			 DWORD erased = ori_acg_value & (~(1 << acg.acg_audit_pos));
-			 if (!Mini_WriteKernelMemory((PVOID)((PUCHAR)ep + acg.mitigation), &erased, sizeof(DWORD))) {
-				 Log(L"failed to call Mini_WriteKernelMemory to delete acg mitigation flag\n");
-				 ObDereferenceObject(ep);
-				 return STATUS_UNSUCCESSFUL;
-			 }
-		 }
-	 }
 	NTSTATUS status = pfnNtCreateThreadEx(extraValue, THREAD_ALL_ACCESS, NULL, proc_handle, startRoutine, parameter, 0, 0, 0, 0, NULL);
 
 
