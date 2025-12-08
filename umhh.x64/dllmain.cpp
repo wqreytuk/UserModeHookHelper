@@ -546,6 +546,8 @@ OnProcessAttach(
 	_In_ PVOID ModuleHandle
 )
 {
+
+
 	// add dll reference, so we can be unloaded by calling freelibrary
 	LdrAddRefDll(LDR_ADDREF_DLL_PIN, ModuleHandle);
 
@@ -566,6 +568,26 @@ OnProcessAttach(
 		NULL,
 		NULL,
 		&ProviderHandle);
+
+
+	// try creating a mutex here, so we won't load ourself twice
+	{
+		WCHAR mutant_name[100];
+		_snwprintf(mutant_name, RTL_NUMBER_OF(mutant_name) - 1, HOOK_DLL_LOAD_MUTANT_FMT, NtCurrentProcessId());
+
+		UNICODE_STRING Name;
+		RtlInitUnicodeString(&Name, mutant_name);
+
+		OBJECT_ATTRIBUTES oa;
+		InitializeObjectAttributes(&oa, &Name, OBJ_CASE_INSENSITIVE, NULL, NULL);
+		HANDLE hMutant;
+		NTSTATUS status = NtCreateMutant(&hMutant, MUTANT_ALL_ACCESS, &oa, TRUE);
+		if (0 != status) {
+			EtwLog(L"NtCreateMutant Name=%s failed, maybe Master DLL has already been loaded, Status=0x%x\n", mutant_name, status);
+			
+			return 0;
+		}
+	}
 	// we need to open and set an event to signal we're loaded
 	// this is used for time-sensitive operation, such as the force injection called by our AVProcessHandleLocater
 	{
@@ -633,7 +655,7 @@ OnProcessAttach(
 	{
 		WCHAR event_name[100];
 		_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_NT_INJECTION_SIGNAL_EVENT L"%d", NtCurrentProcessId());
-
+		 
 		UNICODE_STRING name;
 		RtlInitUnicodeString(&name, event_name);
 
@@ -729,6 +751,7 @@ NtDllMain(
 	case DLL_PROCESS_ATTACH: 
 		OnProcessAttach(ModuleHandle);
 		break;
+	
 
 	case DLL_PROCESS_DETACH:
 		OnProcessDetach(ModuleHandle);
@@ -757,7 +780,7 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 
 		// Sleep(60000);
 	 //  __debugbreak();
-		OnProcessAttach(hModule);
+		return OnProcessAttach(hModule);
 		break;
 
 	case DLL_PROCESS_DETACH:
