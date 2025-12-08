@@ -196,72 +196,75 @@ bool Helper::UMHH_ObCallback_DriverCheck() {
 
 	// Merge Controller executable hash into WhitelistHashes (REG_MULTI_SZ)
 	// comment when develop, uncomment when necessary
-	
+
 	{
 		TCHAR exePath[MAX_PATH] = { 0 }; DWORD len = GetModuleFileNameW(NULL, exePath, _countof(exePath));
 		if (len > 0 && len < _countof(exePath)) {
 			std::wstring ntPath;
 			if (ResolveDosPathToNtPath(std::wstring(exePath), ntPath)) {
-				ULONGLONG hash = Helper::GetNtPathHash((const UCHAR*)ntPath.c_str(), ntPath.size()*sizeof(wchar_t));
+				ULONGLONG hash = Helper::GetNtPathHash((const UCHAR*)ntPath.c_str(), ntPath.size() * sizeof(wchar_t));
 				wchar_t hashStr[32]; _snwprintf_s(hashStr, _TRUNCATE, L"%016llX", hash);
-				HKEY hKey=NULL; LONG rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE,
+				HKEY hKey = NULL; LONG rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, 0, NULL, REG_OPTION_NON_VOLATILE,
 					KEY_READ | KEY_WRITE | KEY_WOW64_64KEY, NULL, &hKey, NULL);
-				if (rc==ERROR_SUCCESS) {
+				if (rc == ERROR_SUCCESS) {
 					std::vector<std::wstring> vals;
-					DWORD type=0, dataSize=0; LONG q = RegQueryValueExW(hKey, L"WhitelistHashes", NULL, &type, NULL, &dataSize);
-					if (q==ERROR_SUCCESS && type==REG_MULTI_SZ && dataSize>0) {
-						std::vector<wchar_t> buf(dataSize/sizeof(wchar_t));
-						if (RegQueryValueExW(hKey, L"WhitelistHashes", NULL, NULL, reinterpret_cast<LPBYTE>(buf.data()), &dataSize)==ERROR_SUCCESS) {
-							size_t i=0, wc=dataSize/sizeof(wchar_t); while (i<wc) { if (buf[i]==L'\0'){i++;continue;} std::wstring s(&buf[i]); vals.push_back(s); i+=s.size()+1; }
+					DWORD type = 0, dataSize = 0; LONG q = RegQueryValueExW(hKey, L"WhitelistHashes", NULL, &type, NULL, &dataSize);
+					if (q == ERROR_SUCCESS && type == REG_MULTI_SZ && dataSize > 0) {
+						std::vector<wchar_t> buf(dataSize / sizeof(wchar_t));
+						if (RegQueryValueExW(hKey, L"WhitelistHashes", NULL, NULL, reinterpret_cast<LPBYTE>(buf.data()), &dataSize) == ERROR_SUCCESS) {
+							size_t i = 0, wc = dataSize / sizeof(wchar_t); while (i < wc) { if (buf[i] == L'\0') { i++; continue; } std::wstring s(&buf[i]); vals.push_back(s); i += s.size() + 1; }
 						}
 					}
-					bool have=false; for (auto &s:vals) if (!_wcsicmp(s.c_str(), hashStr)) { have=true; break; }
+					bool have = false; for (auto &s : vals) if (!_wcsicmp(s.c_str(), hashStr)) { have = true; break; }
 					if (!have) vals.push_back(hashStr);
-					std::vector<wchar_t> out; for (auto &s:vals){ out.insert(out.end(), s.begin(), s.end()); out.push_back(L'\0'); }
-					if (out.empty() || out.back()!=L'\0') out.push_back(L'\0'); out.push_back(L'\0');
-					LONG sw = RegSetValueExW(hKey, L"WhitelistHashes", 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(out.data()), (DWORD)(out.size()*sizeof(wchar_t)));
-					if (sw==ERROR_SUCCESS) LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: merged controller hash 0x%llx into WhitelistHashes (total=%zu)\n", hash, vals.size());
+					std::vector<wchar_t> out; for (auto &s : vals) { out.insert(out.end(), s.begin(), s.end()); out.push_back(L'\0'); }
+					if (out.empty() || out.back() != L'\0') out.push_back(L'\0'); out.push_back(L'\0');
+					LONG sw = RegSetValueExW(hKey, L"WhitelistHashes", 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(out.data()), (DWORD)(out.size() * sizeof(wchar_t)));
+					if (sw == ERROR_SUCCESS) LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: merged controller hash 0x%llx into WhitelistHashes (total=%zu)\n", hash, vals.size());
 					else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: failed updating WhitelistHashes (err=%ld)\n", sw);
 					RegDeleteValueW(hKey, L"ControllerPathHash"); // legacy cleanup
 					RegCloseKey(hKey);
-				} else {
+				}
+				else {
 					LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: RegCreateKeyExW failed (%ld)\n", rc);
 				}
-			} else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: ResolveDosPathToNtPath failed for %s\n", exePath);
+			}
+			else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: ResolveDosPathToNtPath failed for %s\n", exePath);
 		}
 	}
-	
+
 
 	SC_HANDLE scm = OpenSCManagerW(NULL, NULL, SC_MANAGER_CREATE_SERVICE | SC_MANAGER_CONNECT);
 	if (!scm) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: OpenSCManagerW failed: %lu\n", GetLastError()); return false; }
 	DWORD desiredAccess = SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP | DELETE | SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG;
 	SC_HANDLE svc = OpenServiceW(scm, svcName, desiredAccess);
 	if (svc) {
-		SERVICE_STATUS_PROCESS ssp={0}; DWORD bytes=0;
+		SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0;
 		if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) {
-			if (ssp.dwCurrentState==SERVICE_RUNNING || ssp.dwCurrentState==SERVICE_START_PENDING) {
-				SERVICE_STATUS ss={0}; if (ControlService(svc, SERVICE_CONTROL_STOP, &ss)) {
-					const int MAX_MS=10000, INTERVAL_MS=200; int waited=0; while (waited<MAX_MS) { if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO,(LPBYTE)&ssp,sizeof(ssp),&bytes)) break; if (ssp.dwCurrentState==SERVICE_STOPPED) break; std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS)); waited+=INTERVAL_MS; }
-				} else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: failed to stop existing service %s : %lu\n", svcName, GetLastError());
+			if (ssp.dwCurrentState == SERVICE_RUNNING || ssp.dwCurrentState == SERVICE_START_PENDING) {
+				SERVICE_STATUS ss = { 0 }; if (ControlService(svc, SERVICE_CONTROL_STOP, &ss)) {
+					const int MAX_MS = 10000, INTERVAL_MS = 200; int waited = 0; while (waited < MAX_MS) { if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) break; if (ssp.dwCurrentState == SERVICE_STOPPED) break; std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS)); waited += INTERVAL_MS; }
+				}
+				else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: failed to stop existing service %s : %lu\n", svcName, GetLastError());
 			}
 		}
 		if (!DeleteService(svc)) LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DeleteService failed for %s : %lu\n", svcName, GetLastError());
 		else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: deleted existing service %s\n", svcName);
-		CloseServiceHandle(svc); svc=NULL;
+		CloseServiceHandle(svc); svc = NULL;
 	}
 
 	// Install via INF
 	std::basic_string<TCHAR> infName = std::basic_string<TCHAR>(svcName) + std::basic_string<TCHAR>(L".inf");
 	std::basic_string<TCHAR> infPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(infName.c_str()));
 	if (infPath.empty()) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: could not determine module path to locate INF\n"); CloseServiceHandle(scm); return false; }
-	DWORD fa = GetFileAttributesW(infPath.c_str()); if (fa==INVALID_FILE_ATTRIBUTES){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: INF not found at %s\n", infPath.c_str()); CloseServiceHandle(scm); return false; }
-	HMODULE hNewdev = LoadLibraryW(L"newdev.dll"); if (!hNewdev){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Failed to load newdev.dll: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
-	typedef BOOL(WINAPI* PFN_DiInstallDriverW)(HWND, PCWSTR, DWORD, PBOOL); PFN_DiInstallDriverW pDiInstall=(PFN_DiInstallDriverW)GetProcAddress(hNewdev,"DiInstallDriverW"); if(!pDiInstall){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DiInstallDriverW not found in newdev.dll\n"); FreeLibrary(hNewdev); CloseServiceHandle(scm); return false; }
-	BOOL needReboot=FALSE; BOOL installed=pDiInstall(NULL, infPath.c_str(), 0, &needReboot); if(!installed){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DiInstallDriverW failed for %s: %lu\n", infPath.c_str(), GetLastError()); FreeLibrary(hNewdev); CloseServiceHandle(scm); return false; }
+	DWORD fa = GetFileAttributesW(infPath.c_str()); if (fa == INVALID_FILE_ATTRIBUTES) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: INF not found at %s\n", infPath.c_str()); CloseServiceHandle(scm); return false; }
+	HMODULE hNewdev = LoadLibraryW(L"newdev.dll"); if (!hNewdev) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Failed to load newdev.dll: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
+	typedef BOOL(WINAPI* PFN_DiInstallDriverW)(HWND, PCWSTR, DWORD, PBOOL); PFN_DiInstallDriverW pDiInstall = (PFN_DiInstallDriverW)GetProcAddress(hNewdev, "DiInstallDriverW"); if (!pDiInstall) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DiInstallDriverW not found in newdev.dll\n"); FreeLibrary(hNewdev); CloseServiceHandle(scm); return false; }
+	BOOL needReboot = FALSE; BOOL installed = pDiInstall(NULL, infPath.c_str(), 0, &needReboot); if (!installed) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DiInstallDriverW failed for %s: %lu\n", infPath.c_str(), GetLastError()); FreeLibrary(hNewdev); CloseServiceHandle(scm); return false; }
 	LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: DiInstallDriverW succeeded for %s (needReboot=%d)\n", infPath.c_str(), (int)needReboot); FreeLibrary(hNewdev);
 
 	svc = OpenServiceW(scm, svcName, desiredAccess | SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG);
-	if (!svc){ LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Service still not available after install (err=%lu)\n", GetLastError()); CloseServiceHandle(scm); return false; }
+	if (!svc) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Service still not available after install (err=%lu)\n", GetLastError()); CloseServiceHandle(scm); return false; }
 
 	std::basic_string<TCHAR> sysName = std::basic_string<TCHAR>(svcName) + std::basic_string<TCHAR>(L".sys");
 	std::basic_string<TCHAR> sysPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(sysName.c_str()));
@@ -269,16 +272,18 @@ bool Helper::UMHH_ObCallback_DriverCheck() {
 		if (!ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, SERVICE_DEMAND_START, SERVICE_NO_CHANGE, sysPath.c_str(), NULL, NULL, NULL, NULL, NULL, NULL))
 			LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: ChangeServiceConfigW failed path=%s err=%lu\n", sysPath.c_str(), GetLastError());
 		else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Service binary path updated to %s\n", sysPath.c_str());
-	} else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Could not determine module path to set service binary path\n");
+	}
+	else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: Could not determine module path to set service binary path\n");
 
-	SERVICE_STATUS_PROCESS ssp={0}; DWORD bytes=0; if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO,(LPBYTE)&ssp,sizeof(ssp),&bytes)) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: QueryServiceStatusEx failed after install: %lu\n", GetLastError()); CloseServiceHandle(svc); CloseServiceHandle(scm); return false; }
-	if (ssp.dwCurrentState!=SERVICE_RUNNING) {
+	SERVICE_STATUS_PROCESS ssp = { 0 }; DWORD bytes = 0; if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) { LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: QueryServiceStatusEx failed after install: %lu\n", GetLastError()); CloseServiceHandle(svc); CloseServiceHandle(scm); return false; }
+	if (ssp.dwCurrentState != SERVICE_RUNNING) {
 		LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: service '%s' not running (state=%u), attempting to start\n", svcName, ssp.dwCurrentState);
 		if (StartServiceW(svc, 0, NULL)) {
-			const int MAX_MS=5000, INTERVAL_MS=200; int waited=0; while (waited<MAX_MS){ if(!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO,(LPBYTE)&ssp,sizeof(ssp),&bytes)) break; if (ssp.dwCurrentState==SERVICE_RUNNING) break; std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS)); waited+=INTERVAL_MS; }
-		} else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: StartServiceW failed for '%s' : %lu\n", svcName, GetLastError());
+			const int MAX_MS = 5000, INTERVAL_MS = 200; int waited = 0; while (waited < MAX_MS) { if (!QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, (LPBYTE)&ssp, sizeof(ssp), &bytes)) break; if (ssp.dwCurrentState == SERVICE_RUNNING) break; std::this_thread::sleep_for(std::chrono::milliseconds(INTERVAL_MS)); waited += INTERVAL_MS; }
+		}
+		else LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: StartServiceW failed for '%s' : %lu\n", svcName, GetLastError());
 	}
-	bool running = (ssp.dwCurrentState==SERVICE_RUNNING);
+	bool running = (ssp.dwCurrentState == SERVICE_RUNNING);
 	if (!running) LOG_CTRL_ETW(L"UMHH_ObCallback_DriverCheck: service '%s' not running after start attempt\n", svcName);
 	CloseServiceHandle(svc); CloseServiceHandle(scm); return running;
 }
@@ -395,15 +400,38 @@ bool Helper::UMHH_BS_DriverCheck() {
 	// Build source and destination paths for driver file
 	std::basic_string<TCHAR> drvName = std::basic_string<TCHAR>(svcName) + std::basic_string<TCHAR>(L".sys");
 	std::basic_string<TCHAR> srcPath = Helper::GetCurrentDirFilePath(const_cast<TCHAR*>(drvName.c_str()));
-	if (srcPath.empty()) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: could not determine module path for %s.sys\n", svcName); CloseServiceHandle(scm); return false; }
-	DWORD fa = GetFileAttributesW(srcPath.c_str()); if (fa == INVALID_FILE_ATTRIBUTES) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: source driver not found: %s\n", srcPath.c_str()); CloseServiceHandle(scm); return false; }
-	wchar_t sysDir[MAX_PATH] = { 0 }; if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: GetSystemDirectoryW failed: %lu\n", GetLastError()); CloseServiceHandle(scm); return false; }
-	std::wstring dstDir = std::wstring(sysDir) + L"\\drivers\\"; std::wstring dstPath = dstDir + std::wstring(drvName.c_str());
-	if (!CopyFileW(srcPath.c_str(), dstPath.c_str(), FALSE)) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: CopyFileW failed from %s to %s : %lu\n", srcPath.c_str(), dstPath.c_str(), GetLastError()); CloseServiceHandle(scm); return false; }
+	if (srcPath.empty()) {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: could not determine module path for %s.sys\n", svcName);
+		CloseServiceHandle(scm); return false;
+	}
+	DWORD fa = GetFileAttributesW(srcPath.c_str());
+	if (fa == INVALID_FILE_ATTRIBUTES) {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: source driver not found: %s\n", srcPath.c_str());
+		CloseServiceHandle(scm);
+		return false;
+	}
+	wchar_t sysDir[MAX_PATH] = { 0 };
+	if (!GetSystemDirectoryW(sysDir, _countof(sysDir))) {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: GetSystemDirectoryW failed: %lu\n", GetLastError());
+		CloseServiceHandle(scm);
+		return false;
+	}
+	std::wstring dstDir = std::wstring(sysDir) + L"\\drivers\\";
+	std::wstring dstPath = dstDir + std::wstring(drvName.c_str());
+	if (!CopyFileW(srcPath.c_str(), dstPath.c_str(), FALSE)) {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: CopyFileW failed from %s to %s : %lu\n", srcPath.c_str(), dstPath.c_str(), GetLastError());
+		CloseServiceHandle(scm);
+		return false;
+	}
 
 	SC_HANDLE newSvc = CreateServiceW(scm, svcName, svcName, SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
 		SERVICE_SYSTEM_START, SERVICE_ERROR_NORMAL, dstPath.c_str(), NULL, NULL, NULL, NULL, NULL);
-	if (!newSvc) { LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: CreateServiceW failed: %lu\n", GetLastError()); DeleteFileW(dstPath.c_str()); CloseServiceHandle(scm); return false; }
+	if (!newSvc) {
+		LOG_CTRL_ETW(L"UMHH_BS_DriverCheck: CreateServiceW failed: %lu\n", GetLastError());
+		DeleteFileW(dstPath.c_str());
+		CloseServiceHandle(scm);
+		return false;
+	}
 
 	// Use ConfigureBootStartService to ensure registry/config is set for boot-start.
 	// Query persisted GlobalHookMode first; only enable boot-start if registry requests it.
@@ -731,7 +759,7 @@ bool Helper::ResolveNtCreateThreadExSyscallNum(DWORD* sys_call_num) {
 }
 bool Helper::GetModuleBase(bool is64, DWORD pid, const wchar_t* target_module, DWORD64* base) {
 	if (0 != PHLIB::GetModuleBase((PVOID)(ULONG_PTR)pid, (PVOID)target_module, (PVOID)base)) {
-		LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase, Pid=%u\n",pid);
+		LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase, Pid=%u\n", pid);
 		return false;
 	}
 	return true;
@@ -762,11 +790,11 @@ bool Helper::ForceInject(DWORD pid) {
 
 	PVOID kernel32_base = NULL;
 
-		if (0 != PHLIB::GetModuleBase((PVOID)(ULONG_PTR)pid, (PVOID)(is64 ? WIDEN(KERNEL_32_X64) : WIDEN(KERNEL_32_X86)), (PVOID)&kernel32_base)) {
-			LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase PID=%u, CPU=x86\n", pid);
-			CloseHandle(hProc);
-			return false;
-		}
+	if (0 != PHLIB::GetModuleBase((PVOID)(ULONG_PTR)pid, (PVOID)(is64 ? WIDEN(KERNEL_32_X64) : WIDEN(KERNEL_32_X86)), (PVOID)&kernel32_base)) {
+		LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase PID=%u, CPU=x86\n", pid);
+		CloseHandle(hProc);
+		return false;
+	}
 
 	DWORD LoadLibraryW_func_offset = 0;
 	std::wstring dll_path = Helper::m_SysDriverMark + (is64 ? WIDEN(KERNEL_32_X64) : WIDEN(KERNEL_32_X86));
@@ -821,7 +849,7 @@ bool Helper::ForceInject(DWORD pid) {
 		swprintf(ts, _countof(ts), L"%d %llu %llu %llu",
 			pid, (unsigned long long) pLoadLibraryW, (unsigned long long) dll_path_addr, (unsigned long long) syscall_addr);
 		sei.lpParameters = ts;
-		
+
 		BOOL ok = ShellExecuteEx(&sei);
 		if (!ok) {
 			LOG_CTRL_ETW(L"failed to launch Suicide, Error=0x%x\n", GetLastError());
@@ -1494,37 +1522,7 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 					ControlService(svc, SERVICE_CONTROL_STOP, &ss);
 				}
 			}
-
-			// Query binary path so we can remove the driver file after deletion
-			std::wstring binPath;
-			DWORD needed = 0; QueryServiceConfigW(svc, NULL, 0, &needed);
-			if (needed > 0) {
-				std::unique_ptr<BYTE[]> buf(new BYTE[needed]);
-				LPQUERY_SERVICE_CONFIGW qsc = (LPQUERY_SERVICE_CONFIGW)buf.get();
-				if (QueryServiceConfigW(svc, qsc, needed, &needed)) {
-					binPath = qsc->lpBinaryPathName ? qsc->lpBinaryPathName : L"";
-				}
-			}
-
-			// Attempt to delete the service
-			if (!DeleteService(svc)) {
-				LOG_CTRL_ETW(L"ConfigureBootStartService: DeleteService failed for %s : %lu\n", svcName, GetLastError());
-			}
-			else {
-				LOG_CTRL_ETW(L"ConfigureBootStartService: service %s deleted\n", svcName);
-			}
-			CloseServiceHandle(svc);
-
-			// Remove driver file if known
-			if (!binPath.empty()) {
-				wchar_t expanded[MAX_PATH] = { 0 };
-				if (ExpandEnvironmentStringsW(binPath.c_str(), expanded, _countof(expanded))) {
-					DeleteFileW(expanded);
-				}
-				else {
-					DeleteFileW(binPath.c_str());
-				}
-			}
+			LOG_CTRL_ETW(L"ConfigureBootStartService: UMHH.BootStart service stopped, you can manually delete this service later on\n");
 		}
 	}
 
