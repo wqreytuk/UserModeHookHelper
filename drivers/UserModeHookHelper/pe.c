@@ -5,6 +5,8 @@
 #include <ntifs.h>
 // Some WDK versions may not declare PsGetProcessWow64Process; forward declare it.
 extern PVOID PsGetProcessWow64Process(IN PEPROCESS Process);
+static const DWORD sir_this_way_table[] =
+{ 19045 };
 // Unified PE_GetExport implementation
 PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName)
 {
@@ -119,15 +121,24 @@ PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName)
 
     return NULL;
 }
- 
+
 PULONGLONG PE_GetSSDT()
 {
+	// DbgBreakPoint();
     // Decide path based on OS version persisted in driver context.
     // Windows 11 (Major=10, Build>=22000) uses the KiSystemServiceUser walk;
     // older builds use legacy pattern directly from KiSystemCall64.
     DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
 	(ver);
 	BOOLEAN sir_this_way = 0;// (ver.Major == 10 && ver.Build >= 22000);
+	for (size_t i = 0; i < RTL_NUMBER_OF(sir_this_way_table); i++)
+	{
+		if (sir_this_way_table[i] == ver.Build) {
+			sir_this_way = TRUE;
+			break;
+		}
+	}
+	
     if (sir_this_way) { // only a certain windows version will trigger this code, I'll update my code when I encounter it
 		ULONGLONG  KiSystemCall64 = __readmsr(0xC0000082);	// Get the address of nt!KeSystemCall64
 		ULONGLONG  KiSystemServiceRepeat = 0;
