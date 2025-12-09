@@ -69,6 +69,7 @@
     <ClInclude Include="HookProcDlg.h" />
     <ClInclude Include="HookInterfaces.h" />
     <ClInclude Include="HookUIResource.h" />
+    <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="HookUIFactory.cpp" />

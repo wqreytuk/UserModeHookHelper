@@ -442,6 +442,9 @@ public:
 	 bool ForceInject(DWORD pid) override {
 		return  Helper::ForceInject(pid);
 	}
+	 virtual bool ConvertWcharToChar(const wchar_t* src, char *dst, size_t dstChars) override {
+		 return Helper::ConvertWcharToChar(src, dst, dstChars);
+	 }
 	  bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars) override {
 		  return Helper::ConvertCharToWchar(src, dst, dstChars);
 	}

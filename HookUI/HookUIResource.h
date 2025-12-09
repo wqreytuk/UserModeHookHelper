@@ -10,3 +10,6 @@
 #define IDC_HOOKUI_STATIC_DIRECT   5107
 #define IDC_HOOKUI_STATIC_HINT     5108
 #define IDC_HOOKUI_LIST_HOOKS      5110
+// New input for export function name
+#define IDC_HOOKUI_STATIC_EXPORT    5111
+#define IDC_HOOKUI_EDIT_EXPORT      5112

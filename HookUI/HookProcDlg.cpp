@@ -162,11 +162,17 @@ void HookProcDlg::UpdateLayoutForSplitter(int cx, int cy) {
 	moveCtrl(IDC_HOOKUI_EDIT_OFFSET, panelX, 30, 140, 18);
 	moveCtrl(IDC_HOOKUI_STATIC_DIRECT, panelX, 55, 140, 14);
 	moveCtrl(IDC_HOOKUI_EDIT_DIRECT, panelX, 67, 140, 18);
-	int applyY = 100; int btnW = 65; moveCtrl(IDC_HOOKUI_BTN_APPLY, panelX, applyY, btnW, 22); moveCtrl(IDCANCEL, panelX + btnW + 5, applyY, btnW, 22);
+	// Export function label + edit directly under Direct Address
+	moveCtrl(IDC_HOOKUI_STATIC_EXPORT, panelX, 85, 140, 14);
+	moveCtrl(IDC_HOOKUI_EDIT_EXPORT, panelX, 97, 140, 18);
+	// Place Apply/Close buttons below Export field to avoid overlap
+	int applyY = 120; int btnW = 65; moveCtrl(IDC_HOOKUI_BTN_APPLY, panelX, applyY, btnW, 22); moveCtrl(IDCANCEL, panelX + btnW + 5, applyY, btnW, 22);
 	int hooksY = applyY + 24;
 	int hooksW = cx - panelX - margin; int hooksH = listTop + listHeight - hooksY; if (hooksH < 40) hooksH = 40;
 	moveCtrl(IDC_HOOKUI_LIST_HOOKS, panelX, hooksY, hooksW, hooksH);
 }
+
+
 
 void HookProcDlg::OnLButtonDown(UINT nFlags, CPoint point) {
 	CRect rc; GetClientRect(&rc);
@@ -565,15 +571,17 @@ void HookProcDlg::OnBnClickedApplyHook() {
 
 	CString directStr; GetDlgItemText(IDC_HOOKUI_EDIT_DIRECT, directStr);
 	CString offsetStr; GetDlgItemText(IDC_HOOKUI_EDIT_OFFSET, offsetStr);
+	CString exportFuncStr; GetDlgItemText(IDC_HOOKUI_EDIT_EXPORT, exportFuncStr);
 	std::wstring direct = directStr.GetString();
 	std::wstring offset = offsetStr.GetString();
+	std::wstring exportFunc = exportFuncStr.GetString();
 	if (!m_services) {
 		MessageBox(L"Fatal error! m_services not initialized!", L"Hook", MB_OK | MB_ICONERROR);
 		return;
 	}
 	// Trim simple whitespace
 	auto trimWS = [](std::wstring& s) { while (!s.empty() && iswspace(s.back())) s.pop_back(); size_t i = 0; while (i < s.size() && iswspace(s[i])) i++; if (i) s = s.substr(i); };
-	trimWS(direct); trimWS(offset);
+	trimWS(direct); trimWS(offset); trimWS(exportFunc);
 
 	ULONGLONG addr = 0ULL; bool ok = false;
 	if (!direct.empty()) {
@@ -612,14 +620,29 @@ void HookProcDlg::OnBnClickedApplyHook() {
 	// we need to mannuly check it from file
 	bool is64 = false;
 	m_services->IsProcess64(m_pid, is64);
+	// we should update the code to let user specify export function name
+	// so they won't need write a lot dll with same export function but different logic code
+	// preferred export function name from user input (falls back to defaults if empty)
+	std::wstring preferredExport = exportFunc;
 	DWORD hook_code_offset = 0;
-	if (!m_services->CheckExportFromFile(selectedPath.GetString(), is64 ? HOOK_CODE_EXPORT_X64 : HOOK_CODE_EXPORT_X86, &hook_code_offset)) {
-		; LOG_UI(m_services, L"failed to call CheckExportFromFile, PE_Path=%s, CPU=%s\n", selectedPath.GetString(), is64 ? L"x64" : L"x86");
+	const wchar_t* exportToCheck = nullptr;
+	std::wstring exportWide;
+	if (!preferredExport.empty()) {
+		exportToCheck = preferredExport.c_str();
+	}
+	else {
+		exportToCheck = is64 ? L"" HOOK_CODE_EXPORT_X64 L"" : L"" HOOK_CODE_EXPORT_X86 L"";
+	}
+	std::wstring wexportToCheck = exportToCheck;
+	char ansi_exportToCheck[MAX_PATH] = { 0 };
+	m_services->ConvertWcharToChar(exportToCheck, ansi_exportToCheck, MAX_PATH);
+	if (!m_services->CheckExportFromFile(selectedPath.GetString(), ansi_exportToCheck, &hook_code_offset)) {
+		LOG_UI(m_services, L"failed to call CheckExportFromFile, PE_Path=%s, CPU=%s\n", selectedPath.GetString(), is64 ? L"x64" : L"x86");
 		MessageBox(L"failed to call CheckExportFromFile", L"Hook", MB_OK | MB_ICONERROR);
 		return;
 	}
 	if (!hook_code_offset) {
-		LOG_UI(m_services, L"failed to get required export function: %s\n", is64 ? HOOK_CODE_EXPORT_X64 : HOOK_CODE_EXPORT_X86);
+		LOG_UI(m_services, L"failed to get required export function: %s\n", exportToCheck);
 		MessageBox(L"failed to get required export function from HookCode dll", L"Hook", MB_OK | MB_ICONERROR);
 		return;
 	}
@@ -814,6 +837,20 @@ void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
 		else {
 			wDirectLabel->MoveWindow(panelX, y, rightPanelW - margin, labelH);
 			wDirectEdit->MoveWindow(panelX, y + labelH + 2, rightPanelW - margin, editH);
+		}
+		y += labelH + 2 + editH + interY;
+	}
+	// Export Function label + edit should resize with right panel like other inputs
+	CWnd* wExportLabel = GetDlgItem(IDC_HOOKUI_STATIC_EXPORT);
+	CWnd* wExportEdit = GetDlgItem(IDC_HOOKUI_EDIT_EXPORT);
+	if (wExportLabel && wExportEdit) {
+		if (hdwp) {
+			hdwp = DeferWindowPos(hdwp, wExportLabel->GetSafeHwnd(), nullptr, panelX, y, rightPanelW - margin, labelH, SWP_NOZORDER | SWP_NOACTIVATE);
+			hdwp = DeferWindowPos(hdwp, wExportEdit->GetSafeHwnd(), nullptr, panelX, y + labelH + 2, rightPanelW - margin, editH, SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+		else {
+			wExportLabel->MoveWindow(panelX, y, rightPanelW - margin, labelH);
+			wExportEdit->MoveWindow(panelX, y + labelH + 2, rightPanelW - margin, editH);
 		}
 		y += labelH + 2 + editH + interY;
 	}

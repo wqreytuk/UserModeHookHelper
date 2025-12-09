@@ -17,6 +17,7 @@ struct IHookServices {
 	virtual bool CheckPeArch(const wchar_t* dllPath, bool& is64) = 0;
 	virtual void* PhBuildModuleListWow64(void* hProc, void* head) = 0;
 	virtual bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars) = 0;
+	virtual bool ConvertWcharToChar(const wchar_t* src, char* dst, size_t dstChars) = 0;
 	virtual std::wstring GetCurrentDirFilePath(WCHAR* filename) = 0;
 	virtual bool GetHighAccessProcHandle(DWORD pid, HANDLE* hProc) = 0;
     virtual void Log(const wchar_t* fmt, ...) = 0;

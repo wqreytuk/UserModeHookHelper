@@ -46,6 +46,11 @@ CUMControllerApp app;
 
 BOOL CUMControllerApp::InitInstance()
 {
+	HANDLE hMutex = CreateMutexA(NULL, FALSE, "UMHH_MUTEX");
+	if (GetLastError() == ERROR_ALREADY_EXISTS){
+		exit(-1);
+	}
+	(hMutex);
 	// Delay ETW provider initialization until after MFC/controls are ready to avoid early ASSERTs
 	// InitCommonControlsEx() is required on Windows XP if an application
 	// manifest specifies use of ComCtl32.dll version 6 or later to enable

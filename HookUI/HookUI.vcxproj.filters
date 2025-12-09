@@ -21,6 +21,7 @@
     <ClInclude Include="HookUIResource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" />
