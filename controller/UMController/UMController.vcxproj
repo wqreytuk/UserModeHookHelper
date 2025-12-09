@@ -322,8 +322,20 @@
     <Image Include="res\UMController.ico" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\EtwTracer\EtwTracer.vcxproj">
+      <Project>{e1ddc919-268c-4dd1-b0b5-8ed0d8554887}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\EtwTracer\EtwTracer.vcxproj">
       <Project>{e1ddc919-268c-4dd1-b0b5-8ed0d8554887}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\HookUI\HookUI.vcxproj">
+      <Project>{5b7c6cf5-5e7d-4f2b-9f2b-a7df2e8a9f10}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\ProcessHackerLib\ProcessHackerLib.vcxproj">
+      <Project>{74fd19a0-b533-46da-b591-b1ef4eef48b0}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\Suicide\Suicide.vcxproj">
+      <Project>{e5152195-ee6f-491b-90eb-1e0de39c5245}</Project>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
