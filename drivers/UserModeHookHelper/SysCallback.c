@@ -2,6 +2,8 @@
 #include "Trace.h"
 #include "FltCommPort.h"
 #include "Inject.h"
+#include "StrLib.h"
+#include "DriverCtx.h"
 NTSTATUS SetSysNotifiers() {
 	NTSTATUS status;
 	status = PsSetCreateProcessNotifyRoutine(ProcessCrNotify, FALSE);
@@ -61,12 +63,22 @@ ProcessCrNotify(
 	if (imageName) {
 		// only queue injection when create process
 		if (process && Create) {
+			// Record controller PID if UMController.exe starts
+			UNICODE_STRING triggerImage = RTL_CONSTANT_STRING(L"UMController.exe");
+			if (SL_RtlSuffixUnicodeString(&triggerImage, imageName, TRUE)) {
+				DriverCtx_SetControllerPid(pid);
+			}
 			Inject_CheckAndQueue(imageName, process,FALSE);
 		}
 		ExFreePool(imageName);
 		imageName = NULL;
 	}
 	if (!Create) {
+		// Clear controller PID if it exits
+		DWORD currentPid = (DWORD)(ULONG_PTR)ProcessId;
+		if (DriverCtx_GetControllerPid() == currentPid) {
+			DriverCtx_SetControllerPid(0);
+		}
 		Inject_RemovePendingInject(process);
 	}
 

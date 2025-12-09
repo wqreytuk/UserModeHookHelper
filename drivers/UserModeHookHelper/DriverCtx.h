@@ -48,6 +48,13 @@ VOID DriverCtx_ClearUserDir(VOID);
 VOID DriverCtx_SetGlobalHookMode(BOOLEAN Enabled);
 BOOLEAN DriverCtx_GetGlobalHookMode(VOID);
 
+// Track controller process id (UMController.exe)
+VOID DriverCtx_SetControllerPid(DWORD Pid);
+DWORD DriverCtx_GetControllerPid(VOID);
+
+// DLL block list lookup (final component case-insensitive)
+BOOLEAN DriverCtx_IsBlockedDllName(_In_ PFLT_FILE_NAME_INFORMATION nameinfo);
+
 // OS version info stored in driver context
 typedef struct _DRIVERCTX_OSVER {
 	ULONG Major;

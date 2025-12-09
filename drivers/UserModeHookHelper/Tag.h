@@ -7,4 +7,5 @@
 #define tag_apc			'KaPc'
 // Driver context pool tag
 #define tag_driver_ctx 'CtxD'
+#define tag_stream_handle_ctx 'hcsU'
 #endif 

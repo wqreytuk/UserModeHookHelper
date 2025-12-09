@@ -67,19 +67,29 @@ static VOID LoadPersistedDriverSettings(VOID) {
 }
 
 CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
-	{ IRP_MJ_CREATE,
-	  0,
-	  MiniPreCreateCallback,
-	  NULL },   // Post-operation = NULL
-	{ IRP_MJ_OPERATION_END } // terminator
+		{ IRP_MJ_CREATE,
+			0,
+			MiniPreCreateCallback,
+			NULL },
+		// { IRP_MJ_READ,
+		// 	0,
+		// 	MiniPreReadCallback,
+		// 	NULL },
+		{ IRP_MJ_OPERATION_END }
 };
 
 // Filter registration structure
+// Context registrations
+const FLT_CONTEXT_REGISTRATION Contexts[] = {
+    { FLT_STREAMHANDLE_CONTEXT, 0, NULL, sizeof(UMHH_STREAMHANDLE_CTX), tag_stream_handle_ctx },
+    { FLT_CONTEXT_END }
+};
+
 const FLT_REGISTRATION FilterRegistration = {
 	sizeof(FLT_REGISTRATION),        // Size
 	FLT_REGISTRATION_VERSION,        // Version
 	0,                               // Flags
-	NULL,                            // Context registration
+	Contexts,                        // Context registration
 	Callbacks,                       // Operation callbacks
 	MiniUnload,                      // FilterUnload
 	NULL,                            // InstanceSetup

@@ -8,6 +8,7 @@
 #include "DriverCtx.h"
 #include "Inject.h"
 #include <ntifs.h>
+#include "StrLib.h"
 NTSTATUS
 MiniUnload(
 	FLT_FILTER_UNLOAD_FLAGS Flags
@@ -50,11 +51,53 @@ MiniPreCreateCallback(
 	PVOID* CompletionContext
 )
 {
-	UNREFERENCED_PARAMETER(Data);
-	UNREFERENCED_PARAMETER(FltObjects);
 	UNREFERENCED_PARAMETER(CompletionContext);
+	if (!Data || !FltObjects) return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	// Only block for the controller process
+	DWORD curPid = (DWORD)(ULONG_PTR)PsGetCurrentProcessId();
+	if (DriverCtx_GetControllerPid() == 0 || DriverCtx_GetControllerPid() != curPid) {
+		return FLT_PREOP_SUCCESS_NO_CALLBACK;
+	}
+	// Resolve name and set per-handle context to avoid future name lookups
+	PFLT_FILE_NAME_INFORMATION nameInfo = NULL;
+	NTSTATUS st = FltGetFileNameInformation(Data, FLT_FILE_NAME_NORMALIZED | FLT_FILE_NAME_QUERY_ALWAYS_ALLOW_CACHE_LOOKUP, &nameInfo);
+	if (NT_SUCCESS(st) && nameInfo) {
+		FltParseFileNameInformation(nameInfo);
+		BOOLEAN shouldBlock = DriverCtx_IsBlockedDllName(nameInfo);
+		if (shouldBlock) {
+			Data->IoStatus.Status = STATUS_ACCESS_DENIED;
+			Data->IoStatus.Information = 0;
+			FltReleaseFileNameInformation(nameInfo);
+			return FLT_PREOP_COMPLETE;
+		}
+		FltReleaseFileNameInformation(nameInfo);
+	}
+	return FLT_PREOP_SUCCESS_NO_CALLBACK;
+}
 
-	// Do nothing, just let the I/O continue
+// PreRead to block reads of blocked DLLs for the controller process
+FLT_PREOP_CALLBACK_STATUS
+MiniPreReadCallback(
+	_Inout_ PFLT_CALLBACK_DATA Data,
+	_In_ PCFLT_RELATED_OBJECTS FltObjects,
+	_Outptr_result_maybenull_ PVOID *CompletionContext
+)
+{
+	UNREFERENCED_PARAMETER(CompletionContext);
+	if (!Data || !FltObjects) return FLT_PREOP_SUCCESS_NO_CALLBACK;
+
+	// Do NOT resolve filename; honor per-handle context set at create
+	PUMHH_STREAMHANDLE_CTX ctx = NULL;
+	NTSTATUS gc = FltGetFileContext(FltObjects->Instance,FltObjects->FileObject, (PFLT_CONTEXT*)&ctx);
+	if (NT_SUCCESS(gc) && ctx) {
+		BOOLEAN blocked = ctx->Blocked ? TRUE : FALSE;
+		FltReleaseContext(ctx);
+		if (blocked) {
+			Data->IoStatus.Status = STATUS_ACCESS_DENIED;
+			Data->IoStatus.Information = 0;
+			return FLT_PREOP_COMPLETE;
+		}
+	}
 	return FLT_PREOP_SUCCESS_NO_CALLBACK;
 }
 
