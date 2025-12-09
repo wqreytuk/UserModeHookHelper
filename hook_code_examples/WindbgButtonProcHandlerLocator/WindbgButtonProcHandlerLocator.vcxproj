@@ -167,14 +167,6 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\HookCoreLib\HookCoreLib.vcxproj">
-      <Project>{6c2e3e9c-1124-4f5e-9d6f-ac9a9b6e5e21}</Project>
-    </ProjectReference>
-    <ProjectReference Include="..\ProcessHackerLib\ProcessHackerLib.vcxproj">
-      <Project>{74fd19a0-b533-46da-b591-b1ef4eef48b0}</Project>
-    </ProjectReference>
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

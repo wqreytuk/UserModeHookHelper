@@ -1,8 +1,8 @@
 // Clean, corrected implementation with multi-column sorting support
 
 #include "HookProcDlg.h"
-#include "../Shared/LogMacros.h"
-#include "../Shared/HookRow.h"
+#include "../../Shared/LogMacros.h"
+#include "../../Shared/HookRow.h"
 #include <tlhelp32.h>
 #include <cwchar>
 #include <cwctype>
@@ -11,8 +11,8 @@
 #include "../HookCoreLib/HookCore.h"
 #include "../UMController/Helper.h"
 #include "../UMController/RegistryStore.h"
-#include "../Shared/HookRow.h"
-#include "../Shared/SharedMacroDef.h"
+#include "../../Shared/HookRow.h"
+#include "../../Shared/SharedMacroDef.h"
 #include "../ProcessHackerLib/phlib_expose.h"
 #include <psapi.h>
 static std::wstring Hex64(ULONGLONG v) {

@@ -3,8 +3,8 @@
 #include <stdio.h>
 #include <evntprov.h>
 #include <fltuser.h>
-#include "../UserModeHookHelper/MacroDef.h"
-#include "../UserModeHookHelper/UKShared.h"
+#include "../../drivers/UserModeHookHelper/MacroDef.h"
+#include "../../drivers/UserModeHookHelper/UKShared.h"
 #include <memory>
 
 static const GUID ProviderGUID =

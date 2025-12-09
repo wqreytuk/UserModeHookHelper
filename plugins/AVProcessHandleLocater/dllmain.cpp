@@ -2,14 +2,14 @@
 #include "pch.h"
 #include <stdio.h>  
 #include <evntprov.h>
-#include "../UMController/HookInterfaces.h"
+#include "../../controller/UMController/HookInterfaces.h"
 #include "pidinput.h"
 #include <tlhelp32.h>
 #include <string>
-#include "../UMController/ProcFlags.h"
-#include "../UMController/Helper.h"
+#include "../../controller/UMController/ProcFlags.h"
+#include "../../controller/UMController/Helper.h"
 #include <sddl.h>
-#include "../Shared/SharedMacroDef.h"
+#include "../../Shared/SharedMacroDef.h"
 
 #define AVPHL_X64_DLL L"AvProcessHandleLocater.x64.dll"
 #define AVPHL_X86_DLL L"AvProcessHandleLocater.Win32.dll"

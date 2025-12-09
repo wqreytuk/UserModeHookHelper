@@ -17,9 +17,9 @@
 #include <thread>
 #include <chrono>
 #include "../Shared/LogMacros.h"
-#include  "../UserModeHookHelper/MacroDef.h"
+#include  "../drivers/UserModeHookHelper/MacroDef.h"
 #include <winsvc.h>
-#include "../UserModeHookHelper/UKShared.h"
+#include "../drivers/UserModeHookHelper/UKShared.h"
 #include <psapi.h>
 #include "../Shared/SharedMacroDef.h"
 #include "ProcFlags.h"

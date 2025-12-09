@@ -7,9 +7,9 @@
 //
 #define NTDLL_NO_INLINE_INIT_STRING
 #include <ntdll.h>
-#include "../UMController/IPC.h"
-#include "../UMController/ETW.h"
-#include "../Shared/SharedMacroDef.h"
+#include "../controller/UMController/IPC.h"
+#include "../controller/UMController/ETW.h"
+#include "../../Shared/SharedMacroDef.h"
 
 #define PAGE_SIZE 0x1000 
 

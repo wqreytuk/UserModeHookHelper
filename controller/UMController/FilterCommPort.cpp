@@ -15,11 +15,11 @@
 #include <string>
 #include "FilterCommPort.h"
 #include "../Shared/LogMacros.h"
-#include "../UserModeHookHelper/MacroDef.h"
+#include "../drivers/UserModeHookHelper/MacroDef.h"
 #include "ETW.h"
 #include "UMController.h"
 #include "Helper.h"
-#include "../UserModeHookHelper/UKShared.h"
+#include "../drivers/UserModeHookHelper/UKShared.h"
 #include <memory>
 #include <winerror.h>   // For HRESULT macros 
 #include <cstddef>

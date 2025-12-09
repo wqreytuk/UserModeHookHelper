@@ -1,7 +1,7 @@
 // Ensure consistent linkage with header export macro
 #include "HookUIFactory.h"
 #include "HookProcDlg.h"
-#include "../Shared/LogMacros.h"
+#include "../../Shared/LogMacros.h"
 
 // Definition with HOOKUI_API to match header linkage spec
 HOOKUI_API BOOL WINAPI ShowHookDialog(HWND hParent, DWORD pid, const wchar_t* processName, IHookServices* services) {

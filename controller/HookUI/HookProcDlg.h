@@ -9,7 +9,7 @@
 #include <afxcmn.h>        // common controls (CListCtrl)
 #include "HookInterfaces.h"
 #include "HookUIResource.h"
-#include "../Shared/HookRow.h"
+#include "../../Shared/HookRow.h"
 
 class HookProcDlg : public CDialogEx {
 public:

@@ -76,15 +76,18 @@
     <ClCompile Include="HookProcDlg.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\HookCoreLib\HookCoreLib.vcxproj">
-      <Project>{6C2E3E9C-1124-4F5E-9D6F-AC9A9B6E5E21}</Project>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
     <ResourceCompile Include="HookUI.rc" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\HookCoreLib\HookCoreLib.vcxproj">
+      <Project>{6c2e3e9c-1124-4f5e-9d6f-ac9a9b6e5e21}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\ProcessHackerLib\ProcessHackerLib.vcxproj">
+      <Project>{74fd19a0-b533-46da-b591-b1ef4eef48b0}</Project>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup>
     <OutDir>$(SolutionDir)$(Configuration)\..\x64\$(Configuration)</OutDir>

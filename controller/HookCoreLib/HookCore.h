@@ -2,7 +2,7 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "../Shared/HookServices.h" // shared interface (no windows.h here to avoid MFC ordering issue)
+#include "../../Shared/HookServices.h" // shared interface (no windows.h here to avoid MFC ordering issue)
 #include "Disasm.h"
 // Forward minimal Win32 types to avoid forcing <windows.h> in MFC public headers.
 #ifndef _WINDEF_

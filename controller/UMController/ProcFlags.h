@@ -9,7 +9,7 @@
 #ifndef PROCFLAGS_H
 #define PROCFLAGS_H
 #include <Windows.h>
-#include "../UserModeHookHelper/UKShared.h"
+#include "../../drivers/UserModeHookHelper/UKShared.h"
 // Flag bit definitions (stored starting at bit 32 of the 64-bit item data)
 #define PF_IN_HOOK_LIST      0x00000001u  // process is currently in hook list
 #define PF_MASTER_DLL_LOADED 0x00000002u  // master/injection helper DLL already loaded

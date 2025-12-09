@@ -3,10 +3,10 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <algorithm>
-#include "../UserModeHookHelper/UKShared.h" // for X64_DLL / X86_DLL names
+#include "../drivers/UserModeHookHelper/UKShared.h" // for X64_DLL / X86_DLL names
 #include "../Shared/LogMacros.h" 
 #include "Trampoline.h"
-#include "../Shared/SharedMacroDef.h"
+#include "../../Shared/SharedMacroDef.h"
 #include <psapi.h>"
 #include "../ProcessHackerLib/phlib_expose.h"
 

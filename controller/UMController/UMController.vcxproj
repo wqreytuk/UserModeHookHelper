@@ -325,12 +325,6 @@
     <ProjectReference Include="..\EtwTracer\EtwTracer.vcxproj">
       <Project>{e1ddc919-268c-4dd1-b0b5-8ed0d8554887}</Project>
     </ProjectReference>
-    <ProjectReference Include="..\ProcessHackerLib\ProcessHackerLib.vcxproj">
-      <Project>{74fd19a0-b533-46da-b591-b1ef4eef48b0}</Project>
-    </ProjectReference>
-    <ProjectReference Include="..\Suicide\Suicide.vcxproj">
-      <Project>{e5152195-ee6f-491b-90eb-1e0de39c5245}</Project>
-    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ETW.cpp" />
