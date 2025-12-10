@@ -13,8 +13,15 @@
 // Unified IHookServices interface shared by UMController, HookUI, and HookCoreLib.
 // Provides two logging channels: general (Log) and hook-core diagnostics (LogCore).
 struct IHookServices {
-	
+
 	virtual bool CheckPeArch(const wchar_t* dllPath, bool& is64) = 0;
+	virtual bool WriteProcessMemoryWrap(
+		_In_ HANDLE hProcess,
+		_In_ LPVOID lpBaseAddress,
+		_In_reads_bytes_(nSize) LPCVOID lpBuffer,
+		_In_ SIZE_T nSize,
+		_Out_opt_ SIZE_T * lpNumberOfBytesWritten
+	) = 0;
 	virtual void* PhBuildModuleListWow64(void* hProc, void* head) = 0;
 	virtual bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars) = 0;
 	virtual bool ConvertWcharToChar(const wchar_t* src, char* dst, size_t dstChars) = 0;

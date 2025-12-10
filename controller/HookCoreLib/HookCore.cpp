@@ -16,7 +16,9 @@ namespace HookCore {
 #define E9_JMP_INSTRUCTION_OPRAND_SIZE 0x4
 	static const intptr_t MAX_DELTA = 0x7FFFFFFF; // ?GB
 	static IHookServices* g_hookServices = nullptr;
-
+	IHookServices* GetHookServices() {
+		return g_hookServices;
+	}
 	void SetHookServices(IHookServices* services) {
 		g_hookServices = services;
 	}

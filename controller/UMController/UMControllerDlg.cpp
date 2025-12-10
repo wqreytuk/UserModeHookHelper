@@ -382,6 +382,16 @@ public:
 	bool CheckPeArch(const wchar_t* dllPath, bool& is64) override {
 		return Helper::IsPeFile64(dllPath, is64);
 	}
+	bool WriteProcessMemoryWrap(
+		_In_ HANDLE hProcess,
+		_In_ LPVOID lpBaseAddress,
+		_In_reads_bytes_(nSize) LPCVOID lpBuffer,
+		_In_ SIZE_T nSize,
+		_Out_opt_ SIZE_T * lpNumberOfBytesWritten
+	) override {
+		return Helper::WriteProcessMemoryWrap(hProcess, lpBaseAddress, 
+			lpBuffer, nSize, lpNumberOfBytesWritten);
+	}
 	void LogPhlib(const wchar_t* fmt, ...) override {
 		wchar_t buffer[1024];
 		va_list ap; va_start(ap, fmt);

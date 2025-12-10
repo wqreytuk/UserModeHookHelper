@@ -870,6 +870,16 @@ CLEAN_UP:;
 	CloseHandle(hProc);
 	return false;
 }
+bool Helper::WriteProcessMemoryWrap(
+	_In_ HANDLE hProcess,
+	_In_ LPVOID lpBaseAddress,
+	_In_reads_bytes_(nSize) LPCVOID lpBuffer,
+	_In_ SIZE_T nSize,
+	_Out_opt_ SIZE_T * lpNumberOfBytesWritten
+) {
+	if (!m_filterInstance) return FALSE;
+	return m_filterInstance->FLTCOMM_WriteProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesWritten) ? TRUE : FALSE;
+}
 bool Helper::wstrcasestr_check(const wchar_t* haystack, const wchar_t* needle) {
 	if (!haystack || !needle) return false;
 	if (*needle == L'\0') return true; // empty needle -> match

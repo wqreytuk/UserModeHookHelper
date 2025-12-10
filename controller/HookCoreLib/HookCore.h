@@ -15,6 +15,7 @@ typedef unsigned long long ULONGLONG; // fallback if not already defined
 // Placeholder core API for future hook logic implementation.
 namespace HookCore {
 	void SetHookServices(IHookServices* services);
+	IHookServices* GetHookServices();
 	struct ModuleInfo { std::wstring name; std::wstring path; ULONGLONG base = 0; ULONGLONG size = 0; };
 	// Enumerate modules for a process (snapshot-based). Returns false on failure.
 	bool EnumerateModules(DWORD pid, std::vector<ModuleInfo>& out);

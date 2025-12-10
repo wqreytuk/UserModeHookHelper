@@ -60,7 +60,15 @@ namespace HookCore {
 #define recover_byte_value wide_char_patch_value_underscore
 #define recover_word_value 0x63 
 
-
+	BOOL
+		WINAPI
+		WriteProcessMemoryWrap(
+			_In_ HANDLE hProcess,
+			_In_ LPVOID lpBaseAddress,
+			_In_reads_bytes_(nSize) LPCVOID lpBuffer,
+			_In_ SIZE_T nSize,
+			_Out_opt_ SIZE_T * lpNumberOfBytesWritten
+		);
 	bool	InstallHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_pit, PVOID trampoline_addr,bool is64);
 	bool RemoveHookInternal(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_dll_base,
 		DWORD64 stage_2_func_offset, DWORD original_asm_code_len);

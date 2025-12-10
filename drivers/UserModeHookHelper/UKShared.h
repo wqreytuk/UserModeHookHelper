@@ -37,6 +37,10 @@
 // caller process. Payload: DWORD pid. Reply: HANDLE (duplicated into caller).
 #define CMD_GET_PROCESS_HANDLE 12
 #define CMD_CREATE_REMOTE_THREAD 13
+// Request kernel to write memory into a target process.
+// Payload: DWORD pid; PVOID base; SIZE_T size; followed by 'size' bytes of data.
+// Reply: NTSTATUS indicating success/failure.
+#define CMD_WRITE_PROCESS_MEMORY 16
 // Request the driver to write a DLL path string into the target process.
 // Payload: DWORD pid; PVOID userModeWideStringPtr
 // Reply: pointer-sized PVOID value written back into the reply buffer (caller-visible);

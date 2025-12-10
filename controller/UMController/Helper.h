@@ -55,6 +55,14 @@ public:
 	static bool IsProcess64(DWORD pid, bool& outIs64);
 	// Like GetModuleBaseWithPath but uses EnumProcessModulesEx with LIST_MODULES_ALL
 	static  bool GetModuleBaseWithPathEx(HANDLE hProcess, const char* mPath, PVOID* base);
+	static bool WriteProcessMemoryWrap(
+		_In_ HANDLE hProcess,
+		_In_ LPVOID lpBaseAddress,
+		_In_reads_bytes_(nSize) LPCVOID lpBuffer,
+		_In_ SIZE_T nSize,
+		_Out_opt_ SIZE_T * lpNumberOfBytesWritten
+	);
+
 	static bool wstrcasestr_check(const wchar_t* haystack, const wchar_t* needle);
 	static bool strcasestr_check(const char *haystack, const char *needle);
 	// Set the Filter instance used by Helper for kernel queries. The caller

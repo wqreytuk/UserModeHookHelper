@@ -10,7 +10,16 @@
 #include "mini.h"
 // Some WDK versions may not declare PsGetProcessWow64Process; forward-declare it here.
 extern PVOID PsGetProcessWow64Process(IN PEPROCESS Process);
-
+extern NTSTATUS NTAPI MmCopyVirtualMemory
+(
+	PEPROCESS SourceProcess,
+	PVOID SourceAddress,
+	PEPROCESS TargetProcess,
+	PVOID TargetAddress,
+	SIZE_T BufferSize,
+	KPROCESSOR_MODE PreviousMode,
+	PSIZE_T ReturnSize
+);
 // Forward declarations for modular command handlers (defined below)
 static NTSTATUS Handle_SetUserDir(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_AddHook(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -25,6 +34,7 @@ static NTSTATUS Handle_WriteDllPathToTargetProcess(PCOMM_CONTEXT CallerCtx, PUMH
 static NTSTATUS Handle_UnprotectPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_QueryPplProtection(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_RecoverPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_WriteProcessMemory(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
 
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -306,6 +316,9 @@ Comm_MessageNotify(
 		break;
 	case CMD_WRITE_DLL_PATH:
 		status = Handle_WriteDllPathToTargetProcess(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_WRITE_PROCESS_MEMORY:
+		status = Handle_WriteProcessMemory(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
 	case CMD_UNPROTECT_PPL:
 		status = Handle_UnprotectPpl(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
@@ -1506,4 +1519,79 @@ static NTSTATUS Handle_RecoverPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSi
 	ObDereferenceObject(ep);
 	st = STATUS_SUCCESS; RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
 	return st;
+}
+
+// Write bytes into target process memory from user-mode buffer using MmCopyVirtualMemory.
+static NTSTATUS Handle_WriteProcessMemory(
+	PCOMM_CONTEXT CallerCtx,
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
+	if (InputBufferSize < (UMHH_MSG_HEADER_SIZE + sizeof(DWORD) + sizeof(PVOID) + sizeof(SIZE_T))) {
+		NTSTATUS st = STATUS_BUFFER_TOO_SMALL;
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
+	}
+	DWORD pid = 0; PVOID base = NULL; SIZE_T size = 0;
+	RtlCopyMemory(&pid, msg->m_Data, sizeof(DWORD));
+	RtlCopyMemory(&base, msg->m_Data + sizeof(DWORD), sizeof(PVOID));
+	RtlCopyMemory(&size, msg->m_Data + sizeof(DWORD) + sizeof(PVOID), sizeof(SIZE_T));
+	if (size == 0) {
+		NTSTATUS st = STATUS_INVALID_PARAMETER;
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
+	}
+	SIZE_T dataOffset = sizeof(DWORD) + sizeof(PVOID) + sizeof(SIZE_T);
+	SIZE_T available = InputBufferSize - UMHH_MSG_HEADER_SIZE;
+	if (available < dataOffset + size) {
+		NTSTATUS st = STATUS_BUFFER_TOO_SMALL;
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
+	}
+	// Lookup target process
+	PEPROCESS targetProc = NULL;
+	NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &targetProc);
+	if (!NT_SUCCESS(st) || targetProc == NULL) {
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
+	}
+	// Source is from caller's user-mode buffer within this message; ensure we use the caller process context
+	if (!CallerCtx) {
+		ObDereferenceObject(targetProc);
+		st = STATUS_INVALID_PARAMETER;
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
+	}
+	DWORD callerPid = (DWORD)(ULONG_PTR)CallerCtx->m_UserProcessId;
+	PEPROCESS callerProc = NULL;
+	st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)callerPid, &callerProc);
+	if (!NT_SUCCESS(st) || callerProc == NULL) {
+		ObDereferenceObject(targetProc);
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
+	}
+	SIZE_T copied = 0;
+	// Build source pointer into caller process address space
+	PUCHAR srcUser = (PUCHAR)msg->m_Data + dataOffset;
+	st = MmCopyVirtualMemory(
+		PsGetCurrentProcess(),
+		srcUser,
+		targetProc,
+		base,
+		size,
+		KernelMode,
+		&copied);
+	ObDereferenceObject(targetProc);
+	ObDereferenceObject(callerProc);
+	if (!NT_SUCCESS(st) || copied != size) {
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+		return st;
+	}
+	NTSTATUS ok = STATUS_SUCCESS;
+	if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &ok, sizeof(NTSTATUS));
+	return STATUS_SUCCESS;
 }

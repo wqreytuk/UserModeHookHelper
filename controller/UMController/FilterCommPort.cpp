@@ -656,6 +656,38 @@ bool Filter::QueryCreationTime(HANDLE hProc, ULONGLONG& outCreationTime) {
 	return true;
 }
 
+bool Filter::FLTCOMM_WriteProcessMemory(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T* lpNumberOfBytesWritten) {
+	if (!hProcess || !lpBaseAddress || !lpBuffer || nSize == 0) return false;
+	// Build payload: [DWORD pid][PVOID base][SIZE_T size][bytes...]
+	DWORD pid = GetProcessId(hProcess);
+	const SIZE_T payloadFixed = sizeof(DWORD) + sizeof(PVOID) + sizeof(SIZE_T);
+	const SIZE_T msgSize = UMHH_MSG_HEADER_SIZE + payloadFixed + nSize;
+	std::unique_ptr<BYTE[]> msgBuf(new BYTE[msgSize]);
+	if (!msgBuf) return false;
+	memset(msgBuf.get(), 0, msgSize);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)msgBuf.get();
+	msg->m_Cmd = CMD_WRITE_PROCESS_MEMORY;
+	SIZE_T off = 0;
+	memcpy(msg->m_Data + off, &pid, sizeof(DWORD)); off += sizeof(DWORD);
+	PVOID base = lpBaseAddress; memcpy(msg->m_Data + off, &base, sizeof(PVOID)); off += sizeof(PVOID);
+	SIZE_T sizeField = nSize; memcpy(msg->m_Data + off, &sizeField, sizeof(SIZE_T)); off += sizeof(SIZE_T);
+	memcpy(msg->m_Data + off, lpBuffer, nSize);
+
+	NTSTATUS ntstatus = STATUS_UNSUCCESSFUL;
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, &ntstatus, (DWORD)sizeof(ntstatus), &bytesOut);
+	if (hr != S_OK || bytesOut != sizeof(ntstatus)) {
+		LOG_CTRL_ETW(L"FLTCOMM_WriteProcessMemory: FilterSendMessage hr=0x%x bytesOut=%u\n", hr, bytesOut);
+		return false;
+	}
+	if (!NT_SUCCESS(ntstatus)) {
+		LOG_CTRL_ETW(L"FLTCOMM_WriteProcessMemory: driver returned NTSTATUS=0x%08x\n", ntstatus);
+		return false;
+	}
+	if (lpNumberOfBytesWritten) *lpNumberOfBytesWritten = nSize;
+	return true;
+}
+
 	// The implementation of FLTCOMM_ElevateToPpl has been removed as it used deprecated CMD_ELEVATE_TO_PPL.
 	// void Filter::FLTCOMM_ElevateToPpl(DWORD pid) {
 	//     // Implementation removed
