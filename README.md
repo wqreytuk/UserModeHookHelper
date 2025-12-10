@@ -35,7 +35,7 @@ hook地址输入方式有两种：
 
 - 在Direct Address输入框中直接输入hook地址
 
-点击Apply Hook按钮会弹出文件选择框，选择包含你自己编写的包含[hook代码逻辑的dll](https://github.com/wqreytuk/UserModeHookHelper/tree/main/HookCodeTemplate)文件即可
+点击Apply Hook按钮会弹出文件选择框，选择包含你自己编写的包含[hook代码逻辑的dll](https://github.com/wqreytuk/UserModeHookHelper/tree/main/hook_component/HookCodeTemplate)文件即可
 
 在[release](https://github.com/wqreytuk/UMHH_Release)中，我们附带了两个用于演示的dll：[HookCodeTemplate.x64.dll](https://github.com/wqreytuk/UMHH_Release/blob/main/HookCodeTemplate.x64.dll)和[HookCodeTemplate.Win32.dll](https://github.com/wqreytuk/UMHH_Release/blob/main/HookCodeTemplate.Win32.dll)，分别用于X64和x86进程的hook
 
@@ -82,6 +82,6 @@ hook成功后会出现在hooklist列表中
 
 # 插件支持
 
-参考[AVProcessHandleLocater](https://github.com/wqreytuk/UserModeHookHelper/tree/main/AVProcessHandleLocater)
+参考[AVProcessHandleLocater](https://github.com/wqreytuk/UserModeHookHelper/tree/main/plugins/AVProcessHandleLocater)
 
 该插件可以搜索当前系统中可以获取目标进程高权限句柄的进程
