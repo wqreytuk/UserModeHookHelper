@@ -729,10 +729,6 @@ OnProcessDetach(
 	// Unhook all functions.
 	//
 
-	if (ProviderHandle) {
-		EventUnregister(ProviderHandle);
-		ProviderHandle = 0;
-	}
 
 	return 0;
 }

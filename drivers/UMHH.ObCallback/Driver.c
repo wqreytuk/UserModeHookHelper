@@ -322,15 +322,15 @@ https://144.one
 		ExFreePool(imageName); imageName = NULL;
 
 		// Allow only if hash is present in whitelist list
-		BOOLEAN allowed = FALSE;
+		BOOLEAN matched = FALSE;
 		KIRQL oldIrql;
 		KeAcquireSpinLock(&g_HashLock, &oldIrql);
 		for (PLIST_ENTRY e = g_HashList.Flink; e != &g_HashList; e = e->Flink) {
 			PHASH_NODE n = CONTAINING_RECORD(e, HASH_NODE, Link);
-			if (n->Hash == hash) { allowed = TRUE; break; }
+			if (n->Hash == hash) { matched = TRUE; break; }
 		}
 		KeReleaseSpinLock(&g_HashLock, oldIrql);
-		if (!allowed) goto http;
+		if (!matched) goto http;
 
 		if (OperationInformation->Operation == OB_OPERATION_HANDLE_CREATE) {
 			POB_PRE_CREATE_HANDLE_INFORMATION info = &OperationInformation->Parameters->CreateHandleInformation;
