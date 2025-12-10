@@ -349,8 +349,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_MESSAGE(WM_APP_POST_ENUM_CLEANUP, &CUMControllerDlg::OnPostEnumCleanup)
 	ON_MESSAGE(WM_APP + 0x100, &CUMControllerDlg::OnApplyGlobalHookMenu)
 	ON_COMMAND(ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, &CUMControllerDlg::OnToggleGlobalHookMode)
-	ON_MESSAGE(WM_APP + 0x101, &CUMControllerDlg::OnApplySelfDefenseMenu)
-	ON_COMMAND(ID_MENU_EXTRA_SELFDEFENSE, &CUMControllerDlg::OnToggleSelfDefense)
+	// SelfDefense menu and handler removed (feature obsolete)
 	ON_COMMAND(IDM_ABOUTBOX, &CUMControllerDlg::OnHelpAbout)
 	ON_COMMAND_RANGE(ID_MENU_PLUGINS_BASE, ID_MENU_PLUGINS_BASE + 255, &CUMControllerDlg::OnPluginCommand)
 	ON_COMMAND(ID_MENU_PLUGIN_REFRESH, &CUMControllerDlg::OnPluginRefresh)
@@ -822,19 +821,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 			UINT prev = CheckMenuItem(h, ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, MF_BYCOMMAND | (m_globalHookMode ? MF_CHECKED : MF_UNCHECKED));
 			LOG_CTRL_ETW(L"Applied menu check: id=%d enabled=%d prev=0x%08x\n", ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, (int)m_globalHookMode, prev);
 			// Query driver for SelfDefense state via IOCTL and apply menu check
-			{
-				HANDLE hDev = CreateFileW(UMHH_OB_CALLBACK_DEVICE, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-				if (hDev != INVALID_HANDLE_VALUE) {
-					ULONG out = 0; DWORD bytes = 0;
-					DWORD ioctl = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x901, METHOD_BUFFERED, FILE_ANY_ACCESS);
-					if (DeviceIoControl(hDev, ioctl, NULL, 0, &out, sizeof(out), &bytes, NULL) && bytes == sizeof(out)) {
-						m_selfDefenseEnabled = (out != 0);
-					}
-					CloseHandle(hDev);
-				}
-				UINT prev2 = CheckMenuItem(h, ID_MENU_EXTRA_SELFDEFENSE, MF_BYCOMMAND | (m_selfDefenseEnabled ? MF_CHECKED : MF_UNCHECKED));
-				LOG_CTRL_ETW(L"Applied SelfDefense menu check: enabled=%d prev=0x%08x\n", (int)m_selfDefenseEnabled, prev2);
-			}
+			// SelfDefense feature obsolete: no startup query or menu check
 			DrawMenuBar();
 		}
 		else {
@@ -854,7 +841,7 @@ BOOL CUMControllerDlg::OnInitDialog()
 			std::this_thread::sleep_for(std::chrono::milliseconds(300));
 			if (hwnd) {
 				::PostMessage(hwnd, WM_APP + 0x100, 0, 0);
-				::PostMessage(hwnd, WM_APP + 0x101, 0, 0);
+				// SelfDefense enforcement removed
 			}
 		}).detach();
 	}
@@ -975,41 +962,10 @@ BOOL CUMControllerDlg::OnInitDialog()
 
 
 	return TRUE;  // return TRUE  unless you set the focus to a control
-}
-
-void CUMControllerDlg::OnToggleSelfDefense() {
-	m_selfDefenseEnabled = !m_selfDefenseEnabled;
-	// Send IOCTL to kernel to set the flag
-	HANDLE hDev = CreateFileW(UMHH_OB_CALLBACK_DEVICE, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (hDev != INVALID_HANDLE_VALUE) {
-		ULONG inVal = m_selfDefenseEnabled ? 1u : 0u; DWORD bytes = 0;
-		DWORD ioctl = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x900, METHOD_BUFFERED, FILE_ANY_ACCESS);
-		if (!DeviceIoControl(hDev, ioctl, &inVal, sizeof(inVal), NULL, 0, &bytes, NULL)) {
-			LOG_CTRL_ETW(L"SelfDefense IOCTL_SET failed: err=%lu\n", GetLastError());
-		}
-		CloseHandle(hDev);
 	}
-	else {
-		LOG_CTRL_ETW(L"SelfDefense device open failed: err=%lu\n", GetLastError());
-	}
-	// Update menu check
-	if (GetMenu() && GetMenu()->m_hMenu) {
-		CheckMenuItem(GetMenu()->m_hMenu, ID_MENU_EXTRA_SELFDEFENSE, MF_BYCOMMAND | (m_selfDefenseEnabled ? MF_CHECKED : MF_UNCHECKED));
-		DrawMenuBar();
-	}
-}
-
-LRESULT CUMControllerDlg::OnApplySelfDefenseMenu(WPARAM wParam, LPARAM lParam) {
-	UNREFERENCED_PARAMETER(wParam); UNREFERENCED_PARAMETER(lParam);
-	if (GetMenu() && GetMenu()->m_hMenu) {
-		CheckMenuItem(GetMenu()->m_hMenu, ID_MENU_EXTRA_SELFDEFENSE, MF_BYCOMMAND | (m_selfDefenseEnabled ? MF_CHECKED : MF_UNCHECKED));
-		DrawMenuBar();
-	}
-	return 0;
-}
 
 
-LRESULT CUMControllerDlg::OnFatalMessage(WPARAM, LPARAM) {
+	LRESULT CUMControllerDlg::OnFatalMessage(WPARAM, LPARAM) {
 	// Graceful shutdown triggered from fatal handler.
 	LOG_CTRL_ETW(L"OnFatalMessage received, closing dialog.\n");
 	MessageBox(L"check etw log", L"Attention!", MB_ICONERROR);

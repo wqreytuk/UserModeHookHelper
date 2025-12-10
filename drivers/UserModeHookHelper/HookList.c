@@ -2,6 +2,7 @@
 #include "Tag.h"
 #include "Trace.h"
 #include "StrLib.h"
+#include "../../Shared/SharedMacroDef.h"
 
 // Internal hook list state (module-private)
 static LIST_ENTRY s_HookList;

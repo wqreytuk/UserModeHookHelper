@@ -75,9 +75,6 @@ public:
 	// Removed obsolete OnTimer; enumeration-only mode no longer uses it.
 	afx_msg void OnToggleGlobalHookMode();
 	afx_msg LRESULT OnApplyGlobalHookMenu(WPARAM wParam, LPARAM lParam);
-	// SelfDefense toggle under Extra menu
-	afx_msg void OnToggleSelfDefense();
-	afx_msg LRESULT OnApplySelfDefenseMenu(WPARAM wParam, LPARAM lParam);
     
 private: 
 	Filter m_Filter;
@@ -133,8 +130,7 @@ private:
 	bool m_CachePersisted = false; // composite cache written this session
 	// persisted toggle
 	bool m_globalHookMode = false;
-	// runtime SelfDefense toggle queried from driver
-	bool m_selfDefenseEnabled = false;
+	// SelfDefense feature removed
 	// Master DLL scanner guard: ensure scanner started only once
 	bool m_MasterDllScannerStarted = false;
 

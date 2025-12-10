@@ -1522,29 +1522,19 @@ bool Helper::ConfigureBootStartService(bool DesiredEnabled) {
 					ControlService(svc, SERVICE_CONTROL_STOP, &ss);
 				}
 			}
-			// After stopping, set start type to DISABLED to prevent future starts
-			SC_HANDLE cfgSvc = OpenServiceW(scm, svcName, SERVICE_CHANGE_CONFIG);
-			if (cfgSvc) {
-				if (!ChangeServiceConfigW(cfgSvc,
-					SERVICE_NO_CHANGE,
-					SERVICE_DISABLED,
-					SERVICE_NO_CHANGE,
-					NULL,
-					NULL,
-					NULL,
-					NULL,
-					NULL,
-					NULL,
-					NULL)) {
-					LOG_CTRL_ETW(L"ConfigureBootStartService: failed to set service start type to DISABLED (err=%lu)\n", GetLastError());
+			// After stopping, delete the service entirely per request
+			SC_HANDLE delSvc = OpenServiceW(scm, svcName, DELETE);
+			if (delSvc) {
+				if (!DeleteService(delSvc)) {
+					LOG_CTRL_ETW(L"ConfigureBootStartService: DeleteService failed (err=%lu)\n", GetLastError());
 				} else {
-					LOG_CTRL_ETW(L"ConfigureBootStartService: service start type set to DISABLED\n");
+					LOG_CTRL_ETW(L"ConfigureBootStartService: service deleted successfully\n");
 				}
-				CloseServiceHandle(cfgSvc);
+				CloseServiceHandle(delSvc);
 			} else {
-				LOG_CTRL_ETW(L"ConfigureBootStartService: OpenServiceW for change-config failed (err=%lu)\n", GetLastError());
+				LOG_CTRL_ETW(L"ConfigureBootStartService: OpenServiceW for delete failed (err=%lu)\n", GetLastError());
 			}
-			LOG_CTRL_ETW(L"ConfigureBootStartService: UMHH.BootStart service stopped and disabled\n");
+			LOG_CTRL_ETW(L"ConfigureBootStartService: UMHH.BootStart service stopped and deleted\n");
 		}
 	}
 

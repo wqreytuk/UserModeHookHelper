@@ -8,6 +8,7 @@
 #include "UMController.h"
 #include "Helper.h"
 #include "../Shared/LogMacros.h"
+#include "../../Shared/SharedMacroDef.h"
 
 
 static const wchar_t* VALUE_NAME = L"HookPaths";

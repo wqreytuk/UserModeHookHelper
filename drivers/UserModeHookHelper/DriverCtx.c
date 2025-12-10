@@ -2,6 +2,9 @@
 #include "PE.h"
 #include "Trace.h"
 #include "StrLib.h"
+#include "MacroDef.h"
+#include <ntddk.h>
+#include "../../Shared/SharedMacroDef.h"
 
 static PFLT_FILTER s_Filter = NULL;
 
@@ -11,11 +14,66 @@ static BOOLEAN s_GlobalHookMode = FALSE;
 static DWORD64 s_ssdt;
 static DRIVERCTX_OSVER s_OsVer = {0}; 
 static DWORD s_ControllerPid = 0;
-static UNICODE_STRING BlockedDll[] = {
-   RTL_CONSTANT_STRING(L"TmUmEvt64.dll"),
-   RTL_CONSTANT_STRING(L"tmmon64.dll"),
-   RTL_CONSTANT_STRING(L"TmAMSIProvider64.dll")
-};
+// Registry-backed blocked DLL list
+static PUNICODE_STRING g_BlockedDllList = NULL;
+static ULONG g_BlockedDllCount = 0;
+static KSPIN_LOCK g_BlockedDllLock;
+
+static VOID DriverCtx_FreeBlockedDllList() {
+    KIRQL irql; KeAcquireSpinLock(&g_BlockedDllLock, &irql);
+    if (g_BlockedDllList) {
+        for (ULONG i = 0; i < g_BlockedDllCount; ++i) {
+            if (g_BlockedDllList[i].Buffer) ExFreePoolWithTag(g_BlockedDllList[i].Buffer, tag_ctx);
+        }
+        ExFreePoolWithTag(g_BlockedDllList, tag_ctx);
+        g_BlockedDllList = NULL; g_BlockedDllCount = 0;
+    }
+    KeReleaseSpinLock(&g_BlockedDllLock, irql);
+}
+
+NTSTATUS DriverCtx_LoadBlockedDllListFromRegistry() {
+    // Open HKLM\... per REG_PERSIST_REGPATH
+    OBJECT_ATTRIBUTES oa; UNICODE_STRING regPath;
+    RtlInitUnicodeString(&regPath, REG_PERSIST_REGPATH L"\\");
+    InitializeObjectAttributes(&oa, &regPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    HANDLE hKey = NULL; NTSTATUS st = ZwOpenKey(&hKey, KEY_READ, &oa);
+    if (!NT_SUCCESS(st)) return st;
+    UNICODE_STRING valName; RtlInitUnicodeString(&valName, REG_BLOCKED_DLL_NAME);
+    ULONG len = 0; st = ZwQueryValueKey(hKey, &valName, KeyValueFullInformation, NULL, 0, &len);
+    if (st != STATUS_BUFFER_TOO_SMALL && st != STATUS_BUFFER_OVERFLOW) { ZwClose(hKey); return STATUS_NOT_FOUND; }
+    PKEY_VALUE_FULL_INFORMATION info = (PKEY_VALUE_FULL_INFORMATION)ExAllocatePoolWithTag(PagedPool, len, tag_ctx);
+    if (!info) { ZwClose(hKey); return STATUS_INSUFFICIENT_RESOURCES; }
+    st = ZwQueryValueKey(hKey, &valName, KeyValueFullInformation, info, len, &len);
+    if (!NT_SUCCESS(st) || info->Type != REG_MULTI_SZ) { ExFreePoolWithTag(info, tag_ctx); ZwClose(hKey); return STATUS_INVALID_PARAMETER; }
+    // Count entries
+    ULONG count = 0; WCHAR* p = (WCHAR*)((PUCHAR)info + info->DataOffset);
+    while (*p) { UNICODE_STRING u; RtlInitUnicodeString(&u, p); count++; p += u.Length / sizeof(WCHAR) + 1; }
+    // Allocate array
+    PUNICODE_STRING arr = (PUNICODE_STRING)ExAllocatePoolWithTag(NonPagedPool, sizeof(UNICODE_STRING) * count, tag_ctx);
+    if (!arr) { ExFreePoolWithTag(info, tag_ctx); ZwClose(hKey); return STATUS_INSUFFICIENT_RESOURCES; }
+    RtlZeroMemory(arr, sizeof(UNICODE_STRING) * count);
+    // Fill entries
+    p = (WCHAR*)((PUCHAR)info + info->DataOffset); ULONG idx = 0;
+    while (*p && idx < count) {
+        UNICODE_STRING u; RtlInitUnicodeString(&u, p);
+        USHORT bytes = u.Length + sizeof(WCHAR);
+        PWSTR buf = (PWSTR)ExAllocatePoolWithTag(NonPagedPool, bytes, tag_ctx);
+        if (!buf) { ExFreePoolWithTag(info, tag_ctx); ExFreePoolWithTag(arr, tag_ctx); ZwClose(hKey); return STATUS_INSUFFICIENT_RESOURCES; }
+        RtlCopyMemory(buf, u.Buffer, u.Length); buf[u.Length/sizeof(WCHAR)] = L'\0';
+        arr[idx].Buffer = buf; arr[idx].Length = u.Length; arr[idx].MaximumLength = bytes;
+        idx++; p += u.Length / sizeof(WCHAR) + 1;
+    }
+    ExFreePoolWithTag(info, tag_ctx); ZwClose(hKey);
+    // Swap under lock
+    KIRQL irql; KeAcquireSpinLock(&g_BlockedDllLock, &irql);
+    if (g_BlockedDllList) {
+        for (ULONG i = 0; i < g_BlockedDllCount; ++i) if (g_BlockedDllList[i].Buffer) ExFreePoolWithTag(g_BlockedDllList[i].Buffer, tag_ctx);
+        ExFreePoolWithTag(g_BlockedDllList, tag_ctx);
+    }
+    g_BlockedDllList = arr; g_BlockedDllCount = count;
+    KeReleaseSpinLock(&g_BlockedDllLock, irql);
+    return STATUS_SUCCESS;
+}
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter) {
     s_Filter = Filter;
 }
@@ -90,17 +148,17 @@ DRIVERCTX_OSVER DriverCtx_GetOsVersion(VOID) {
     return s_OsVer;
 }
 
-// Simple built-in blocked DLL list; compare by final component (case-insensitive)
+// Registry-backed blocked DLL list; compare by final component (case-insensitive)
 BOOLEAN DriverCtx_IsBlockedDllName(_In_ PFLT_FILE_NAME_INFORMATION nameInfo) {
 	if (nameInfo == NULL) return FALSE;
 
-	BOOLEAN should_block = FALSE;
-	for (size_t i = 0; i < ARRAYSIZE(BlockedDll); i++) {
-		should_block = SL_RtlSuffixUnicodeString(&BlockedDll[i], &nameInfo->FinalComponent, TRUE);
-		if (should_block) {
-			// Log(L"third party dll Path=%wZ%wZ is trying to load into our process, blocked\n", &nameInfo->ParentDir, &nameInfo->FinalComponent);
-			return should_block;
-		}
-	}
-	return FALSE;
+    KIRQL irql; KeAcquireSpinLock(&g_BlockedDllLock, &irql);
+    for (ULONG i = 0; i < g_BlockedDllCount; ++i) {
+        if (SL_RtlSuffixUnicodeString(&g_BlockedDllList[i], &nameInfo->FinalComponent, TRUE)) {
+            KeReleaseSpinLock(&g_BlockedDllLock, irql);
+            return TRUE;
+        }
+    }
+    KeReleaseSpinLock(&g_BlockedDllLock, irql);
+    return FALSE;
 }

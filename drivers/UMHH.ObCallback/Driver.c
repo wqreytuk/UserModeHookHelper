@@ -4,27 +4,49 @@
 #include <fltkernel.h>
 #pragma warning(pop)
 #include <ntstrsafe.h>
-#include "../UMHH.BootStart/MacroDef.h"
-// Avoid LOG_PREFIX conflict; use ObCallback-specific prefix
-#ifdef LOG_PREFIX
-#undef LOG_PREFIX
-#endif
-#define LOG_PREFIX L"[UMHH.ObCallback]"
+#include "../../Shared/SharedMacroDef.h"
+// Avoid LOG_PREFIX_OBC conflict; use ObCallback-specific prefix
+
+#define LOG_PREFIX_OBC L"[UMHH.ObCallback]"
 DWORD64 gHash;
-#define LOG_PREFIX L"[UMHH.ObCallback]"
 typedef struct _HASH_NODE {
 	LIST_ENTRY Link;
 	ULONGLONG Hash;
 } HASH_NODE, *PHASH_NODE;
 LIST_ENTRY g_HashList; // list of whitelist hashes
 KSPIN_LOCK g_HashLock; // protects g_HashList
-static  UNICODE_STRING BlockedList[] = {
-	 RTL_CONSTANT_STRING(L"Ntrtscan.exe"),
-	 RTL_CONSTANT_STRING(L"PccNTMon.exe"),
-	 RTL_CONSTANT_STRING(L"EndpointBasecamp.exe"),
-	 RTL_CONSTANT_STRING(L"TmCCSF.exe"),
-	 RTL_CONSTANT_STRING(L"TMBMSRV.exe"),
-};
+BOOLEAN
+NTAPI
+SL_RtlSuffixUnicodeString(
+	_In_ PUNICODE_STRING Suffix,
+	_In_ PUNICODE_STRING String2,
+	_In_ BOOLEAN CaseInSensitive
+);
+// Block list loaded from registry (REG_MULTI_SZ) under REG_PERSIST_REGPATH value REG_BLOCKED_PROCESS_NAME
+// We load on demand for simplicity; consider caching if performance requires.
+#include "../UserModeHookHelper/MacroDef.h"
+static BOOLEAN CheckBlockedProcessByName(PUNICODE_STRING imageNameSuffix) {
+	OBJECT_ATTRIBUTES oa; UNICODE_STRING regPath;
+	RtlInitUnicodeString(&regPath, REG_PERSIST_REGPATH L"\\"); // key path
+	HANDLE hKey = NULL; InitializeObjectAttributes(&oa, &regPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+	NTSTATUS st = ZwOpenKey(&hKey, KEY_READ, &oa);
+	if (!NT_SUCCESS(st)) return FALSE;
+	UNICODE_STRING valName; RtlInitUnicodeString(&valName, REG_BLOCKED_PROCESS_NAME);
+	ULONG len = 0; st = ZwQueryValueKey(hKey, &valName, KeyValueFullInformation, NULL, 0, &len);
+	if (st != STATUS_BUFFER_TOO_SMALL && st != STATUS_BUFFER_OVERFLOW) { ZwClose(hKey); return FALSE; }
+	PKEY_VALUE_FULL_INFORMATION info = (PKEY_VALUE_FULL_INFORMATION)ExAllocatePoolWithTag(PagedPool, len, 'blRV');
+	if (!info) { ZwClose(hKey); return FALSE; }
+	st = ZwQueryValueKey(hKey, &valName, KeyValueFullInformation, info, len, &len);
+	if (!NT_SUCCESS(st) || info->Type != REG_MULTI_SZ) { ExFreePoolWithTag(info, 'blRV'); ZwClose(hKey); return FALSE; }
+	// iterate entries in multi-sz
+	BOOLEAN matched = FALSE; WCHAR* p = (WCHAR*)((PUCHAR)info + info->DataOffset);
+	while (*p) {
+		UNICODE_STRING entry; RtlInitUnicodeString(&entry, p);
+		if (SL_RtlSuffixUnicodeString(&entry, imageNameSuffix, TRUE)) { matched = TRUE; break; }
+		p += entry.Length / sizeof(WCHAR) + 1;
+	}
+	ExFreePoolWithTag(info, 'blRV'); ZwClose(hKey); return matched;
+}
 // Global SelfDefense toggle loaded from registry and runtime IOCTL
 static BOOLEAN gSelfDefense = FALSE;
 // Simple control device for runtime toggling
@@ -228,14 +250,12 @@ NTSTATUS PreObjProcesCallback(
 			// Log(L"failed to located source process image path, Status=0x%x\n", stImg);
 			goto https;
 		}
-		// because this blocked process list is a read only list, so there is no need to add lock
-		for (size_t i = 0; i < ARRAYSIZE(BlockedList); i++){
-			if (SL_RtlSuffixUnicodeString(&BlockedList[i], imageName, TRUE)) {
+		// consult registry-based blocked process list
+		if (CheckBlockedProcessByName(imageName)) {
 				// only permit query limited process information
 				info->DesiredAccess = 0x1000;
 				ExFreePool(imageName); imageName = NULL;
 				goto https;
-			}
 		}
 		ExFreePool(imageName); imageName = NULL;
 	}
@@ -546,5 +566,5 @@ void Log(const WCHAR* format, ...) {
 		(tf.Year), (tf.Month), (tf.Day), (tf.Hour), (tf.Minute), (tf.Second), (tf.Milliseconds));
 
 	// Print timestamp, compile-time prefix, and message
-	DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_INFO_LEVEL, "%ws %ws %ws\n", timebuf, LOG_PREFIX, buffer);
+	DbgPrintEx(DPFLTR_DEFAULT_ID, DPFLTR_INFO_LEVEL, "%ws %ws %ws\n", timebuf, LOG_PREFIX_OBC, buffer);
 }

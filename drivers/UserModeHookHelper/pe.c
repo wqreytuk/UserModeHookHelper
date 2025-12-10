@@ -6,7 +6,7 @@
 // Some WDK versions may not declare PsGetProcessWow64Process; forward declare it.
 extern PVOID PsGetProcessWow64Process(IN PEPROCESS Process);
 static const DWORD sir_this_way_table[] =
-{ 19045 };
+{ 0 };
 // Unified PE_GetExport implementation
 PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName)
 {
@@ -124,53 +124,13 @@ PVOID PE_GetExport(IN PVOID ImageBase, IN PCHAR NativeName)
 
 PULONGLONG PE_GetSSDT()
 {
-	// DbgBreakPoint();
-    // Decide path based on OS version persisted in driver context.
-    // Windows 11 (Major=10, Build>=22000) uses the KiSystemServiceUser walk;
-    // older builds use legacy pattern directly from KiSystemCall64.
-    DRIVERCTX_OSVER ver = DriverCtx_GetOsVersion();
-	(ver);
-	BOOLEAN sir_this_way = 0;// (ver.Major == 10 && ver.Build >= 22000);
-	for (size_t i = 0; i < RTL_NUMBER_OF(sir_this_way_table); i++)
+	PULONGLONG ssdt = 0;
+	// if Kernel Virtual Address Shadowing is enabled, return value of __readmsr(0xC0000082)
+	// will be nt!KiSystemCall64Shadow
+	// the way to detect if this is enabled is by first try it as not enabled, it we can't locate
+	// SSDT, then we try with sir_this_way
+
 	{
-		if (sir_this_way_table[i] == ver.Build) {
-			sir_this_way = TRUE;
-			break;
-		}
-	}
-	
-    if (sir_this_way) { // only a certain windows version will trigger this code, I'll update my code when I encounter it
-		ULONGLONG  KiSystemCall64 = __readmsr(0xC0000082);	// Get the address of nt!KeSystemCall64
-		ULONGLONG  KiSystemServiceRepeat = 0;
-		DWORD64 KiSystemServiceUser = 0;
-		INT32 Limit = 4096;
-
-		for (int i = 0; i < Limit; i++) {		        // Increase that address until you hit "0x4c/0x8d/0x15"
-			if (*(PUINT8)((ULONG_PTR)KiSystemCall64 + i) == 0x65
-				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 1) == 0xC6
-				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 2) == 0x4
-				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 3) == 0x25)
-			{
-				KiSystemCall64 = KiSystemCall64 + i;
-				KiSystemServiceUser = KiSystemCall64 + 4 + 4 + 1 + 1 + 4 +
-					// sign extend
-					(DWORD64)(ULONG_PTR)(INT64)((INT32)(*(DWORD*)((ULONG_PTR)KiSystemCall64 + 4 + 4 + 1 + 1))); 
-				for ( i = 0; i < Limit; i++) {		        // Increase that address until you hit "0x4c/0x8d/0x15"
-					if (*(PUINT8)((ULONG_PTR)KiSystemServiceUser + i) == 0x4C
-						&& *(PUINT8)((ULONG_PTR)KiSystemServiceUser + i + 1) == 0x8D
-						&& *(PUINT8)((ULONG_PTR)KiSystemServiceUser + i + 2) == 0x15)
-					{
-						KiSystemServiceRepeat = KiSystemServiceUser + i;
-						// Convert relative address to absolute address
-						return (PULONGLONG)(*(PINT32)((ULONG_PTR)KiSystemServiceRepeat + 3) + (ULONG_PTR)KiSystemServiceRepeat + 7);
-
-					}
-				}
-			}
-		}
-
-	}
-	else {
 		ULONGLONG  KiSystemCall64 = __readmsr(0xC0000082);	// Get the address of nt!KeSystemCall64
 		ULONGLONG  KiSystemServiceRepeat = 0;
 		INT32 Limit = 4096;
@@ -185,12 +145,45 @@ PULONGLONG PE_GetSSDT()
 				DbgPrint("KiSystemServiceRepeat    %p \r\n", KiSystemServiceRepeat);
 
 				// Convert relative address to absolute address
-				return (PULONGLONG)(*(PINT32)((ULONG_PTR)KiSystemServiceRepeat + 3) + (ULONG_PTR)KiSystemServiceRepeat + 7);
+				ssdt = (PULONGLONG)(*(PINT32)((ULONG_PTR)KiSystemServiceRepeat + 3) + (ULONG_PTR)KiSystemServiceRepeat + 7);
+				break;
 			}
 		}
 	}
 
-	return 0;
+
+	if (!ssdt) {
+		// sir_this_way
+		ULONGLONG  KiSystemCall64 = __readmsr(0xC0000082);	// Get the address of nt!KeSystemCall64
+		ULONGLONG  KiSystemServiceRepeat = 0;
+		DWORD64 KiSystemServiceUser = 0;
+		INT32 Limit = 4096;
+
+		for (int i = 0; i < Limit; i++) {		        // Increase that address until you hit "0x4c/0x8d/0x15"
+			if (*(PUINT8)((ULONG_PTR)KiSystemCall64 + i) == 0x65
+				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 1) == 0xC6
+				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 2) == 0x4
+				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 3) == 0x25)
+			{
+				KiSystemCall64 = KiSystemCall64 + i;
+				KiSystemServiceUser = KiSystemCall64 + 4 + 4 + 1 + 1 + 4 +
+					// sign extend
+					(DWORD64)(ULONG_PTR)(INT64)((INT32)(*(DWORD*)((ULONG_PTR)KiSystemCall64 + 4 + 4 + 1 + 1)));
+				for (i = 0; i < Limit; i++) {		        // Increase that address until you hit "0x4c/0x8d/0x15"
+					if (*(PUINT8)((ULONG_PTR)KiSystemServiceUser + i) == 0x4C
+						&& *(PUINT8)((ULONG_PTR)KiSystemServiceUser + i + 1) == 0x8D
+						&& *(PUINT8)((ULONG_PTR)KiSystemServiceUser + i + 2) == 0x15)
+					{
+						KiSystemServiceRepeat = KiSystemServiceUser + i;
+						// Convert relative address to absolute address
+						return (PULONGLONG)(*(PINT32)((ULONG_PTR)KiSystemServiceRepeat + 3) + (ULONG_PTR)KiSystemServiceRepeat + 7);
+					}
+				}
+			}
+		}
+	}
+
+	return ssdt;
 }
 // Return TRUE if the provided PEPROCESS corresponds to a 32-bit (WoW64)
 // process running under WoW64. Returns FALSE on error or if the process is 64-bit.

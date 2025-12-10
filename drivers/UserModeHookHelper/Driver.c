@@ -8,6 +8,7 @@
 #include "Inject.h"
 #include "BootStartControl.h"
 #include "PE.h"
+#include "../../Shared/SharedMacroDef.h"
  
 // Helper: read persisted settings from registry and initialize DriverCtx
 static VOID LoadPersistedDriverSettings(VOID) {

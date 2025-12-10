@@ -33,9 +33,12 @@ namespace PHLIB {
 			return STATUS_UNSUCCESSFUL;
 		}
 		HANDLE ProcessHandle = NULL;
-		if (!g_hookServices->GetHighAccessProcHandle(pid, &ProcessHandle)) {
-			PHLog(L"failed to call GetHighAccessProcHandle\n");
-			return STATUS_UNSUCCESSFUL;
+		ProcessHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+		if (!ProcessHandle) {
+			if (!g_hookServices->GetHighAccessProcHandle(pid, &ProcessHandle)) {
+				PHLog(L"failed to call GetHighAccessProcHandle\n");
+				return STATUS_UNSUCCESSFUL;
+			}
 		}
 		status = NtQueryInformationProcess(
 			ProcessHandle,
@@ -219,17 +222,23 @@ namespace PHLIB {
 			return STATUS_UNSUCCESSFUL;
 		}
 		HANDLE hProc = NULL;
-		if (!g_hookServices->GetHighAccessProcHandle(pid, &hProc)) {
-			PHLog(L"failed to call GetHighAccessProcHandle\n");
-			return STATUS_UNSUCCESSFUL;
-		}
-		NTSTATUS st= is64 ? PhBuildModuleListX64(hProc, OutHead)
+		hProc = OpenProcess(
+			PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+			FALSE,
+			pid
+		);
+		if (!hProc)
+			if (!g_hookServices->GetHighAccessProcHandle(pid, &hProc)) {
+				PHLog(L"failed to call GetHighAccessProcHandle\n");
+				return STATUS_UNSUCCESSFUL;
+			}
+		NTSTATUS st = is64 ? PhBuildModuleListX64(hProc, OutHead)
 			: PhBuildModuleListWin32(hProc, OutHead);
 		CloseHandle(hProc);
 		return st;
 	}
 	NTSTATUS PhpEnumProcessModules(
-		 DWORD pid, WCHAR* target_module, unsigned long long* ModuleBase
+		DWORD pid, WCHAR* target_module, unsigned long long* ModuleBase
 	) {
 		if (!g_hookServices) {
 			PHLog(L"g_hookServices NULL\n");
@@ -241,10 +250,16 @@ namespace PHLIB {
 			return STATUS_UNSUCCESSFUL;
 		}
 		HANDLE hProc = NULL;
-		if (!g_hookServices->GetHighAccessProcHandle(pid, &hProc)) {
-			PHLog(L"failed to call GetHighAccessProcHandle\n");
-			return STATUS_UNSUCCESSFUL;
-		}
+		hProc = OpenProcess(
+			PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+			FALSE,
+			pid
+		);
+		if (!hProc)
+			if (!g_hookServices->GetHighAccessProcHandle(pid, &hProc)) {
+				PHLog(L"failed to call GetHighAccessProcHandle\n");
+				return STATUS_UNSUCCESSFUL;
+			}
 		NTSTATUS st = is64 ? PhpEnumProcessModulesX64(hProc, target_module, ModuleBase)
 			: PhpEnumProcessModulesWin32(hProc, target_module, ModuleBase);
 		CloseHandle(hProc);

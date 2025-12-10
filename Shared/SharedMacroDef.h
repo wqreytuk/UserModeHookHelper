@@ -67,3 +67,17 @@ typedef struct _PH_MODULE_LIST_NODE {
 #ifndef UMHH_OB_CALLBACK_DEVICE
 #define UMHH_OB_CALLBACK_DEVICE L"\\\\.\\UMHHObCallbackCtl"
 #endif
+
+
+#define BS_SERVICE_NAME L"UMHH.BootStart"
+#define SERVICE_NAME L"UserModeHookHelper"
+#define UMHH_OB_CALLBACK_SERVICE_NAME L"UMHH.ObCallback"
+// Registry persistence vendor/key definitions. Vendor name is configurable
+// here so kernel and user-mode code use the same value.
+#define REG_VENDOR_NAME L"GIAO"
+#define REG_PERSIST_SUBKEY L"SOFTWARE\\" REG_VENDOR_NAME L"\\" SERVICE_NAME
+#define REG_PERSIST_REGPATH L"\\Registry\\Machine\\" REG_PERSIST_SUBKEY
+
+// Block list value names (REG_MULTI_SZ) under REG_PERSIST_SUBKEY
+#define REG_BLOCKED_PROCESS_NAME L"BlockedProcessName"
+#define REG_BLOCKED_DLL_NAME     L"BlockedDllName"

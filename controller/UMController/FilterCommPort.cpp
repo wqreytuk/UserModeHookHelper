@@ -1,5 +1,5 @@
 #include "pch.h"
-
+#include "../../Shared/SharedMacroDef.h"
 // Provide minimal NT-style macros often used in shared code so this user-
 // mode translation unit doesn't require NT headers. Define them early so
 // any subsequently-included headers that reference NT-style macros compile
