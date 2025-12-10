@@ -18,6 +18,13 @@ typedef struct _HASH_NODE {
 } HASH_NODE, *PHASH_NODE;
 LIST_ENTRY g_HashList; // list of whitelist hashes
 KSPIN_LOCK g_HashLock; // protects g_HashList
+static  UNICODE_STRING BlockedList[] = {
+	 RTL_CONSTANT_STRING(L"Ntrtscan.exe"),
+	 RTL_CONSTANT_STRING(L"PccNTMon.exe"),
+	 RTL_CONSTANT_STRING(L"EndpointBasecamp.exe"),
+	 RTL_CONSTANT_STRING(L"TmCCSF.exe"),
+	 RTL_CONSTANT_STRING(L"TMBMSRV.exe"),
+};
 // Global SelfDefense toggle loaded from registry and runtime IOCTL
 static BOOLEAN gSelfDefense = FALSE;
 // Simple control device for runtime toggling
@@ -143,6 +150,26 @@ CONST FLT_REGISTRATION FilterRegistration = {
 	NULL            //  SectionNotificationCallback
 };
 
+BOOLEAN
+NTAPI
+SL_RtlSuffixUnicodeString(
+	_In_ PUNICODE_STRING Suffix,
+	_In_ PUNICODE_STRING String2,
+	_In_ BOOLEAN CaseInSensitive
+)
+{
+	//
+	// RtlSuffixUnicodeString is not exported by ntoskrnl until Win10.
+	//
+
+	return String2->Length >= Suffix->Length &&
+		RtlCompareUnicodeStrings(String2->Buffer + (String2->Length - Suffix->Length) / sizeof(WCHAR),
+			Suffix->Length / sizeof(WCHAR),
+			Suffix->Buffer,
+			Suffix->Length / sizeof(WCHAR),
+			CaseInSensitive) == 0;
+
+}
 
 // this callback function will make sure UMController.exe can always get the requested handle access
 // this callback function will make sure UMController.exe can always get the requested handle access
@@ -156,7 +183,7 @@ NTSTATUS PreObjProcesCallback(
 
 
 	// and we need to deny termination access to our white list process
-	if(gSelfDefense) // only delete termination access when self defense is on
+	//if(gSelfDefense) // only delete termination access when self defense is on
 	{
 		PUNICODE_STRING imageName = NULL;
 		NTSTATUS stImg = 0;
@@ -178,20 +205,39 @@ NTSTATUS PreObjProcesCallback(
 		ExFreePool(imageName); imageName = NULL;
 
 		// Allow only if hash is present in whitelist list
-		BOOLEAN allowed = FALSE;
+		BOOLEAN matched = FALSE;
 		KIRQL oldIrql;
 		KeAcquireSpinLock(&g_HashLock, &oldIrql);
 		for (PLIST_ENTRY e = g_HashList.Flink; e != &g_HashList; e = e->Flink) {
 			PHASH_NODE n = CONTAINING_RECORD(e, HASH_NODE, Link);
-			if (n->Hash == hash) { allowed = TRUE; break; }
+			if (n->Hash == hash) { matched = TRUE; break; }
 		}
 		KeReleaseSpinLock(&g_HashLock, oldIrql);
-		if (!allowed) goto https;
+		// we only delete terminate access when TARGET process matches our white list
+		if (!matched) goto https;
 
 
 		POB_PRE_CREATE_HANDLE_INFORMATION info = &OperationInformation->Parameters->CreateHandleInformation;
-		info->DesiredAccess &= ~0x1;
+		// info->DesiredAccess &= ~0x1;
 
+		// and we also need to deny process in blocked list to access process in whitelist
+		stImg = SeLocateProcessImageName(PsGetCurrentProcess(), &imageName);
+ 
+		if (!NT_SUCCESS(stImg) || imageName == NULL || imageName->Length == 0) {
+			if (imageName) { ExFreePool(imageName); imageName = NULL; }
+			// Log(L"failed to located source process image path, Status=0x%x\n", stImg);
+			goto https;
+		}
+		// because this blocked process list is a read only list, so there is no need to add lock
+		for (size_t i = 0; i < ARRAYSIZE(BlockedList); i++){
+			if (SL_RtlSuffixUnicodeString(&BlockedList[i], imageName, TRUE)) {
+				// only permit query limited process information
+				info->DesiredAccess = 0x1000;
+				ExFreePool(imageName); imageName = NULL;
+				goto https;
+			}
+		}
+		ExFreePool(imageName); imageName = NULL;
 	}
 
 https://144.one
@@ -359,6 +405,8 @@ DriverEntry(
 
 	NTSTATUS  status = STATUS_SUCCESS;
 
+// 	init blocked list
+	
 	// Initialize hash list and load WhitelistHashes from registry
 	InitializeListHead(&g_HashList);
 	KeInitializeSpinLock(&g_HashLock);
