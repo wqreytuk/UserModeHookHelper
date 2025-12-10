@@ -62,6 +62,7 @@ typedef struct _DRIVERCTX_OSVER {
 	ULONG Build;
 } DRIVERCTX_OSVER, *PDRIVERCTX_OSVER;
 
+NTSTATUS DriverCtx_LoadBlockedDllListFromRegistry();
 VOID DriverCtx_SetOsVersion(ULONG Major, ULONG Minor, ULONG Build);
 DRIVERCTX_OSVER DriverCtx_GetOsVersion(VOID);
 

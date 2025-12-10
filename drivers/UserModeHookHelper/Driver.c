@@ -123,10 +123,8 @@ DriverEntry(
 		Log(L"failed to get SSDT\n");
 		return STATUS_UNSUCCESSFUL;
 	}
-	// stop umhh.bootstart driver
-	// BS_SendSuspendInjectQueue(TRUE);
-	// Log(L"Tell UMHH.BootStart driver to stop injection\n");
-
+	// load third party dll black list
+	DriverCtx_LoadBlockedDllListFromRegistry();
 
 	// initialize modules
 	HookList_Init();

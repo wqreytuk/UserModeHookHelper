@@ -22,30 +22,72 @@ SL_RtlSuffixUnicodeString(
 	_In_ PUNICODE_STRING String2,
 	_In_ BOOLEAN CaseInSensitive
 );
-// Block list loaded from registry (REG_MULTI_SZ) under REG_PERSIST_REGPATH value REG_BLOCKED_PROCESS_NAME
-// We load on demand for simplicity; consider caching if performance requires.
 #include "../UserModeHookHelper/MacroDef.h"
-static BOOLEAN CheckBlockedProcessByName(PUNICODE_STRING imageNameSuffix) {
-	OBJECT_ATTRIBUTES oa; UNICODE_STRING regPath;
-	RtlInitUnicodeString(&regPath, REG_PERSIST_REGPATH L"\\"); // key path
-	HANDLE hKey = NULL; InitializeObjectAttributes(&oa, &regPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
-	NTSTATUS st = ZwOpenKey(&hKey, KEY_READ, &oa);
-	if (!NT_SUCCESS(st)) return FALSE;
+// Cached blocked process suffix list
+typedef struct _BLOCKED_NAME_NODE {
+	LIST_ENTRY Link;
+	UNICODE_STRING Name; // allocated buffer
+} BLOCKED_NAME_NODE, *PBLOCKED_NAME_NODE;
+static LIST_ENTRY g_BlockedProcList; // protected by g_BlockedProcLock
+static KSPIN_LOCK g_BlockedProcLock;
+
+static VOID FreeBlockedProcessList() {
+	KIRQL irql; KeAcquireSpinLock(&g_BlockedProcLock, &irql);
+	while (!IsListEmpty(&g_BlockedProcList)) {
+		PLIST_ENTRY e = RemoveHeadList(&g_BlockedProcList);
+		PBLOCKED_NAME_NODE n = CONTAINING_RECORD(e, BLOCKED_NAME_NODE, Link);
+		if (n->Name.Buffer) ExFreePoolWithTag(n->Name.Buffer, 'bPNM');
+		ExFreePoolWithTag(n, 'bPNM');
+	}
+	KeReleaseSpinLock(&g_BlockedProcLock, irql);
+}
+
+static VOID LoadBlockedProcessListFromRegistry() {
+	FreeBlockedProcessList();
+	OBJECT_ATTRIBUTES oa; UNICODE_STRING regPath; RtlInitUnicodeString(&regPath, REG_PERSIST_REGPATH L"\\");
+	InitializeObjectAttributes(&oa, &regPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+	HANDLE hKey = NULL; NTSTATUS st = ZwOpenKey(&hKey, KEY_READ, &oa);
+	if (!NT_SUCCESS(st)) return;
 	UNICODE_STRING valName; RtlInitUnicodeString(&valName, REG_BLOCKED_PROCESS_NAME);
 	ULONG len = 0; st = ZwQueryValueKey(hKey, &valName, KeyValueFullInformation, NULL, 0, &len);
-	if (st != STATUS_BUFFER_TOO_SMALL && st != STATUS_BUFFER_OVERFLOW) { ZwClose(hKey); return FALSE; }
+	if (st != STATUS_BUFFER_TOO_SMALL && st != STATUS_BUFFER_OVERFLOW) { ZwClose(hKey); return; }
 	PKEY_VALUE_FULL_INFORMATION info = (PKEY_VALUE_FULL_INFORMATION)ExAllocatePoolWithTag(PagedPool, len, 'blRV');
-	if (!info) { ZwClose(hKey); return FALSE; }
+	if (!info) { ZwClose(hKey); return; }
 	st = ZwQueryValueKey(hKey, &valName, KeyValueFullInformation, info, len, &len);
-	if (!NT_SUCCESS(st) || info->Type != REG_MULTI_SZ) { ExFreePoolWithTag(info, 'blRV'); ZwClose(hKey); return FALSE; }
-	// iterate entries in multi-sz
-	BOOLEAN matched = FALSE; WCHAR* p = (WCHAR*)((PUCHAR)info + info->DataOffset);
+	if (!NT_SUCCESS(st) || info->Type != REG_MULTI_SZ) { ExFreePoolWithTag(info, 'blRV'); ZwClose(hKey); return; }
+	WCHAR* p = (WCHAR*)((PUCHAR)info + info->DataOffset);
 	while (*p) {
 		UNICODE_STRING entry; RtlInitUnicodeString(&entry, p);
-		if (SL_RtlSuffixUnicodeString(&entry, imageNameSuffix, TRUE)) { matched = TRUE; break; }
+		SIZE_T bytes = entry.Length + sizeof(WCHAR);
+		PWCHAR buf = (PWCHAR)ExAllocatePoolWithTag(NonPagedPoolNx, bytes, 'bPNM');
+		if (buf) {
+			RtlCopyMemory(buf, entry.Buffer, entry.Length);
+			buf[entry.Length / sizeof(WCHAR)] = L'\0';
+			PBLOCKED_NAME_NODE node = (PBLOCKED_NAME_NODE)ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(BLOCKED_NAME_NODE), 'bPNM');
+			if (node) {
+				node->Name.Buffer = buf; node->Name.Length = (USHORT)entry.Length; node->Name.MaximumLength = (USHORT)bytes;
+				KIRQL irql; KeAcquireSpinLock(&g_BlockedProcLock, &irql);
+				InsertTailList(&g_BlockedProcList, &node->Link);
+				KeReleaseSpinLock(&g_BlockedProcLock, irql);
+			}
+			else {
+				ExFreePoolWithTag(buf, 'bPNM');
+			}
+		}
 		p += entry.Length / sizeof(WCHAR) + 1;
 	}
-	ExFreePoolWithTag(info, 'blRV'); ZwClose(hKey); return matched;
+	ExFreePoolWithTag(info, 'blRV'); ZwClose(hKey);
+}
+
+static BOOLEAN CheckBlockedProcessByName(PUNICODE_STRING imageNameSuffix) {
+	BOOLEAN matched = FALSE;
+	KIRQL irql; KeAcquireSpinLock(&g_BlockedProcLock, &irql);
+	for (PLIST_ENTRY e = g_BlockedProcList.Flink; e != &g_BlockedProcList; e = e->Flink) {
+		PBLOCKED_NAME_NODE n = CONTAINING_RECORD(e, BLOCKED_NAME_NODE, Link);
+		if (SL_RtlSuffixUnicodeString(&n->Name, imageNameSuffix, TRUE)) { matched = TRUE; break; }
+	}
+	KeReleaseSpinLock(&g_BlockedProcLock, irql);
+	return matched;
 }
 // Global SelfDefense toggle loaded from registry and runtime IOCTL
 static BOOLEAN gSelfDefense = FALSE;
@@ -118,6 +160,8 @@ MiniUnload(
 	UNREFERENCED_PARAMETER(Flags);
 
 	// Unregister OB callback if present
+		// Free cached blocked process list
+		FreeBlockedProcessList();
 	if (g_CallbackHandle) {
 		ObUnRegisterCallbacks(g_CallbackHandle);
 		g_CallbackHandle = NULL;
@@ -427,9 +471,11 @@ DriverEntry(
 
 // 	init blocked list
 	
-	// Initialize hash list and load WhitelistHashes from registry
+	// Initialize lists and load configuration from registry
 	InitializeListHead(&g_HashList);
 	KeInitializeSpinLock(&g_HashLock);
+	InitializeListHead(&g_BlockedProcList);
+	KeInitializeSpinLock(&g_BlockedProcLock);
 	{
 		UNICODE_STRING regPath;
 		RtlInitUnicodeString(&regPath, REG_PERSIST_REGPATH);
@@ -496,6 +542,9 @@ DriverEntry(
 			Log(L"Open registry failed for WhitelistHashes: 0x%x\n", st);
 		}
 	}
+
+	// Load blocked process list once at driver start
+	LoadBlockedProcessListFromRegistry();
 
 	// Create control device for runtime toggling
 	// Setup simple dispatch for CREATE/CLOSE/IOCTL
