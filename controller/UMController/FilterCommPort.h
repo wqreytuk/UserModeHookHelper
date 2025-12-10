@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_set>
 #include <Windows.h>
+#include <unordered_map>
 
 class Filter
 {
@@ -100,5 +101,22 @@ private:
 	void* m_ApcQueuedCtx = NULL;
 	void RunListenerLoop();
 	static VOID NTAPI ListenerWorkItem(PVOID context, PVOID systemArg1, PVOID systemArg2);
+
+	struct ProcKey {
+		DWORD pid;
+		ULONGLONG creationTime; // FILETIME as 64-bit
+	};
+	struct ProcKeyHash {
+		size_t operator()(const ProcKey& k) const noexcept {
+			return ((size_t)k.pid * 1315423911u) ^ (size_t)k.creationTime;
+		}
+	};
+	struct ProcKeyEq {
+		bool operator()(const ProcKey& a, const ProcKey& b) const noexcept {
+			return a.pid == b.pid && a.creationTime == b.creationTime;
+		}
+	};
+	std::unordered_map<ProcKey, HANDLE, ProcKeyHash, ProcKeyEq> m_handleCache;
+	static bool QueryCreationTime(HANDLE hProc, ULONGLONG& outCreationTime);
 };
 #endif

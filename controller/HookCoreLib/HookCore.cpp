@@ -232,7 +232,7 @@ namespace HookCore {
 		if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE),
 			(LPVOID)&e9_jmp_instruction_oprand, E9_JMP_INSTRUCTION_OPRAND_SIZE, &bytesout)) {
 			if (services)
-				LOG_CORE(services, L"failed to call WriteProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
+				LOG_CORE(services, L"failed to call ReadProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
 					tramp_stage_1_addr, trampoline_pit, GetLastError());
 			return false;
 		}
@@ -392,7 +392,7 @@ namespace HookCore {
 		if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)tramp_stage_1_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE),
 			(LPVOID)&e9_jmp_instruction_oprand, E9_JMP_INSTRUCTION_OPRAND_SIZE, &bytesout)) {
 			if (services)
-				LOG_CORE(services, L"failed to call WriteProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
+				LOG_CORE(services, L"failed to call ReadProcessMemory to write trampoline code addr 0x%p to trampoline pit 0x%p, error: 0x%x\n",
 					tramp_stage_1_addr, trampoline_pit, GetLastError());
 			CloseHandle(hProc);
 			return false;

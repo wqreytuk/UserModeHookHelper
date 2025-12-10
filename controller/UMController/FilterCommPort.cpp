@@ -23,6 +23,7 @@
 #include <memory>
 #include <winerror.h>   // For HRESULT macros 
 #include <cstddef>
+#include <chrono>
 #include "../ProcessHackerLib/phlib_expose.h"
 // Use LONG to represent NT-style status values in this user-mode file to
 // avoid requiring nt headers (which may not be present in all environments).
@@ -565,6 +566,35 @@ bool Filter::FLTCOMM_IsProtectedProcess(DWORD pid, bool& outIsProtected) {
 
 bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
 	*outHandle = NULL;
+	HANDLE hDuplicate = NULL;
+	// Attempt to use cached handle keyed by {pid, creationTime}
+	// We need creation time to build the key; if we have a cached entry for this pid with any creation time,
+	// validate it by querying creation time and use it.
+	for (auto it = m_handleCache.begin(); it != m_handleCache.end(); ++it) {
+		if (it->first.pid == pid) {
+			HANDLE h = it->second;
+			ULONGLONG ct = 0;
+			if (h && QueryCreationTime(h, ct)) {
+				if (ct == it->first.creationTime) {
+					BOOL ok = DuplicateHandle(
+						GetCurrentProcess(), // source process
+						h,           // your original handle
+						GetCurrentProcess(), // target process (same process)
+						&hDuplicate,         // receives duplicate
+						0,                   // same access
+						FALSE,               // not inheritable
+						DUPLICATE_SAME_ACCESS
+					);
+					if (!ok) {
+						LOG_CTRL_ETW(L"failed to call DuplicateHandle, Error=0x%x\n", GetLastError());
+						return false;
+					}
+					*outHandle = hDuplicate;
+					return true;
+				}
+			}
+		}
+	}
 	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
 	if (!msg) return false;
@@ -586,7 +616,43 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
 	unsigned long long h64 = 0;
 	memcpy(&h64, reply.get(), replySize);
 	if (h64 == 0) return false;
-	*outHandle = (HANDLE)(ULONG_PTR)h64;
+	HANDLE hProc = (HANDLE)(ULONG_PTR)h64;
+	// Compute creation time key and cache
+	ULONGLONG ct = 0;
+	if (QueryCreationTime(hProc, ct)) {
+		ProcKey key{ pid, ct };
+		m_handleCache.insert({ key, hProc });
+	}
+	// we can not return this handle to caller, because caller will close it, cause cache ineffect
+	// we should duplicate a new handle to user
+	BOOL ok = DuplicateHandle(
+		GetCurrentProcess(), // source process
+		hProc,           // your original handle
+		GetCurrentProcess(), // target process (same process)
+		&hDuplicate,         // receives duplicate
+		0,                   // same access
+		FALSE,               // not inheritable
+		DUPLICATE_SAME_ACCESS
+	);
+	if (!ok) {
+		LOG_CTRL_ETW(L"failed to call DuplicateHandle, Error=0x%x\n", GetLastError());
+		return false;
+	}
+	*outHandle = hDuplicate;
+	return true;
+}
+
+bool Filter::QueryCreationTime(HANDLE hProc, ULONGLONG& outCreationTime) {
+	outCreationTime = 0;
+	if (!hProc) return false;
+	FILETIME ftCreate = {0}, ftExit = {0}, ftKernel = {0}, ftUser = {0};
+	if (!GetProcessTimes(hProc, &ftCreate, &ftExit, &ftKernel, &ftUser)) {
+		return false;
+	}
+	ULARGE_INTEGER uli;
+	uli.LowPart = ftCreate.dwLowDateTime;
+	uli.HighPart = ftCreate.dwHighDateTime;
+	outCreationTime = uli.QuadPart;
 	return true;
 }
 

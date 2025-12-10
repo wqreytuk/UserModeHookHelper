@@ -249,7 +249,7 @@ NTSTATUS PreObjProcesCallback(
 
 
 	// and we need to deny termination access to our white list process
-	//if(gSelfDefense) // only delete termination access when self defense is on
+	if(gSelfDefense) // only delete termination access when self defense is on
 	{
 		PUNICODE_STRING imageName = NULL;
 		NTSTATUS stImg = 0;
@@ -463,7 +463,7 @@ DriverEntry(
 	_In_ PUNICODE_STRING RegistryPath
 )
 {
-	// DbgBreakPoint();
+	  DbgBreakPoint();
 
 	UNREFERENCED_PARAMETER(RegistryPath);
 

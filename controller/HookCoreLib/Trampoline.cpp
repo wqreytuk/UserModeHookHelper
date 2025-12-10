@@ -416,6 +416,8 @@ ff 25 44 33 22 11       jmp    DWORD PTR ds:0x11223344
 				LOG_CORE(services, L"ConstructTrampoline line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
 			return false;
 		}
+		// AV/EDR might hook WriteProcessMemory function, we need to use kernel code to do the job
+		// if fails, so we need to wrap WriteProcessMemory function
 		if (!::WriteProcessMemory(hProcess, (LPVOID)(PLACEHOLDER_FUNCIONT_OFFSET - stage_0_xoreaxeaxret_size + (DWORD64)tramp_dll_base),
 			(void*)(&xor_eax_eax_ret), stage_0_xoreaxeaxret_size, NULL)) {
 			if (services)

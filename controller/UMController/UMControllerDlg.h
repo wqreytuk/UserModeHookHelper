@@ -130,10 +130,13 @@ private:
 	bool m_CachePersisted = false; // composite cache written this session
 	// persisted toggle
 	bool m_globalHookMode = false;
-	// SelfDefense feature removed
+	// SelfDefense toggle under Extra menu
+	afx_msg void OnToggleSelfDefense();
+	afx_msg LRESULT OnApplySelfDefenseMenu(WPARAM wParam, LPARAM lParam);
 	// Master DLL scanner guard: ensure scanner started only once
 	bool m_MasterDllScannerStarted = false;
-
+	// runtime SelfDefense toggle queried from driver
+	bool m_selfDefenseEnabled = false;
 	// Cached Early Break marks (lowercased NT paths) to avoid registry hits
 	std::unordered_set<std::wstring> m_EarlyBreakSet;
 	// Cached forced marks (PID:HIGH:LOW) compacted into 64-bit keys

@@ -89,4 +89,5 @@ namespace RegistryStore {
     bool AddPplOriginalProt(DWORD pid, DWORD hi, DWORD lo, DWORD prot);
     bool GetPplOriginalProt(DWORD pid, DWORD hi, DWORD lo, DWORD& outProt);
     bool RemovePplOriginalProt(DWORD pid, DWORD hi, DWORD lo);
+
 }
