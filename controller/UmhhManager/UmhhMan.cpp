@@ -7,7 +7,7 @@
 #include <iostream>
 #include <sstream>
 #include <atlbase.h>
-#include "../../../Shared/SharedMacroDef.h"
+#include "../../Shared/SharedMacroDef.h"
 
 static void Trim(std::wstring& s) {
 	auto notspace = [](wchar_t c) { return !iswspace(c); };
