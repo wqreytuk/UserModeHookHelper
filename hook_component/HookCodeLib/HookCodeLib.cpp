@@ -5,9 +5,12 @@
 #include "framework.h"
 #include "HookCodeLib.h"
 #include <vector>
- 
+#include <fltuser.h>
+#include "../../drivers/UserModeHookHelper/MacroDef.h"
+#include "../../drivers/UserModeHookHelper/UKShared.h"
 
 #pragma comment(lib, "ntdll.lib")
+#pragma comment(lib, "fltlib.lib")
 
 namespace HookCode {
 	static IHookServices* g_services = nullptr;
@@ -105,6 +108,53 @@ namespace HookCode {
 				wchar_t b = suffix[i];
 				if (towlower(a) != towlower(b)) return false;
 			}
+			return true;
+		}
+	}
+	namespace FILTER {
+		// connect to filter
+		HANDLE ConnectToFilter() {
+			HRESULT hResult = S_OK;
+			HANDLE m_Port = NULL;
+			hResult = FilterConnectCommunicationPort(
+				UMHHLP_PORT_NAME,
+				0,
+				NULL,
+				0,
+				NULL,
+				&m_Port
+			);
+			if (hResult != S_OK) {
+				HKLog(L"failed to call FilterConnectCommunicationPort: 0x%x\n", hResult);
+			}
+			else
+				HKLog(L"successfully connect to minifilterport: 0x%p\n", m_Port);
+			return m_Port;
+		}
+		bool GetProcessHandle(HANDLE m_Port, DWORD pid, HANDLE* outHandle) {
+			*outHandle = NULL;
+			const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(DWORD);
+			PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+			if (!msg) return false;
+			memset(msg, 0, msgSize);
+			msg->m_Cmd = CMD_GET_PROCESS_HANDLE;
+			memcpy(msg->m_Data, &pid, sizeof(DWORD));
+
+			// Protocol: driver returns an 8-byte handle value regardless of client arch.
+			// Read 8 bytes and cast down safely on x86.
+			const SIZE_T replySize = 8; // fixed-width handle field
+			std::unique_ptr<BYTE[]> reply(new BYTE[replySize]);
+			DWORD bytesOut = 0;
+			HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, reply.get(), (DWORD)replySize, &bytesOut);
+			free(msg);
+			if (hr != S_OK || bytesOut != (DWORD)replySize) {
+				HKLog(L"GetProcessHandle: FilterSendMessage hr=0x%x bytesOut=%u (expected %u)\n", hr, bytesOut, (unsigned)replySize);
+				return false;
+			}
+			unsigned long long h64 = 0;
+			memcpy(&h64, reply.get(), replySize);
+			if (h64 == 0) return false;
+			*outHandle = (HANDLE)(ULONG_PTR)h64;
 			return true;
 		}
 	}

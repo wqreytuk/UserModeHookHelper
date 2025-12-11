@@ -172,7 +172,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\hook_component\HookCodeLib\HookCodeLib.vcxproj">
+    <ProjectReference Include="..\..\..\hook_component\HookCodeLib\HookCodeLib.vcxproj">
       <Project>{be6f20e1-4009-4b1a-9f76-c11497fb90c4}</Project>
     </ProjectReference>
   </ItemGroup>

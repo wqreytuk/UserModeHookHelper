@@ -17,4 +17,9 @@ namespace HookCode {
 	// Check whether wide string `haystack` ends with `suffix`.
 	// If ignoreCase is true, comparison is case-insensitive.
 	namespace STRLIB { bool WStringEndsWith(const std::wstring& haystack, const std::wstring& suffix, bool ignoreCase); }
+	namespace FILTER {
+		// connect to filter
+		HANDLE ConnectToFilter();
+		bool GetProcessHandle(HANDLE m_Port, DWORD pid, HANDLE* outHandle);
+	}
 }

@@ -7,10 +7,10 @@
 #include <iostream>
 #include <sstream>
 #include <atlbase.h>
-#include "../../Shared/SharedMacroDef.h"
+#include "../../../Shared/SharedMacroDef.h"
 
 static void Trim(std::wstring& s) {
-	auto notspace = [](wchar_t c){ return !iswspace(c); };
+	auto notspace = [](wchar_t c) { return !iswspace(c); };
 	s.erase(s.begin(), std::find_if(s.begin(), s.end(), notspace));
 	s.erase(std::find_if(s.rbegin(), s.rend(), notspace).base(), s.end());
 }
@@ -27,16 +27,16 @@ static bool WriteMultiSz(HKEY root, const std::wstring& subKey, const std::wstri
 	size_t totalChars = 1; // final double-null
 	for (auto& s : items) totalChars += s.size() + 1;
 	std::vector<wchar_t> buf; buf.resize(totalChars);
-	size_t pos = 0; for (auto& s : items) { memcpy(&buf[pos], s.c_str(), s.size()*sizeof(wchar_t)); pos += s.size(); buf[pos++] = L'\0'; }
+	size_t pos = 0; for (auto& s : items) { memcpy(&buf[pos], s.c_str(), s.size() * sizeof(wchar_t)); pos += s.size(); buf[pos++] = L'\0'; }
 	buf[pos++] = L'\0';
-	LONG res = RegSetValueExW(key, valueName.c_str(), 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size()*sizeof(wchar_t)));
+	LONG res = RegSetValueExW(key, valueName.c_str(), 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size() * sizeof(wchar_t)));
 	return res == ERROR_SUCCESS;
 }
 
 static bool ReadMultiSz(HKEY root, const std::wstring& subKey, const std::wstring& valueName, std::vector<std::wstring>& items) {
 	items.clear(); CRegKey key; if (key.Open(root, subKey.c_str(), KEY_READ) != ERROR_SUCCESS) return false;
 	DWORD type = 0, size = 0; if (RegQueryValueExW(key, valueName.c_str(), nullptr, &type, nullptr, &size) != ERROR_SUCCESS || type != REG_MULTI_SZ || size == 0) return false;
-	std::vector<wchar_t> buf; buf.resize(size/sizeof(wchar_t)); if (RegQueryValueExW(key, valueName.c_str(), nullptr, &type, reinterpret_cast<BYTE*>(buf.data()), &size) != ERROR_SUCCESS) return false;
+	std::vector<wchar_t> buf; buf.resize(size / sizeof(wchar_t)); if (RegQueryValueExW(key, valueName.c_str(), nullptr, &type, reinterpret_cast<BYTE*>(buf.data()), &size) != ERROR_SUCCESS) return false;
 	// parse
 	const wchar_t* p = buf.data(); while (*p) { std::wstring s(p); items.push_back(s); p += s.size() + 1; }
 	return true;
@@ -45,7 +45,7 @@ static bool ReadMultiSz(HKEY root, const std::wstring& subKey, const std::wstrin
 static bool AppendValues(const std::wstring& valueName, const std::vector<std::wstring>& toAdd) {
 	std::vector<std::wstring> current; ReadMultiSz(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, valueName, current);
 	for (auto& s : toAdd) {
-		if (std::find_if(current.begin(), current.end(), [&](const std::wstring& x){ return _wcsicmp(x.c_str(), s.c_str())==0; }) == current.end()) {
+		if (std::find_if(current.begin(), current.end(), [&](const std::wstring& x) { return _wcsicmp(x.c_str(), s.c_str()) == 0; }) == current.end()) {
 			current.push_back(s);
 		}
 	}
@@ -54,8 +54,8 @@ static bool AppendValues(const std::wstring& valueName, const std::vector<std::w
 
 static bool DeleteValues(const std::wstring& valueName, const std::vector<std::wstring>& toDel) {
 	std::vector<std::wstring> current; if (!ReadMultiSz(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, valueName, current)) return false;
-	current.erase(std::remove_if(current.begin(), current.end(), [&](const std::wstring& x){
-		return std::find_if(toDel.begin(), toDel.end(), [&](const std::wstring& y){ return _wcsicmp(x.c_str(), y.c_str())==0; }) != toDel.end();
+	current.erase(std::remove_if(current.begin(), current.end(), [&](const std::wstring& x) {
+		return std::find_if(toDel.begin(), toDel.end(), [&](const std::wstring& y) { return _wcsicmp(x.c_str(), y.c_str()) == 0; }) != toDel.end();
 	}), current.end());
 	return WriteMultiSz(HKEY_LOCAL_MACHINE, REG_PERSIST_SUBKEY, valueName, current);
 }
