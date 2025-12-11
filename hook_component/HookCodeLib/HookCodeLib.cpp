@@ -73,7 +73,6 @@ namespace HookCode {
 					DWORD n = GetFinalPathNameByHandleW(hTargetHandle, pathBuf, _countof(pathBuf), FILE_NAME_NORMALIZED);
 					if (n > 0 && n < _countof(pathBuf)) name.assign(pathBuf);
 				}
-				HKLog(L"resolved Name=%s for Handle=0x%x\n", name.c_str(), hTargetHandle);
 				return name;
 			}
 			// Otherwise duplicate into this process
