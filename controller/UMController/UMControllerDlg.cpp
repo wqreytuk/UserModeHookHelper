@@ -969,10 +969,6 @@ BOOL CUMControllerDlg::OnInitDialog()
 		if (GetMenu()) {
 			HMENU h = GetMenu()->m_hMenu;
 			if (h) {
-				// Temporarily remove the entire Tools popup to hide all its items
-				// Tools is the first popup in IDR_MAIN_MENU
-				RemoveMenu(h, 0, MF_BYPOSITION);
-				DrawMenuBar();
 				CheckMenuItem(h, ID_MENU_EXTRA_ENABLE_GLOBAL_HOOK_MODE, MF_BYCOMMAND | (m_globalHookMode ? MF_CHECKED : MF_UNCHECKED));
 				DrawMenuBar();
 				LOG_CTRL_ETW(L"SetMenu: applied GlobalHookMode check immediately: enabled=%d\n", (int)m_globalHookMode);
@@ -1784,8 +1780,10 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 
 	CMenu menu;
 	menu.CreatePopupMenu();
-	// Temporarily hide Add/Remove Hook actions from context menu
-	// (requested: do not display these menu items)
+	// Recover HookList actions in context menu
+	menu.AppendMenu(MF_STRING, ID_MENU_ADD_HOOK, L"Add To Hook List");
+	menu.AppendMenu(MF_STRING, ID_MENU_REMOVE_HOOK_SINGLE, L"Remove From Hook List");
+	menu.AppendMenu(MF_SEPARATOR, 0, L"");
 	// Wake Up action (always enabled; handler is TODO stub)
 	menu.AppendMenu(MF_STRING, ID_MENU_WAKE_UP, L"Wake Up");
 	menu.AppendMenu(MF_SEPARATOR, 0, L"");
