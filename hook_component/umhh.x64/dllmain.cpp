@@ -10,7 +10,40 @@
 #include "../controller/UMController/IPC.h"
 #include "../controller/UMController/ETW.h"
 #include "../../Shared/SharedMacroDef.h"
+#include "detours/detours.h"
+//
+// This is necessary for x86 builds because of SEH,
+// which is used by Detours.  Look at loadcfg.c file
+// in Visual Studio's CRT source codes for the original
+// implementation.
+//
 
+
+VOID EtwLog(_In_ PCWSTR Format, ...);
+typedef int(__cdecl * _snwprintf_fn_t)(
+	wchar_t *buffer,
+	size_t count,
+	const wchar_t *format,
+	...
+	);
+static _snwprintf_fn_t _snwprintf = NULL;
+#if defined(_M_IX86) || defined(_X86_)
+
+EXTERN_C PVOID __safe_se_handler_table[]; /* base of safe handler entry table */
+EXTERN_C BYTE  __safe_se_handler_count;   /* absolute symbol whose address is
+											 the count of table entries */
+EXTERN_C
+CONST
+DECLSPEC_SELECTANY
+IMAGE_LOAD_CONFIG_DIRECTORY
+_load_config_used = {
+	sizeof(_load_config_used),
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	(SIZE_T)__safe_se_handler_table,
+	(SIZE_T)&__safe_se_handler_count,
+};
+
+#endif
 #define PAGE_SIZE 0x1000 
 
 #define WIDEN2(x) L##x
@@ -19,8 +52,96 @@
 
 
 HANDLE g_EventHandle;
+typedef NTSTATUS(NTAPI *PFN_NtDelayExecution)(
+	BOOLEAN Alertable,        // TRUE = APCs can wake the thread
+	PLARGE_INTEGER Interval   // Relative (negative) or absolute (positive) time in 100-ns units
+	);
+typedef ULONG_PTR(NTAPI *PFN_EntryFuncProto)(
+	ULONG_PTR a1,
+	ULONG_PTR a2,
+	ULONG_PTR a3,
+	ULONG_PTR a4,
+	ULONG_PTR a5,
+	ULONG_PTR a6,
+	ULONG_PTR a7,
+	ULONG_PTR a8
+	);
+PFN_EntryFuncProto original_entry = nullptr;
+ULONG_PTR PutIntoSleep(ULONG_PTR a1,
+	ULONG_PTR a2,
+	ULONG_PTR a3,
+	ULONG_PTR a4,
+	ULONG_PTR a5,
+	ULONG_PTR a6,
+	ULONG_PTR a7,
+	ULONG_PTR a8
+) {
+	// put into sleep
+
+	// waiting for event, we can wake it up from UMController
+	{
+		WCHAR event_name[100];
+		_snwprintf(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_NT_WAKEUP_EVENT L"%d", NtCurrentProcessId());
+
+		UNICODE_STRING name;
+		RtlInitUnicodeString(&name, event_name);
 
 
+		HANDLE EvtHandle = NULL;
+		SECURITY_DESCRIPTOR sd = { 0 };
+
+		// Use revision 1
+		sd.Revision = 1;
+
+		// Set control flags (SE_DACL_PRESENT = 0x04)
+		sd.Control = SE_DACL_PRESENT;
+
+		// Set a NULL DACL (everyone full access)
+		sd.Dacl = NULL;
+		OBJECT_ATTRIBUTES oa;
+		InitializeObjectAttributes(
+			&oa,
+			&name,
+			OBJ_CASE_INSENSITIVE,
+			NULL,
+			&sd
+		);
+		NTSTATUS status = NtCreateEvent(
+			&EvtHandle,
+			EVENT_ALL_ACCESS,
+			&oa,
+			NotificationEvent,   // or SynchronizationEvent
+			FALSE                // Initial state
+		);
+
+		if (status != 0) {
+			EtwLog(L"failed to call NtCreateEvent to create wakeup Event=%s, status=0x%x\n", &event_name, status);
+		}
+		NtWaitForSingleObject(EvtHandle, FALSE, NULL);
+		EtwLog(L"early break process signaled to wake up\n");
+		// this is an one time event, no need to reset
+	}
+
+	return NULL;
+}
+inline LPVOID GetPEModuleBase()
+{
+	PPEB peb = NULL;
+#if defined(_WIN64)
+	peb = (PPEB)__readgsqword(0x60);
+#else
+	peb = (PPEB)__readfsdword(0x30);
+#endif
+	PPEB_LDR_DATA ldr = peb->Ldr;
+	LIST_ENTRY list = ldr->InLoadOrderModuleList;
+
+	PLDR_DATA_TABLE_ENTRY Flink = *((PLDR_DATA_TABLE_ENTRY*)(&list));
+	PLDR_DATA_TABLE_ENTRY curr_module = Flink;
+	// first module is PE module
+	if (curr_module != NULL && curr_module->DllBase != NULL)
+		return curr_module->DllBase;
+	return NULL;
+}
 typedef NTSTATUS(NTAPI *PFN_NtQueryInformationProcess)(
 	HANDLE,
 	PROCESSINFOCLASS,
@@ -91,13 +212,6 @@ _load_config_used = {
 // load them dynamically.
 //
 
-typedef int(__cdecl * _snwprintf_fn_t)(
-	wchar_t *buffer,
-	size_t count,
-	const wchar_t *format,
-	...
-	);
-
 // vsnwprintf signature and function pointer (we'll resolve at runtime)
 typedef int(__cdecl * _vsnwprintf_fn_t)(
 	wchar_t *buffer,
@@ -106,7 +220,6 @@ typedef int(__cdecl * _vsnwprintf_fn_t)(
 	va_list args
 	);
 
-static _snwprintf_fn_t _snwprintf = NULL;
 static _vsnwprintf_fn_t _vsnwprintf = NULL;
 //
 // ETW provider GUID and global provider handle.
@@ -135,10 +248,7 @@ typedef NTSTATUS(NTAPI *PFN_LdrLoadDll)(
 	PUNICODE_STRING     ModuleFileName,      // DLL name
 	PHANDLE             ModuleHandle         // out: handle to loaded module
 	);
-typedef NTSTATUS(NTAPI *PFN_NtDelayExecution)(
-	BOOLEAN Alertable,        // TRUE = APCs can wake the thread
-	PLARGE_INTEGER Interval   // Relative (negative) or absolute (positive) time in 100-ns units
-	);
+
 // Minimal typedefs in case winternl.h not present
 typedef NTSTATUS(NTAPI *PFN_NtOpenFile)(
 	PHANDLE            FileHandle,
@@ -702,6 +812,19 @@ OnProcessAttach(
 	 if (CheckEarlyBreak((UCHAR*)ntPath, len)) {
 	 	EtwLog(L"current process is marked as early break, now breaking into debugger\n");
 	 	DbgBreakPoint();
+		// put it into sleep using Detours at PE entry
+		{
+			DWORD64 PEBASE = (DWORD64)GetPEModuleBase();
+			auto dos = (PIMAGE_DOS_HEADER)PEBASE;
+			auto nt = (PIMAGE_NT_HEADERS)(PEBASE + dos->e_lfanew);
+			DWORD64 EntryAddr = PEBASE + nt->OptionalHeader.AddressOfEntryPoint;
+			DetourTransactionBegin();
+			{
+				original_entry = (PFN_EntryFuncProto)EntryAddr;
+				DetourAttach((PVOID*)&original_entry, PutIntoSleep);
+			}
+			DetourTransactionCommit();
+		}
 	 }
 
 	// mycode();

@@ -67,6 +67,9 @@
 #define CMD_QUERY_PPL_PROTECTION 23
 // Recover PPL by setting Protection to provided value.
 #define CMD_RECOVER_PPL 24
+// Request kernel to duplicate a handle into the caller process.
+// Payload: HANDLE sourceHandle. Reply: HANDLE duplicatedHandle (duplicated into caller).
+#define CMD_DUPLICATE_HANDLE_KERNEL 25
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {

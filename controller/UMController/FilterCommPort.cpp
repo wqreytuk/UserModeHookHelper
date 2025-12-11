@@ -586,8 +586,13 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
 						DUPLICATE_SAME_ACCESS
 					);
 					if (!ok) {
-						LOG_CTRL_ETW(L"failed to call DuplicateHandle, Error=0x%x\n", GetLastError());
-						return false;
+						// LOG_CTRL_ETW(L"DuplicateHandle failed; trying kernel duplication\n");
+						HANDLE hDupKernel = NULL;
+						if (!FLTCOMM_DuplicateHandleKernel(h, &hDupKernel)) {
+							LOG_CTRL_ETW(L"Kernel duplicate failed, Pid=%d\n",pid);
+							return false;
+						}
+						hDuplicate = hDupKernel;
 					}
 					*outHandle = hDuplicate;
 					return true;
@@ -635,10 +640,40 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
 		DUPLICATE_SAME_ACCESS
 	);
 	if (!ok) {
-		LOG_CTRL_ETW(L"failed to call DuplicateHandle, Error=0x%x\n", GetLastError());
-		return false;
+		LOG_CTRL_ETW(L"DuplicateHandle failed; trying kernel duplication\n");
+		HANDLE hDupKernel = NULL;
+		if (!FLTCOMM_DuplicateHandleKernel(hProc, &hDupKernel)) {
+			LOG_CTRL_ETW(L"Kernel duplicate failed\n");
+			return false;
+		}
+		hDuplicate = hDupKernel;
 	}
 	*outHandle = hDuplicate;
+	return true;
+}
+
+bool Filter::FLTCOMM_DuplicateHandleKernel(HANDLE sourceHandle, HANDLE* outDuplicated)
+{
+	if (!outDuplicated) return false;
+	*outDuplicated = NULL;
+	const size_t msgSize = (sizeof(UMHH_COMMAND_MESSAGE) - 1) + sizeof(HANDLE);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(msgSize);
+	if (!msg) return false;
+	memset(msg, 0, msgSize);
+	msg->m_Cmd = CMD_DUPLICATE_HANDLE_KERNEL;
+	memcpy(msg->m_Data, &sourceHandle, sizeof(HANDLE));
+
+	SIZE_T replySize = sizeof(HANDLE);
+	std::unique_ptr<BYTE[]> reply(new BYTE[replySize]);
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port, msg, (DWORD)msgSize, reply.get(), (DWORD)replySize, &bytesOut);
+	free(msg);
+	if (hr != S_OK || bytesOut < (DWORD)replySize) {
+		return false;
+	}
+	HANDLE h = NULL; RtlCopyMemory(&h, reply.get(), sizeof(HANDLE));
+	if (!h) return false;
+	*outDuplicated = h;
 	return true;
 }
 

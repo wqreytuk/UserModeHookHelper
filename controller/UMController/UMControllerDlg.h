@@ -72,6 +72,8 @@ public:
 	afx_msg void OnDestroy();
     afx_msg LRESULT OnHookDlgDestroyed(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnSize(UINT nType, int cx, int cy);
+	// Context menu: Wake Up stub handler
+	afx_msg void OnWakeUp();
 	// Removed obsolete OnTimer; enumeration-only mode no longer uses it.
 	afx_msg void OnToggleGlobalHookMode();
 	afx_msg LRESULT OnApplyGlobalHookMenu(WPARAM wParam, LPARAM lParam);

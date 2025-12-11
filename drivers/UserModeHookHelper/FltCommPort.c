@@ -35,6 +35,7 @@ static NTSTATUS Handle_UnprotectPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBuffer
 static NTSTATUS Handle_QueryPplProtection(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_RecoverPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_WriteProcessMemory(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_DuplicateHandleKernel(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
 
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -344,15 +345,67 @@ Comm_MessageNotify(
 		break;
 	case CMD_SET_GLOBAL_HOOK_MODE:
 		status = Handle_SetGlobalHookMode(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
-		break; 
-    
+		break;
+	case CMD_DUPLICATE_HANDLE_KERNEL:
+		status = Handle_DuplicateHandleKernel(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+
 	default:
 		break;
 	}
-	 
+
 	if (pPortCtxCallerRef) PortCtx_Dereference(pPortCtxCallerRef);
 	return status;
 }
+	// Duplicate a handle value that belongs to the caller process into the same caller process.
+	// Payload: HANDLE sourceHandle (value meaningful in caller process handle table).
+	// Reply: HANDLE duplicatedHandle (valid in caller process).
+static NTSTATUS Handle_DuplicateHandleKernel(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength)
+{
+	if (!CallerCtx) return STATUS_INVALID_PARAMETER;
+	if (!OutputBuffer || OutputBufferSize < sizeof(HANDLE)) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	if (InputBufferSize < (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(HANDLE))) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+
+	HANDLE srcHandle = NULL;
+	RtlCopyMemory(&srcHandle, msg->m_Data, sizeof(HANDLE));
+	DWORD callerPid = (DWORD)(ULONG_PTR)CallerCtx->m_UserProcessId;
+
+	// Open a handle to the caller process so we can duplicate within its handle table
+	PEPROCESS callerProc = NULL;
+	NTSTATUS st = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)callerPid, &callerProc);
+	if (!NT_SUCCESS(st) || callerProc == NULL) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return st;
+	}
+	HANDLE hCallerProc = NULL;
+	st = ObOpenObjectByPointer(callerProc, OBJ_KERNEL_HANDLE, NULL, PROCESS_ALL_ACCESS, *PsProcessType, KernelMode, &hCallerProc);
+	if (!NT_SUCCESS(st)) {
+		ObDereferenceObject(callerProc);
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return st;
+	}
+
+	HANDLE dup = NULL;
+	st = ZwDuplicateObject(hCallerProc, srcHandle, hCallerProc, &dup, 0, 0, DUPLICATE_SAME_ACCESS);
+
+	ZwClose(hCallerProc);
+	ObDereferenceObject(callerProc);
+
+	if (!NT_SUCCESS(st)) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return st;
+	}
+	RtlCopyMemory(OutputBuffer, &dup, sizeof(HANDLE));
+	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(HANDLE);
+	return STATUS_SUCCESS;
+}
+	 
  
 static NTSTATUS Handle_ForceInject(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
 	UNREFERENCED_PARAMETER(OutputBuffer);

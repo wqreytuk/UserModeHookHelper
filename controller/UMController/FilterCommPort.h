@@ -61,6 +61,8 @@ public:
 	// process. Returns true on success and sets outHandle to the duplicated
 	// handle (caller must CloseHandle when done). Requires caller privileges.
 	bool FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle);
+
+	bool FLTCOMM_DuplicateHandleKernel(HANDLE sourceHandle, HANDLE* outDuplicated);
 	// Write memory into target process using an existing handle
 	bool FLTCOMM_WriteProcessMemory(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T* lpNumberOfBytesWritten);
 	// Request kernel to elevate a process to PPL protection (driver-defined semantics).

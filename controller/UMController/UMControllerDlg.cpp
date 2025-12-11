@@ -359,6 +359,7 @@ BEGIN_MESSAGE_MAP(CUMControllerDlg, CDialogEx)
 	ON_COMMAND(ID_TOOLS_REMOVE_WHITELIST, &CUMControllerDlg::OnRemoveWhitelist)
 	ON_COMMAND(ID_MENU_ELEVATE_TO_PPL, &CUMControllerDlg::OnElevateToPpl)
 	ON_COMMAND(ID_MENU_UNPROTECT_PPL, &CUMControllerDlg::OnUnprotectPpl)
+	ON_COMMAND(ID_MENU_WAKE_UP, &CUMControllerDlg::OnWakeUp)
 END_MESSAGE_MAP()
 // Adapter implementing IHookServices for current process (bridges to ETW tracer)
 class HookServicesAdapter : public IHookServices {
@@ -381,16 +382,6 @@ public:
 	}
 	bool CheckPeArch(const wchar_t* dllPath, bool& is64) override {
 		return Helper::IsPeFile64(dllPath, is64);
-	}
-	bool WriteProcessMemoryWrap(
-		_In_ HANDLE hProcess,
-		_In_ LPVOID lpBaseAddress,
-		_In_reads_bytes_(nSize) LPCVOID lpBuffer,
-		_In_ SIZE_T nSize,
-		_Out_opt_ SIZE_T * lpNumberOfBytesWritten
-	) override {
-		return Helper::WriteProcessMemoryWrap(hProcess, lpBaseAddress, 
-			lpBuffer, nSize, lpNumberOfBytesWritten);
 	}
 	void LogPhlib(const wchar_t* fmt, ...) override {
 		wchar_t buffer[1024];
@@ -500,6 +491,17 @@ public:
 		}
 		return true;
 	}
+	 bool WriteProcessMemoryWrap(
+		 _In_ HANDLE hProcess,
+		 _In_ LPVOID lpBaseAddress,
+		 _In_reads_bytes_(nSize) LPCVOID lpBuffer,
+		 _In_ SIZE_T nSize,
+		 _Out_opt_ SIZE_T * lpNumberOfBytesWritten
+	 ) override {
+
+		 return Helper::WriteProcessMemoryWrap(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesWritten) ? TRUE : FALSE;
+
+	 }
 };
 static HookServicesAdapter g_HookServices; // singleton adapter instance
 
@@ -1784,6 +1786,9 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	menu.CreatePopupMenu();
 	// Temporarily hide Add/Remove Hook actions from context menu
 	// (requested: do not display these menu items)
+	// Wake Up action (always enabled; handler is TODO stub)
+	menu.AppendMenu(MF_STRING, ID_MENU_WAKE_UP, L"Wake Up");
+	menu.AppendMenu(MF_SEPARATOR, 0, L"");
 	menu.AppendMenu(MF_STRING, ID_MENU_INJECT_DLL, L"Inject DLL");
 	// Early-break marking
 	menu.AppendMenu(MF_SEPARATOR, 0, L"");
@@ -1851,6 +1856,28 @@ void CUMControllerDlg::OnNMRClickListProc(NMHDR *pNMHDR, LRESULT *pResult)
 	menu.TrackPopupMenu(TPM_RIGHTBUTTON, point.x, point.y, this);
 
 	*pResult = 0;
+}
+
+void CUMControllerDlg::OnWakeUp()
+{
+	int nItem = m_ProcListCtrl.GetNextItem(-1, LVNI_SELECTED);
+	if (nItem == -1) return;
+	PROC_ITEMDATA packed = (PROC_ITEMDATA)m_ProcListCtrl.GetItemData(nItem);
+	DWORD pid = PID_FROM_ITEMDATA(packed);
+	// TODO: implement actual Wake Up logic later; placeholder stub for now
+	LOG_CTRL_ETW(L"Waking Up requested for pid=%u (TODO handler)\n", pid);
+
+
+	WCHAR event_name[100];
+	_snwprintf_s(event_name, RTL_NUMBER_OF(event_name) - 1, HOOK_DLL_UM_WAKEUP_EVENT L"%d", pid);
+	HANDLE h = OpenEventW(EVENT_MODIFY_STATE, FALSE, event_name);
+	if (h) {
+		SetEvent(h);
+		LOG_CTRL_ETW(L"process Pid=%d should be waken up now\n", pid);
+	}
+	else {
+		LOG_CTRL_ETW(L"failed to set Event=%s to wake Pid=%d up, Error=0x%x\n", event_name, pid, GetLastError());
+	}
 }
 
 void CUMControllerDlg::OnElevateToPpl() {
