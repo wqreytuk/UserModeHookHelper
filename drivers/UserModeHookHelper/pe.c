@@ -141,8 +141,8 @@ PULONGLONG PE_GetSSDT()
 				&& *(PUINT8)((ULONG_PTR)KiSystemCall64 + i + 2) == 0x15)
 			{
 				KiSystemServiceRepeat = KiSystemCall64 + i;
-				DbgPrint("KiSystemCall64           %p \r\n", KiSystemCall64);
-				DbgPrint("KiSystemServiceRepeat    %p \r\n", KiSystemServiceRepeat);
+				Log(L"KiSystemCall64           %p \r\n", KiSystemCall64);
+				Log(L"KiSystemServiceRepeat    %p \r\n", KiSystemServiceRepeat);
 
 				// Convert relative address to absolute address
 				ssdt = (PULONGLONG)(*(PINT32)((ULONG_PTR)KiSystemServiceRepeat + 3) + (ULONG_PTR)KiSystemServiceRepeat + 7);

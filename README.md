@@ -90,7 +90,7 @@ hook成功后会出现在hooklist列表中
 
 # UmhhMananager
 
-UmhhMan是一个cli工具，用于管理本工具中的驱动中的一些注册表项，主要有以下四个功能
+[UmhhMan](https://github.com/wqreytuk/UserModeHookHelper/tree/main/controller/UmhhManager)是一个cli工具，用于管理本工具中的驱动中的一些注册表项，主要有以下四个功能
 
 - 受保护进程ProcessName管理
 - 白名单进程路径NTPath Hash管理

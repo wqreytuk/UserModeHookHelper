@@ -24,6 +24,14 @@ MiniUnload(
 	// free hook list entries (encapsulated in HookList module)
 	HookList_Uninit();
 
+	// Signal unloading to gate work items and broadcasts
+	DriverCtx_SetUnloading(TRUE);
+	// Wait briefly for outstanding work items to drain
+	for (int i = 0; i < 50; ++i) {
+		if (DriverCtx_GetOutstandingWorkItems() == 0) break;
+		LARGE_INTEGER interval; interval.QuadPart = -100000LL; // 10ms
+		KeDelayExecutionThread(KernelMode, FALSE, &interval);
+	}
 	// Unregister sys notify routine
 	PsSetCreateProcessNotifyRoutine(ProcessCrNotify, TRUE);
 	PsRemoveLoadImageNotifyRoutine(LoadImageNotify);

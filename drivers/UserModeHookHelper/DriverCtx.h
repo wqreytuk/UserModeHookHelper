@@ -60,6 +60,12 @@ BOOLEAN DriverCtx_IsProtectedPid(DWORD pid);
 BOOLEAN DriverCtx_IsBlockedDllName(_In_ PFLT_FILE_NAME_INFORMATION nameinfo);
 BOOLEAN DriverCtx_IsProtectedProcessName(_In_ PUNICODE_STRING imageName);
 NTSTATUS DriverCtx_LoadProtectedProcListFromRegistry();
+// Unload coordination (work items + flag)
+VOID DriverCtx_SetUnloading(BOOLEAN Unloading);
+BOOLEAN DriverCtx_IsUnloading();
+VOID DriverCtx_IncWorkItems();
+VOID DriverCtx_DecWorkItems();
+LONG DriverCtx_GetOutstandingWorkItems();
 
 // OS version info stored in driver context
 typedef struct _DRIVERCTX_OSVER {

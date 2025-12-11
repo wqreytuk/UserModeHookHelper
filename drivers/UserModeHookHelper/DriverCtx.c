@@ -25,6 +25,9 @@ static KSPIN_LOCK g_BlockedDllLock;
 static PUNICODE_STRING g_ProtectedProcList = NULL;
 static ULONG g_ProtectedProcCount = 0;
 static KSPIN_LOCK g_ProtectedProcLock;
+// Unload coordination for broadcast work items
+static volatile LONG g_WorkItemsOutstanding = 0;
+static volatile BOOLEAN g_DriverUnloading = FALSE;
 
 static VOID DriverCtx_FreeBlockedDllList() {
     KIRQL irql; KeAcquireSpinLock(&g_BlockedDllLock, &irql);
@@ -277,4 +280,21 @@ BOOLEAN DriverCtx_IsProtectedProcessName(_In_ PUNICODE_STRING imageName) {
     }
     KeReleaseSpinLock(&g_ProtectedProcLock, irql);
     return FALSE;
+}
+
+// Unload coordination API
+VOID DriverCtx_SetUnloading(BOOLEAN Unloading) {
+    g_DriverUnloading = Unloading ? TRUE : FALSE;
+}
+BOOLEAN DriverCtx_IsUnloading() {
+    return g_DriverUnloading ? TRUE : FALSE;
+}
+VOID DriverCtx_IncWorkItems() {
+    InterlockedIncrement(&g_WorkItemsOutstanding);
+}
+VOID DriverCtx_DecWorkItems() {
+    InterlockedDecrement(&g_WorkItemsOutstanding);
+}
+LONG DriverCtx_GetOutstandingWorkItems() {
+    return g_WorkItemsOutstanding;
 }

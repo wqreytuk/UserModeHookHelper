@@ -16,19 +16,49 @@ typedef struct _UNICODE_STRING
 } UNICODE_STRING, *PUNICODE_STRING;
 // Resolve DOS path to NT path using ntdll's RtlDosPathNameToNtPathName_U
 typedef BOOLEAN (NTAPI *PFN_RtlDosPathNameToNtPathName_U)(PCWSTR DosName, PUNICODE_STRING NtName, PWSTR *FilePart, PVOID Reserved);
-static bool DosToNtPath(const std::wstring& dos, std::wstring& outNt) {
-	HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-	if (!ntdll) ntdll = LoadLibraryW(L"ntdll.dll");
-	if (!ntdll) return false;
-	auto pfn = (PFN_RtlDosPathNameToNtPathName_U)GetProcAddress(ntdll, "RtlDosPathNameToNtPathName_U");
-	if (!pfn) return false;
-	UNICODE_STRING nt{}; if (!pfn(dos.c_str(), &nt, NULL, NULL)) return false;
-	outNt.assign(nt.Buffer, nt.Length/sizeof(wchar_t));
-	// Free the buffer allocated by Rtl
-	typedef VOID (NTAPI *PFN_RtlFreeUnicodeString)(PUNICODE_STRING String);
-	auto pfree = (PFN_RtlFreeUnicodeString)GetProcAddress(ntdll, "RtlFreeUnicodeString");
-	if (pfree) pfree(&nt);
-	return true;
+static	bool DosToNtPath(const std::wstring& dosPath, std::wstring& outNtPath) {
+		if (dosPath.empty()) return false;
+
+		// Prefer least-privilege handle for path resolution: request only
+		// FILE_READ_ATTRIBUTES and include BACKUP_SEMANTICS to allow directories.
+		DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+		DWORD flags = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS;
+		HANDLE h = CreateFileW(dosPath.c_str(), FILE_READ_ATTRIBUTES, share, NULL, OPEN_EXISTING, flags, NULL);
+		if (h == INVALID_HANDLE_VALUE) {
+			// Fallback to GENERIC_READ only if necessary
+			h = CreateFileW(dosPath.c_str(), GENERIC_READ, share, NULL, OPEN_EXISTING, flags, NULL);
+			if (h == INVALID_HANDLE_VALUE) return false;
+		}
+
+		WCHAR finalPath[MAX_PATH * 2];
+		DWORD len = GetFinalPathNameByHandleW(h, finalPath, _countof(finalPath), FILE_NAME_NORMALIZED);
+		CloseHandle(h);
+		if (len == 0 || len >= _countof(finalPath)) return false;
+
+		std::wstring fp(finalPath);
+		// Strip the Windows extended path prefix if present
+		const std::wstring prefix = L"\\\\?\\";
+		if (fp.rfind(prefix, 0) == 0) fp = fp.substr(prefix.size());
+
+		// If path starts with drive letter (e.g., C:\), map it to device name
+		if (fp.size() >= 2 && fp[1] == L':') {
+			WCHAR drive[] = L"X:";
+			drive[0] = fp[0];
+			WCHAR deviceName[32768];
+			DWORD rc = QueryDosDeviceW(drive, deviceName, _countof(deviceName));
+			if (rc == 0) {
+				outNtPath = std::wstring(L"\\??\\") + fp;
+				return true;
+			}
+			std::wstring device(deviceName);
+			std::wstring rest = fp.substr(2); // includes leading backslash
+			outNtPath = device + rest;
+			return true;
+		}
+
+		// Otherwise assume already an NT path
+		outNtPath = fp;
+		return true;
 }
 
 // FNV-1a 64-bit over UTF-16 bytes

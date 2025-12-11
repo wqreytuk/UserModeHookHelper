@@ -55,6 +55,7 @@ typedef struct _BROADCAST_WORK {
 	ULONG MsgSize;
 	PCOMM_CONTEXT* Array;
 	ULONG Count;
+	PFLT_FILTER FilterRef; // keep filter referenced during work
 } BROADCAST_WORK, *PBROADCAST_WORK;
 
 // Work item to defer EPROCESS field recovery (Protection / SectionSignatureLevel)
@@ -99,6 +100,15 @@ BroadcastWorkRoutine(
 ) {
 	PBROADCAST_WORK w = (PBROADCAST_WORK)Context;
 	if (!w) return;
+	// If driver is unloading or server port is gone, abort early.
+	if (DriverCtx_IsUnloading() || DriverCtx_GetServerPort() == NULL) {
+		PortCtx_FreeSnapshot(w->Array, w->Count);
+		ExFreePoolWithTag(w->Msg, tag_port);
+		ExFreePoolWithTag(w, tag_port);
+		if (w->FilterRef) FltObjectDereference(w->FilterRef);
+		DriverCtx_DecWorkItems();
+		return;
+	}
 
 	for (ULONG j = 0; j < w->Count; ++j) {
 		PCOMM_CONTEXT c = w->Array[j];
@@ -119,6 +129,8 @@ BroadcastWorkRoutine(
 	PortCtx_FreeSnapshot(w->Array, w->Count);
 	ExFreePoolWithTag(w->Msg, tag_port);
 	ExFreePoolWithTag(w, tag_port);
+	if (w->FilterRef) FltObjectDereference(w->FilterRef);
+	DriverCtx_DecWorkItems();
 }
 
 
@@ -509,11 +521,14 @@ NTSTATUS Comm_BroadcastProcessNotify(DWORD ProcessId, BOOLEAN Create, PULONG out
 					work->Array = arr; // transfer ownership
 					work->Count = count;
 
+					// Keep filter alive during work by referencing it
+					work->FilterRef = DriverCtx_GetFilter();
+					if (work->FilterRef) {
+						FltObjectReference(work->FilterRef);
+					}
 					// Worker routine: iterate snapshot and call FltSendMessage from
-					// system worker context. Defined as local lambda-like function
-					// via a static routine below.
+					// system worker context.
 					ExInitializeWorkItem(&work->WorkItem, BroadcastWorkRoutine, work);
-
 					ExQueueWorkItem(&work->WorkItem, DelayedWorkQueue);
 
 					// Prevent the current function from freeing resources below.
@@ -590,6 +605,11 @@ NTSTATUS Comm_BroadcastApcQueued(DWORD ProcessId, PULONG outNotifiedCount) {
 					work->Array = arr;
 					work->Count = count;
 
+					DriverCtx_IncWorkItems();
+					work->FilterRef = DriverCtx_GetFilter();
+					if (work->FilterRef) {
+						FltObjectReference(work->FilterRef);
+					}
 					ExInitializeWorkItem(&work->WorkItem, BroadcastWorkRoutine, work);
 					ExQueueWorkItem(&work->WorkItem, DelayedWorkQueue);
 
