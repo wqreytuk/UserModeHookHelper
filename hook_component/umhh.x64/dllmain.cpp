@@ -67,6 +67,7 @@ typedef ULONG_PTR(NTAPI *PFN_EntryFuncProto)(
 	ULONG_PTR a8
 	);
 PFN_EntryFuncProto original_entry = nullptr;
+DWORD64 trampoline_back = NULL;
 ULONG_PTR PutIntoSleep(ULONG_PTR a1,
 	ULONG_PTR a2,
 	ULONG_PTR a3,
@@ -122,7 +123,7 @@ ULONG_PTR PutIntoSleep(ULONG_PTR a1,
 		// this is an one time event, no need to reset
 	}
 
-	return NULL;
+	return ((PFN_EntryFuncProto)(ULONG_PTR)trampoline_back)(a1,a2,a3,a4,a5,a6,a7,a8);
 }
 inline LPVOID GetPEModuleBase()
 {
@@ -821,7 +822,8 @@ OnProcessAttach(
 			DetourTransactionBegin();
 			{
 				original_entry = (PFN_EntryFuncProto)EntryAddr;
-				DetourAttach((PVOID*)&original_entry, PutIntoSleep);
+				
+				DetourAttachEx((PVOID*)&original_entry, PutIntoSleep,(PDETOUR_TRAMPOLINE*)&trampoline_back,NULL,NULL);
 			}
 			DetourTransactionCommit();
 		}
