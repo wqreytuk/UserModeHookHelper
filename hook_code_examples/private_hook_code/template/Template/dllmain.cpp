@@ -1,9 +1,9 @@
-// dllmain.cpp : Defines the entry point for the DLL application.
+﻿// dllmain.cpp : Defines the entry point for the DLL application.
 #include "pch.h"
 #include <stdio.h>  
 
 #include <evntprov.h>
-#include "../HookCodeLib/HookCodeLib.h"
+#include "HookCodeLib.h"
 static const GUID ProviderGUID =
 { 0x3da12c0, 0x27c2, 0x4d75, { 0x95, 0x3a, 0x2c, 0x4e, 0x66, 0xa3, 0x74, 0x64 } };
 REGHANDLE g_ProviderHandle;
@@ -21,18 +21,18 @@ void Log(_In_ PCWSTR Format, ...) {
 	EventWriteString(g_ProviderHandle, 0, 0, Prefixed);
 }
 class HookServicesAdapter : public IHookServices {
-	 VOID HKLog(const wchar_t* fmt, ...) override{
-		 WCHAR Buffer[1024];
-		 va_list args;
-		 va_start(args, fmt);
-		 _vsnwprintf_s(Buffer, RTL_NUMBER_OF(Buffer) - 1, fmt, args);
-		 va_end(args);
-		 Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0';
+	VOID HKLog(const wchar_t* fmt, ...) override {
+		WCHAR Buffer[1024];
+		va_list args;
+		va_start(args, fmt);
+		_vsnwprintf_s(Buffer, RTL_NUMBER_OF(Buffer) - 1, fmt, args);
+		va_end(args);
+		Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0';
 
-		 WCHAR Prefixed[1100];
-		 _snwprintf_s(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[HCLib]      %s", Buffer);
-		 Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
-		 EventWriteString(g_ProviderHandle, 0, 0, Prefixed);
+		WCHAR Prefixed[1100];
+		_snwprintf_s(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[HCLib]      %s", Buffer);
+		Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
+		EventWriteString(g_ProviderHandle, 0, 0, Prefixed);
 	}
 };
 static HookServicesAdapter g_HookServices; // singleton adapter instance
