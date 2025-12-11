@@ -123,8 +123,12 @@ DriverEntry(
 		Log(L"failed to get SSDT\n");
 		return STATUS_UNSUCCESSFUL;
 	}
+	// initialize DriverCtx locks
+	DriverCtx_InitLocksOnce();
 	// load third party dll black list
 	DriverCtx_LoadBlockedDllListFromRegistry();
+	// load protected process names
+	DriverCtx_LoadProtectedProcListFromRegistry();
 
 	// initialize modules
 	HookList_Init();

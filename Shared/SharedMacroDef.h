@@ -81,3 +81,7 @@ typedef struct _PH_MODULE_LIST_NODE {
 // Block list value names (REG_MULTI_SZ) under REG_PERSIST_SUBKEY
 #define REG_BLOCKED_PROCESS_NAME L"BlockedProcessName"
 #define REG_BLOCKED_DLL_NAME     L"BlockedDllName"
+// Whitelist hash values for ObCallback (REG_MULTI_SZ of hex hashes)
+#define REG_WHITELIST_HASHES     L"WhitelistHashes"
+// Protected process names (final component, REG_MULTI_SZ)
+#define REG_PROTECTED_PROCESS_NAME L"ProtectedProcessName"

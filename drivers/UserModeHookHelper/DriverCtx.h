@@ -49,7 +49,7 @@ VOID DriverCtx_ClearUserDir(VOID);
 // Global hook mode state stored in DriverCtx (avoid raw globals)
 VOID DriverCtx_SetGlobalHookMode(BOOLEAN Enabled);
 BOOLEAN DriverCtx_GetGlobalHookMode(VOID);
-
+ VOID DriverCtx_InitLocksOnce();
 // Track controller process id (UMController.exe)
 // Protected processes (multiple PIDs)
 VOID DriverCtx_AddProtectedPid(DWORD pid);
@@ -58,6 +58,8 @@ BOOLEAN DriverCtx_IsProtectedPid(DWORD pid);
 
 // DLL block list lookup (final component case-insensitive)
 BOOLEAN DriverCtx_IsBlockedDllName(_In_ PFLT_FILE_NAME_INFORMATION nameinfo);
+BOOLEAN DriverCtx_IsProtectedProcessName(_In_ PUNICODE_STRING imageName);
+NTSTATUS DriverCtx_LoadProtectedProcListFromRegistry();
 
 // OS version info stored in driver context
 typedef struct _DRIVERCTX_OSVER {

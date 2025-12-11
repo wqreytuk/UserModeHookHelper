@@ -63,11 +63,8 @@ ProcessCrNotify(
 	if (imageName) {
 		// only queue injection when create process
 		if (process && Create) {
-			// Record controller PID if UMController.exe or EtwTracer.exe starts
-			UNICODE_STRING triggerController = RTL_CONSTANT_STRING(L"UMController.exe");
-			UNICODE_STRING triggerEtw = RTL_CONSTANT_STRING(L"EtwTracer.exe");
-			if (SL_RtlSuffixUnicodeString(&triggerController, imageName, TRUE) ||
-				SL_RtlSuffixUnicodeString(&triggerEtw, imageName, TRUE)) {
+			// Record protected PIDs based on registry-loaded names
+			if (DriverCtx_IsProtectedProcessName(imageName)) {
 				DriverCtx_AddProtectedPid(pid);
 			}
 			Inject_CheckAndQueue(imageName, process,FALSE);

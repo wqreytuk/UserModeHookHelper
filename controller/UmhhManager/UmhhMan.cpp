@@ -8,6 +8,39 @@
 #include <sstream>
 #include <atlbase.h>
 #include "../../Shared/SharedMacroDef.h"
+typedef struct _UNICODE_STRING
+{
+	USHORT Length;
+	USHORT MaximumLength;
+	_Field_size_bytes_part_(MaximumLength, Length) PWCH Buffer;
+} UNICODE_STRING, *PUNICODE_STRING;
+// Resolve DOS path to NT path using ntdll's RtlDosPathNameToNtPathName_U
+typedef BOOLEAN (NTAPI *PFN_RtlDosPathNameToNtPathName_U)(PCWSTR DosName, PUNICODE_STRING NtName, PWSTR *FilePart, PVOID Reserved);
+static bool DosToNtPath(const std::wstring& dos, std::wstring& outNt) {
+	HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+	if (!ntdll) ntdll = LoadLibraryW(L"ntdll.dll");
+	if (!ntdll) return false;
+	auto pfn = (PFN_RtlDosPathNameToNtPathName_U)GetProcAddress(ntdll, "RtlDosPathNameToNtPathName_U");
+	if (!pfn) return false;
+	UNICODE_STRING nt{}; if (!pfn(dos.c_str(), &nt, NULL, NULL)) return false;
+	outNt.assign(nt.Buffer, nt.Length/sizeof(wchar_t));
+	// Free the buffer allocated by Rtl
+	typedef VOID (NTAPI *PFN_RtlFreeUnicodeString)(PUNICODE_STRING String);
+	auto pfree = (PFN_RtlFreeUnicodeString)GetProcAddress(ntdll, "RtlFreeUnicodeString");
+	if (pfree) pfree(&nt);
+	return true;
+}
+
+// FNV-1a 64-bit over UTF-16 bytes
+static unsigned long long ComputeNtPathHash(const std::wstring& ntPath) {
+	const unsigned long long FNV_offset = 14695981039346656037ULL;
+	const unsigned long long FNV_prime = 1099511628211ULL;
+	unsigned long long h = FNV_offset;
+	const BYTE* bytes = reinterpret_cast<const BYTE*>(ntPath.c_str());
+	size_t len = ntPath.size() * sizeof(wchar_t);
+	for (size_t i = 0; i < len; ++i) { h ^= (unsigned long long)bytes[i]; h *= FNV_prime; }
+	return h;
+}
 
 static void Trim(std::wstring& s) {
 	auto notspace = [](wchar_t c) { return !iswspace(c); };
@@ -67,14 +100,21 @@ static bool ClearValues(const std::wstring& valueName) {
 
 static void PrintUsage() {
 	std::wcout << L"Usage:\n"
-		L"  blman process -a name1[,name2,...]   Append process names\n"
+		L"  blman process -a name1[,name2,...]   Append blocked process names\n"
 		L"  blman process -d name1[,name2,...]   Delete process names\n"
 		L"  blman process -c                    Clear all process names\n"
 		L"  blman process -l                    List process names\n"
 		L"  blman dll     -a name1[,name2,...]   Append dll names\n"
 		L"  blman dll     -d name1[,name2,...]   Delete dll names\n"
 		L"  blman dll     -c                    Clear all dll names\n"
-		L"  blman dll     -l                    List dll names\n";
+		L"  blman dll     -l                    List dll names\n"
+		L"  blman whitelist -a pePath[,pePath...]  Add PE NT-path hashes to WhitelistHashes\n"
+		L"  blman whitelist -d hexHash[,hexHash...] Delete hashes from WhitelistHashes\n"
+		L"  blman whitelist -l                     List WhitelistHashes\n"
+		L"  blman prot -a name1[,name2,...]        Append protected process names\n"
+		L"  blman prot -d name1[,name2,...]        Delete protected process names\n"
+		L"  blman prot -c                           Clear protected process names\n"
+		L"  blman prot -l                           List protected process names\n";
 }
 
 static bool IsProcessRunning(const wchar_t* exeName, DWORD& outPid) {
@@ -98,16 +138,26 @@ static bool RestartService(const wchar_t* svcName) {
 	SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
 	if (!scm) return false;
 	SC_HANDLE svc = OpenServiceW(scm, svcName, SERVICE_STOP | SERVICE_START | SERVICE_QUERY_STATUS);
-	if (!svc) { CloseServiceHandle(scm); return false; }
+	if (!svc) {
+		CloseServiceHandle(scm);
+		// consider succeed if service not exist
+		return true; 
+	}
 	SERVICE_STATUS_PROCESS ssp{}; DWORD bytes = 0;
 	if (QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&ssp), sizeof(ssp), &bytes)) {
 		if (ssp.dwCurrentState != SERVICE_STOPPED && ssp.dwCurrentState != SERVICE_STOP_PENDING) {
 			SERVICE_STATUS ss{}; ControlService(svc, SERVICE_CONTROL_STOP, &ss);
-			for (int i = 0; i < 50; ++i) { Sleep(100); QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&ssp), sizeof(ssp), &bytes); if (ssp.dwCurrentState == SERVICE_STOPPED) break; }
+			for (int i = 0; i < 50; ++i) {
+				Sleep(100);
+				QueryServiceStatusEx(svc, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&ssp), sizeof(ssp), &bytes); 
+				if (ssp.dwCurrentState == SERVICE_STOPPED) 
+					break; 
+			}
 		}
 	}
 	BOOL startOk = StartServiceW(svc, 0, nullptr);
-	CloseServiceHandle(svc); CloseServiceHandle(scm);
+	CloseServiceHandle(svc); 
+	CloseServiceHandle(scm);
 	return startOk == TRUE;
 }
 
@@ -118,15 +168,29 @@ int wmain(int argc, wchar_t* argv[]) {
 	std::wstring names = (argc >= 4) ? argv[3] : L"";
 	std::vector<std::wstring> list = SplitNames(names);
 
-	std::wstring valueName;
+	std::wstring valueName; bool isWhitelist = false; bool isProt = false;
 	if (_wcsicmp(category.c_str(), L"process") == 0) valueName = REG_BLOCKED_PROCESS_NAME;
 	else if (_wcsicmp(category.c_str(), L"dll") == 0) valueName = REG_BLOCKED_DLL_NAME;
+	else if (_wcsicmp(category.c_str(), L"whitelist") == 0) { valueName = REG_WHITELIST_HASHES; isWhitelist = true; }
+	else if (_wcsicmp(category.c_str(), L"prot") == 0) { valueName = REG_PROTECTED_PROCESS_NAME; isProt = true; }
 	else { PrintUsage(); return 1; }
 
 	bool ok = false;
 	if (_wcsicmp(option.c_str(), L"-a") == 0) {
 		if (list.empty()) { PrintUsage(); return 1; }
-		ok = AppendValues(valueName, list);
+		if (isWhitelist) {
+			std::vector<std::wstring> hashes;
+			for (auto &p : list) {
+				std::wstring nt; if (!DosToNtPath(p, nt)) { std::wcerr << L"Failed to convert to NT path: " << p << std::endl; continue; }
+				unsigned long long h = ComputeNtPathHash(nt);
+				wchar_t buf[32]; swprintf(buf, 32, L"%llx", h);
+				hashes.push_back(buf);
+			}
+			ok = AppendValues(valueName, hashes);
+		}
+		else {
+			ok = AppendValues(valueName, list);
+		}
 	}
 	else if (_wcsicmp(option.c_str(), L"-d") == 0) {
 		if (list.empty()) { PrintUsage(); return 1; }
@@ -165,11 +229,14 @@ int wmain(int argc, wchar_t* argv[]) {
 	bool obOk = RestartService(UMHH_OB_CALLBACK_SERVICE_NAME);
 	bool ctrlOk = RestartService(SERVICE_NAME);
 	if (!obOk || !ctrlOk) {
+		if (!obOk)
+			std::wcerr << UMHH_OB_CALLBACK_SERVICE_NAME << L" failed to resstart" << std::endl;
+		if (!ctrlOk)
+			std::wcerr << SERVICE_NAME << L" failed to resstart" << std::endl;
 		std::wcerr << L"Service restart failed. Ensure you have admin privileges." << std::endl;
 		return 4;
 	}
 
 	std::wcout << L"Done. Services restarted successfully." << std::endl;
 	return 0;
-
 }

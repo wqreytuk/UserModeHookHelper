@@ -85,3 +85,16 @@ hook成功后会出现在hooklist列表中
 参考[AVProcessHandleLocater](https://github.com/wqreytuk/UserModeHookHelper/tree/main/plugins/AVProcessHandleLocater)
 
 该插件可以搜索当前系统中可以获取目标进程高权限句柄的进程
+
+
+
+# UmhhMananager
+
+UmhhMan是一个cli工具，用于管理本工具中的驱动中的一些注册表项，主要有以下四个功能
+
+- 受保护进程ProcessName管理
+- 白名单进程路径NTPath Hash管理
+- Blocked ProcessName管理（使用该功能需要先开启Self Defense）
+  - 该列表中的进程尝试访问白名单进程时权限降低为0x1000（PROCESS_QUERY_LIMITED_INFORMATION）
+- Blocked DLL管理
+  - 该列表中的dll将被禁止加载到受保护进程
