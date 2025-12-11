@@ -73,6 +73,7 @@ namespace HookCode {
 					DWORD n = GetFinalPathNameByHandleW(hTargetHandle, pathBuf, _countof(pathBuf), FILE_NAME_NORMALIZED);
 					if (n > 0 && n < _countof(pathBuf)) name.assign(pathBuf);
 				}
+				HKLog(L"resolved Name=%s for Handle=0x%x\n", name.c_str(), hTargetHandle);
 				return name;
 			}
 			// Otherwise duplicate into this process
@@ -90,6 +91,22 @@ namespace HookCode {
 			}
 			CloseHandle(dup);
 			return name;
+		}
+	}
+	namespace STRLIB {
+		// Check suffix in std::wstring, optional case-insensitive
+		bool WStringEndsWith(const std::wstring& haystack, const std::wstring& suffix, bool ignoreCase) {
+			if (suffix.size() > haystack.size()) return false;
+			size_t start = haystack.size() - suffix.size();
+			if (!ignoreCase) {
+				return std::equal(suffix.begin(), suffix.end(), haystack.begin() + start);
+			}
+			for (size_t i = 0; i < suffix.size(); ++i) {
+				wchar_t a = haystack[start + i];
+				wchar_t b = suffix[i];
+				if (towlower(a) != towlower(b)) return false;
+			}
+			return true;
 		}
 	}
 }

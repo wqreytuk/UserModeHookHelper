@@ -49,7 +49,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HookCodeLib", "hook_compone
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "private_hook_code", "private_hook_code", "{00840967-81F7-4977-9B52-F03ABFDB2F9F}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Template", "hook_code_examples\private_hook_code\template\Template\Template.vcxproj", "{B09C491F-0129-4689-8B10-AEBA2E3988CA}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Template", "hook_code_examples\private_hook_code\private_code\template\Template.vcxproj", "{B09C491F-0129-4689-8B10-AEBA2E3988CA}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

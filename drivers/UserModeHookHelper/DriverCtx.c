@@ -13,14 +13,14 @@ static PWSTR s_UserDir = NULL;
 static BOOLEAN s_GlobalHookMode = FALSE;
 static DWORD64 s_ssdt;
 static DRIVERCTX_OSVER s_OsVer = {0}; 
-static DWORD s_ControllerPid = 0;
+// Protected process PIDs (small fixed array)
+static DWORD s_ProtectedPids[DRIVERCTX_MAX_PROTECTED_PIDS] = {0};
+static KSPIN_LOCK s_ProtectedPidLock;
 // Registry-backed blocked DLL list
 static PUNICODE_STRING g_BlockedDllList = NULL;
 static ULONG g_BlockedDllCount = 0;
-static KSPIN_LOCK g_BlockedDllLock;
 
 static VOID DriverCtx_FreeBlockedDllList() {
-    KIRQL irql; KeAcquireSpinLock(&g_BlockedDllLock, &irql);
     if (g_BlockedDllList) {
         for (ULONG i = 0; i < g_BlockedDllCount; ++i) {
             if (g_BlockedDllList[i].Buffer) ExFreePoolWithTag(g_BlockedDllList[i].Buffer, tag_ctx);
@@ -28,7 +28,6 @@ static VOID DriverCtx_FreeBlockedDllList() {
         ExFreePoolWithTag(g_BlockedDllList, tag_ctx);
         g_BlockedDllList = NULL; g_BlockedDllCount = 0;
     }
-    KeReleaseSpinLock(&g_BlockedDllLock, irql);
 }
 
 NTSTATUS DriverCtx_LoadBlockedDllListFromRegistry() {
@@ -64,14 +63,12 @@ NTSTATUS DriverCtx_LoadBlockedDllListFromRegistry() {
         idx++; p += u.Length / sizeof(WCHAR) + 1;
     }
     ExFreePoolWithTag(info, tag_ctx); ZwClose(hKey);
-    // Swap under lock
-    KIRQL irql; KeAcquireSpinLock(&g_BlockedDllLock, &irql);
+    // Set-once assignment (no hot updates during runtime)
     if (g_BlockedDllList) {
         for (ULONG i = 0; i < g_BlockedDllCount; ++i) if (g_BlockedDllList[i].Buffer) ExFreePoolWithTag(g_BlockedDllList[i].Buffer, tag_ctx);
         ExFreePoolWithTag(g_BlockedDllList, tag_ctx);
     }
     g_BlockedDllList = arr; g_BlockedDllCount = count;
-    KeReleaseSpinLock(&g_BlockedDllLock, irql);
     return STATUS_SUCCESS;
 }
 VOID DriverCtx_SetFilter(PFLT_FILTER Filter) {
@@ -130,12 +127,32 @@ BOOLEAN DriverCtx_GetGlobalHookMode(VOID) {
     return s_GlobalHookMode;
 }
 
-VOID DriverCtx_SetControllerPid(DWORD Pid) {
-    s_ControllerPid = Pid;
+VOID DriverCtx_AddProtectedPid(DWORD pid) {
+    KIRQL irql; KeAcquireSpinLock(&s_ProtectedPidLock, &irql);
+    for (int i = 0; i < DRIVERCTX_MAX_PROTECTED_PIDS; ++i) {
+        if (s_ProtectedPids[i] == pid) { KeReleaseSpinLock(&s_ProtectedPidLock, irql); return; }
+    }
+    for (int i = 0; i < DRIVERCTX_MAX_PROTECTED_PIDS; ++i) {
+        if (s_ProtectedPids[i] == 0) { s_ProtectedPids[i] = pid; break; }
+    }
+    KeReleaseSpinLock(&s_ProtectedPidLock, irql);
 }
 
-DWORD DriverCtx_GetControllerPid(VOID) {
-    return s_ControllerPid;
+VOID DriverCtx_RemoveProtectedPid(DWORD pid) {
+    KIRQL irql; KeAcquireSpinLock(&s_ProtectedPidLock, &irql);
+    for (int i = 0; i < DRIVERCTX_MAX_PROTECTED_PIDS; ++i) {
+        if (s_ProtectedPids[i] == pid) { s_ProtectedPids[i] = 0; break; }
+    }
+    KeReleaseSpinLock(&s_ProtectedPidLock, irql);
+}
+
+BOOLEAN DriverCtx_IsProtectedPid(DWORD pid) {
+    KIRQL irql; KeAcquireSpinLock(&s_ProtectedPidLock, &irql);
+    for (int i = 0; i < DRIVERCTX_MAX_PROTECTED_PIDS; ++i) {
+        if (s_ProtectedPids[i] == pid) { KeReleaseSpinLock(&s_ProtectedPidLock, irql); return TRUE; }
+    }
+    KeReleaseSpinLock(&s_ProtectedPidLock, irql);
+    return FALSE;
 }
 
 VOID DriverCtx_SetOsVersion(ULONG Major, ULONG Minor, ULONG Build) {
@@ -152,13 +169,10 @@ DRIVERCTX_OSVER DriverCtx_GetOsVersion(VOID) {
 BOOLEAN DriverCtx_IsBlockedDllName(_In_ PFLT_FILE_NAME_INFORMATION nameInfo) {
 	if (nameInfo == NULL) return FALSE;
 
-    KIRQL irql; KeAcquireSpinLock(&g_BlockedDllLock, &irql);
     for (ULONG i = 0; i < g_BlockedDllCount; ++i) {
         if (SL_RtlSuffixUnicodeString(&g_BlockedDllList[i], &nameInfo->FinalComponent, TRUE)) {
-            KeReleaseSpinLock(&g_BlockedDllLock, irql);
             return TRUE;
         }
     }
-    KeReleaseSpinLock(&g_BlockedDllLock, irql);
     return FALSE;
 }

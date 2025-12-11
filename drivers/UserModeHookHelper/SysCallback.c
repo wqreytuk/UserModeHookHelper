@@ -63,10 +63,12 @@ ProcessCrNotify(
 	if (imageName) {
 		// only queue injection when create process
 		if (process && Create) {
-			// Record controller PID if UMController.exe starts
-			UNICODE_STRING triggerImage = RTL_CONSTANT_STRING(L"UMController.exe");
-			if (SL_RtlSuffixUnicodeString(&triggerImage, imageName, TRUE)) {
-				DriverCtx_SetControllerPid(pid);
+			// Record controller PID if UMController.exe or EtwTracer.exe starts
+			UNICODE_STRING triggerController = RTL_CONSTANT_STRING(L"UMController.exe");
+			UNICODE_STRING triggerEtw = RTL_CONSTANT_STRING(L"EtwTracer.exe");
+			if (SL_RtlSuffixUnicodeString(&triggerController, imageName, TRUE) ||
+				SL_RtlSuffixUnicodeString(&triggerEtw, imageName, TRUE)) {
+				DriverCtx_AddProtectedPid(pid);
 			}
 			Inject_CheckAndQueue(imageName, process,FALSE);
 		}
@@ -76,9 +78,7 @@ ProcessCrNotify(
 	if (!Create) {
 		// Clear controller PID if it exits
 		DWORD currentPid = (DWORD)(ULONG_PTR)ProcessId;
-		if (DriverCtx_GetControllerPid() == currentPid) {
-			DriverCtx_SetControllerPid(0);
-		}
+		DriverCtx_RemoveProtectedPid(currentPid);
 		Inject_RemovePendingInject(process);
 	}
 

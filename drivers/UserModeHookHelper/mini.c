@@ -53,9 +53,9 @@ MiniPreCreateCallback(
 {
 	UNREFERENCED_PARAMETER(CompletionContext);
 	if (!Data || !FltObjects) return FLT_PREOP_SUCCESS_NO_CALLBACK;
-	// Only block for the controller process
+	// Only block for protected processes
 	DWORD curPid = (DWORD)(ULONG_PTR)PsGetCurrentProcessId();
-	if (DriverCtx_GetControllerPid() == 0 || DriverCtx_GetControllerPid() != curPid) {
+	if (!DriverCtx_IsProtectedPid(curPid)) {
 		return FLT_PREOP_SUCCESS_NO_CALLBACK;
 	}
 	// Resolve name and set per-handle context to avoid future name lookups

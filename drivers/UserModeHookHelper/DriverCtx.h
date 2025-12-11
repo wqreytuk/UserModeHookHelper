@@ -1,3 +1,5 @@
+// Maximum number of protected PIDs to track concurrently
+#define DRIVERCTX_MAX_PROTECTED_PIDS 8
 #ifndef DRIVERCTX_H
 #define DRIVERCTX_H
 
@@ -49,8 +51,10 @@ VOID DriverCtx_SetGlobalHookMode(BOOLEAN Enabled);
 BOOLEAN DriverCtx_GetGlobalHookMode(VOID);
 
 // Track controller process id (UMController.exe)
-VOID DriverCtx_SetControllerPid(DWORD Pid);
-DWORD DriverCtx_GetControllerPid(VOID);
+// Protected processes (multiple PIDs)
+VOID DriverCtx_AddProtectedPid(DWORD pid);
+VOID DriverCtx_RemoveProtectedPid(DWORD pid);
+BOOLEAN DriverCtx_IsProtectedPid(DWORD pid);
 
 // DLL block list lookup (final component case-insensitive)
 BOOLEAN DriverCtx_IsBlockedDllName(_In_ PFLT_FILE_NAME_INFORMATION nameinfo);

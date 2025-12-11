@@ -81,3 +81,4 @@ test_file_cmd.txt
 examples/
 ARM
 
+/hook_code_examples/private_hook_code/private_code
