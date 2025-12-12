@@ -15,6 +15,7 @@
 #include "../../Shared/SharedMacroDef.h"
 #include "../ProcessHackerLib/phlib_expose.h"
 #include <psapi.h>
+#include <algorithm>
 static std::wstring Hex64(ULONGLONG v) {
 	wchar_t buf[32];
 	_snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%llX", v);
@@ -61,6 +62,25 @@ BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
 END_MESSAGE_MAP()
 
 void HookProcDlg::OnBnClickedApplyHookSequence() {
+	// If the target process no longer exists, close this modeless dialog to avoid acting on a dead PID.
+	bool procFound = false;
+	bool rehook = false;
+	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (hSnap != INVALID_HANDLE_VALUE) {
+		PROCESSENTRY32 pe = { sizeof(pe) };
+		if (Process32First(hSnap, &pe)) {
+			do {
+				if ((DWORD)pe.th32ProcessID == m_pid) { procFound = true; break; }
+			} while (Process32Next(hSnap, &pe));
+		}
+		CloseHandle(hSnap);
+	}
+	if (!procFound) {
+		MessageBox(L"Target process does not appear to be running. Closing dialog.", L"Hook", MB_ICONWARNING);
+		// Destroy the dialog window; parent will be notified in OnDestroy and will delete this object.
+		DestroyWindow();
+		return;
+	}
 	// Browse for a .hooseq file; simple INI-like format
 	// Use '|' delimited filter string (MFC auto-converts to double-null)
 	CString filter = L"Hook Sequence (*.hookseq)|*.hookseq|All Files (*.*)|*.*||";
@@ -198,6 +218,7 @@ void HookProcDlg::OnBnClickedApplyHookSequence() {
 	return;
 RollBack:
 	{
+		std::vector<int> item_to_remove;
 		for (int i = 0; i < m_HookList.GetItemCount(); ++i) {
 			HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
 			if (!hr) {
@@ -222,15 +243,45 @@ RollBack:
 				DWORD64 addr = offVal + base;
 
 				if (hr->address == addr) {
-					if (!HookCore::RemoveHook(m_pid, addr, m_services, hr->id,
+				
+					item_to_remove.push_back(i);
+				}
+			}
+		}
+		if (!item_to_remove.empty()) {
+			// Sort indices descending to avoid shift issues
+			std::sort(item_to_remove.rbegin(), item_to_remove.rend());
+
+			for (size_t k = 0; k < item_to_remove.size(); ++k) {
+				int idx = item_to_remove[k];
+				HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(idx));
+				if (hr) {
+					if (m_services) {
+						FILETIME createTime{ 0,0 }; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
+						if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
+						DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
+						(void)m_services->RemoveProcHookEntry(m_pid, hi, lo, hr->id);
+					}
+					if (!HookCore::RemoveHook(m_pid, hr->address, m_services, hr->id,
 						hr->ori_asm_code_len, (PVOID)hr->trampoline_pit)) {
-						LOG_UI(m_services, L"failed to remove hook at Addr=0x%p\n", addr);
+						LOG_UI(m_services, L"failed to remove hook at Addr=0x%p\n", hr->address);
 						MessageBox(L"Failed to remove hook first before rehooking the same address", L"Hook",
 							MB_OK | MB_ICONERROR);
 						return;
 					}
+					delete hr;
 				}
+				m_HookList.DeleteItem(idx);
 			}
+
+			// Recompute nextHookId once from remaining items
+			m_nextHookId = 1;
+			for (int i = 0; i < m_HookList.GetItemCount(); ++i) {
+				HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
+				if (r && r->id >= m_nextHookId)
+					m_nextHookId = r->id + 1;
+			}
+
 		}
 	}
 }
@@ -665,12 +716,7 @@ void HookProcDlg::OnHookMenuRemove() {
 	// UI-only: remove the item and free memory
 	m_HookList.DeleteItem(item);
 	delete hr;
-
-	// Persist remaining list snapshot and recompute nextHookId generator
-	FILETIME createTime{ 0,0 }; HANDLE h2 = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
-	if (h2) { FILETIME et, k, u; if (GetProcessTimes(h2, &createTime, &et, &k, &u)) {} CloseHandle(h2); }
-	DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
-
+	 
 	int count = m_HookList.GetItemCount();
 	m_nextHookId = 1; // reset and recompute from existing rows
 	for (int i = 0; i < count; ++i) {

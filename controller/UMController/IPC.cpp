@@ -75,7 +75,8 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 	LocalFree(pSD);
 	DWORD written = 0;
 	// write pid as 4 bytes little-endian
-	DWORD pidValue = pid;
+	// pid is now obsolete, just write DWORD 0
+	DWORD pidValue = 0;
 	if (!WriteFile(hFile, &pidValue, sizeof(pidValue), &written, NULL) || written != sizeof(pidValue)) {
 		LOG_CTRL_ETW(L"IPC_SendInject: WriteFile(pid) failed (%u)\n", GetLastError());
 		CloseHandle(hFile);
