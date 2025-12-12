@@ -17,10 +17,12 @@ public:
     BOOL CreateModeless(CWnd* parent);
     static const UINT kMsgHookDlgDestroyed;
 protected:
+	afx_msg bool HookCommonCode(DWORD64 module_base, DWORD module_offset, std::wstring hook_code_path, std::wstring export_func_name);
     virtual BOOL OnInitDialog();
     virtual void DoDataExchange(CDataExchange* pDX) { CDialogEx::DoDataExchange(pDX);}    
     afx_msg void OnDestroy();
     afx_msg void OnBnClickedApplyHook();
+    afx_msg void OnBnClickedApplyHookSequence();
     afx_msg void OnSize(UINT nType, int cx, int cy);
     afx_msg void OnLButtonDown(UINT nFlags, CPoint point);
     afx_msg void OnLButtonUp(UINT nFlags, CPoint point);

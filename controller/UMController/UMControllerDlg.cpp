@@ -407,9 +407,9 @@ public:
 	bool CheckExportFromFile(const wchar_t* dllPath, const char* exportName, DWORD* out_func_offset) override {
 		return Helper::CheckExportFromFile(dllPath, exportName, out_func_offset);
 	}
-	bool GetModuleBase(bool is64, DWORD pid,const wchar_t* target_module, DWORD64* base) override
+	bool GetModuleBase(DWORD pid,const wchar_t* target_module, DWORD64* base) override
 	{
-		return Helper::GetModuleBase(is64, pid, target_module, base);
+		return Helper::GetModuleBase(pid, target_module, base);
 	}
 	bool InjectTrampoline(DWORD targetPid, const wchar_t* fullDllPath) override {
 		if (targetPid == 0 || !fullDllPath || *fullDllPath == L'\0') {

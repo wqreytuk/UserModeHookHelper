@@ -145,6 +145,12 @@ static void PrintUsage() {
 		L"  blman prot -d name1[,name2,...]        Delete protected process names\n"
 		L"  blman prot -c                           Clear protected process names\n"
 		L"  blman prot -l                           List protected process names\n";
+	std::wcout << L"\nExtra:\n"
+		L"  UmhhMan hookseq -o path\\out.hooseq \n"
+		L"    -add module,offsetHex,dllPath,export [-add ...]\n"
+		L"\nNotes:\n"
+		L"  - The hookseq file omits PID; HookUI applies to its current target.\n"
+		L"  - offsetHex is the module-relative offset (hex), e.g., 1F0.\n";
 }
 
 static bool IsProcessRunning(const wchar_t* exeName, DWORD& outPid) {
@@ -159,9 +165,15 @@ static bool IsProcessRunning(const wchar_t* exeName, DWORD& outPid) {
 	CloseHandle(hSnap); return false;
 }
 
+// (removed misplaced global hookseq block)
+
 static bool TerminateProcessByPid(DWORD pid) {
-	if (!pid) return false; HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
-	if (!h) return false; BOOL ok = TerminateProcess(h, 0); CloseHandle(h); return ok == TRUE;
+	if (!pid) return false;
+	HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+	if (!h) return false;
+	BOOL ok = TerminateProcess(h, 0);
+	CloseHandle(h);
+	return ok == TRUE;
 }
 
 static bool RestartService(const wchar_t* svcName) {
@@ -197,6 +209,48 @@ int wmain(int argc, wchar_t* argv[]) {
 	std::wstring option = argv[2]; Trim(option);
 	std::wstring names = (argc >= 4) ? argv[3] : L"";
 	std::vector<std::wstring> list = SplitNames(names);
+
+	// Special mode: build hook sequence file
+	if (_wcsicmp(category.c_str(), L"hookseq") == 0) {
+		std::wstring outPath;
+		struct Entry { std::wstring module; std::wstring offset; std::wstring dllPath; std::wstring exportName; };
+		std::vector<Entry> entries;
+		// Parse remaining args starting from argv[2]
+		for (int i = 2; i < argc; ++i) {
+			if (_wcsicmp(argv[i], L"-o") == 0 && i+1 < argc) {
+				outPath = argv[++i];
+			} else if (_wcsicmp(argv[i], L"-add") == 0 && i+1 < argc) {
+				std::wstring spec = argv[++i];
+				std::wstring parts[4]; int idx = 0; size_t start = 0;
+				while (idx < 4) {
+					size_t pos = spec.find(L',', start);
+					std::wstring token = (pos==std::wstring::npos) ? spec.substr(start) : spec.substr(start, pos-start);
+					parts[idx++] = token; if (pos==std::wstring::npos) break; start = pos+1;
+				}
+				if (idx == 4 && !parts[0].empty() && !parts[1].empty() && !parts[2].empty() && !parts[3].empty()) {
+					entries.push_back({ parts[0], parts[1], parts[2], parts[3] });
+				} else {
+					wprintf(L"Invalid -add format. Expected module,offsetHex,dllPath,export\n");
+					return 2;
+				}
+			}
+		}
+		if (outPath.empty()) { wprintf(L"Missing -o output path.\n"); return 2; }
+		if (entries.empty()) { wprintf(L"No -add entries provided.\n"); return 2; }
+		FILE* f = _wfopen(outPath.c_str(), L"wt, ccs=UNICODE");
+		if (!f) { wprintf(L"Failed to open output: %s\n", outPath.c_str()); return 3; }
+		fwprintf(f, L"# UserModeHookHelper hook sequence file\n");
+		for (auto &e : entries) {
+			fwprintf(f, L"[hook]\n");
+			fwprintf(f, L"module=%s\n", e.module.c_str());
+			fwprintf(f, L"offset=%s\n", e.offset.c_str());
+			fwprintf(f, L"dllPath=%s\n", e.dllPath.c_str());
+			fwprintf(f, L"export=%s\n\n", e.exportName.c_str());
+		}
+		fclose(f);
+		wprintf(L"Wrote hook sequence to %s\n", outPath.c_str());
+		return 0;
+	}
 
 	std::wstring valueName; bool isWhitelist = false; bool isProt = false;
 	if (_wcsicmp(category.c_str(), L"process") == 0) valueName = REG_BLOCKED_PROCESS_NAME;

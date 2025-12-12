@@ -138,53 +138,32 @@ namespace HookCore {
 		}
 		if (services) services->LogCore(L"ApplyHook: address 0x%llX belongs to module %s (pid %u).\n", address, owning.c_str(), pid);
 
-		// here we begin the real bussiness, we'll need a template dll project which will contain hundreds of export function
-		// for us to write hook trampoline
-		// first we'll send signal to our master dll so he can load that template dll for us, then we check the module list again to
-		// ensure that tempalte dll is loaded into target process
-
-		// --- Trampoline load signaling & verification ---
-		// Locate the already-injected master DLL (umhh.dll.*) in the target process so we can
-		// derive the architecture and choose the matching trampoline DLL name. Then request
-		// the master to load the trampoline via our file-based IPC (IPC_SendInject). Finally
-		// poll for up to 5 seconds to confirm the trampoline DLL appears in the module list.
-		std::wstring masterNameFound; // canonical name (architecture-specific)
-		std::wstring masterPathFound; // full path to master DLL inside target process
-		{
-			std::vector<ModuleInfo> mods; EnumerateModules(pid, mods);
-			auto equalsIgnoreCase = [](const std::wstring& a, const wchar_t* b) -> bool {
-				if (!b) return false; size_t blen = wcslen(b); if (a.size() != blen) return false;
-				for (size_t i = 0; i < blen; ++i) { if (towlower(a[i]) != towlower(b[i])) return false; }
-				return true;
-			};
-			for (auto &m : mods) {
-				if (equalsIgnoreCase(m.name, X64_DLL)) { masterNameFound = X64_DLL; masterPathFound = m.path; break; }
-				if (equalsIgnoreCase(m.name, X86_DLL)) { masterNameFound = X86_DLL; masterPathFound = m.path; break; }
-			}
+		// check master dll loaded
+		PVOID master_dll_base = NULL;
+		std::wstring master_dll_module= is64 ? X64_DLL : X86_DLL;
+		if (!services->GetModuleBase( pid, master_dll_module.c_str(), (DWORD64*)&master_dll_base)) {
+			services->LogCore(L"failed to call GetModuleBase target Pid=%u Module=%s\n", pid, master_dll_module.c_str());
+			return false;
 		}
-		if (masterNameFound.empty()) {
-			if (services)
-				services->LogCore(L"ApplyHook: master DLL not found in target process (expected %s or %s); aborting trampoline load.\n", X64_DLL, X86_DLL);
+		if (!master_dll_base) {
+			services->LogCore(L"ApplyHook: master DLL not found in target process (expected %s); aborting trampoline load.\n", is64 ? X64_DLL : X86_DLL);
 			return false;
 		}
 		else {
 			// Build full path to trampoline DLL based on directory of master DLL already loaded
-			// in the target process (the two DLLs live side-by-side).
-			std::wstring baseDir;
-			if (!masterPathFound.empty()) {
-				baseDir = masterPathFound;
-				size_t pos = baseDir.find_last_of(L"\\/");
-				if (pos != std::wstring::npos) baseDir.erase(pos);
-			}
-			std::wstring trampName = (masterNameFound == X64_DLL) ? TRAMP_X64_DLL : TRAMP_X86_DLL;
+			// in the target process (the two DLLs live side-by-side). 
+			std::wstring trampName = is64 ? TRAMP_X64_DLL : TRAMP_X86_DLL;
 			WCHAR temp_tramp_name[MAX_PATH] = { 0 };
 			memcpy(temp_tramp_name, trampName.c_str(), trampName.size() * sizeof(WCHAR));
 			auto s = services->GetCurrentDirFilePath(temp_tramp_name);
+			trampFullPath = s;
 			// check trampoline dll first, if not exist, then we inject
-			services->GetModuleBase(is64, pid, trampName.c_str(), (DWORD64*)&trampoline_dll_base);
+			if (!services->GetModuleBase( pid, trampName.c_str(), (DWORD64*)&trampoline_dll_base)) {
+				services->LogCore(L"failed to call GetModuleBase target Pid=%u Module=%s\n", pid ,trampName.c_str());
+				return false;
+			}
 			if (!trampoline_dll_base) {
 				// trampoline is not loaded, inject now
-				trampFullPath = s;
 				if (services)
 					services->LogCore(L"ApplyHook: requesting trampoline inject %s (path=%s).\n",
 						trampName.c_str(), trampFullPath.c_str());
@@ -195,7 +174,7 @@ namespace HookCore {
 					const int maxIterations = 50; bool loaded = false;
 					for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
 						//  GetModuleBase(bool is64, HANDLE hProc, wchar_t* target_module, DWORD64* base) = 0;
-						services->GetModuleBase(is64, pid, trampName.c_str(), (DWORD64*)&trampoline_dll_base);
+						services->GetModuleBase( pid, trampName.c_str(), (DWORD64*)&trampoline_dll_base);
 
 						if (trampoline_dll_base != NULL) {
 							loaded = true;

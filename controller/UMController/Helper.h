@@ -49,7 +49,7 @@ public:
 	static void Fatal(const wchar_t* message);
 	static bool ResolveNtCreateThreadExSyscallNum(DWORD* sys_call_num);
 	static bool ForceInject(DWORD pid);
-	static bool GetModuleBase(bool is64, DWORD pid,const wchar_t* target_module,DWORD64* base);
+	static bool GetModuleBase(DWORD pid,const wchar_t* target_module,DWORD64* base);
 	// Determine whether the target process is 64-bit. Returns true on success
 	// and sets outIs64. On failure returns false and leaves outIs64 unchanged.
 	static bool IsProcess64(DWORD pid, bool& outIs64);

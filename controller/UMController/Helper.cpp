@@ -757,7 +757,7 @@ bool Helper::ResolveNtCreateThreadExSyscallNum(DWORD* sys_call_num) {
 	*sys_call_num = res;
 	return true;
 }
-bool Helper::GetModuleBase(bool is64, DWORD pid, const wchar_t* target_module, DWORD64* base) {
+bool Helper::GetModuleBase(DWORD pid, const wchar_t* target_module, DWORD64* base) {
 	if (0 != PHLIB::GetModuleBase((PVOID)(ULONG_PTR)pid, (PVOID)target_module, (PVOID)base)) {
 		LOG_CTRL_ETW(L"failed to call PHLIB::GetModuleBase, Pid=%u\n", pid);
 		return false;

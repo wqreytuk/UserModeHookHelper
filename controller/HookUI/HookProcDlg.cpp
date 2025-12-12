@@ -46,6 +46,7 @@ const UINT HookProcDlg::kMsgHookDlgDestroyed = WM_APP + 0x701;
 
 BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_HOOKUI_BTN_APPLY, &HookProcDlg::OnBnClickedApplyHook)
+	ON_BN_CLICKED(IDCANCEL, &HookProcDlg::OnBnClickedApplyHookSequence)
 	ON_WM_SIZE()
 	ON_WM_CONTEXTMENU()
 	ON_WM_LBUTTONDOWN()
@@ -59,6 +60,180 @@ BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
 	ON_NOTIFY(NM_CUSTOMDRAW, IDC_HOOKUI_LIST_MODULES, &HookProcDlg::OnCustomDrawModules)
 END_MESSAGE_MAP()
 
+void HookProcDlg::OnBnClickedApplyHookSequence() {
+	// Browse for a .hooseq file; simple INI-like format
+	// Use '|' delimited filter string (MFC auto-converts to double-null)
+	CString filter = L"Hook Sequence (*.hookseq)|*.hookseq|All Files (*.*)|*.*||";
+	CFileDialog fd(TRUE, L"hookseq", NULL, OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST, filter, this);
+	if (fd.DoModal() != IDOK) {
+		// User cancelled selection; abort apply
+		if (m_services) LOG_UI(m_services, L"ApplyHookSequence cancelled by user (no hookseq selected)\n");
+		return;
+	}
+	CString path = fd.GetPathName();
+	// Parse file: lines of key=value; hook blocks denoted by [hook]
+	std::vector<std::tuple<std::wstring, std::wstring, std::wstring, std::wstring>> entries; // module, offset, dllPath, export
+	DWORD pidFromFile = 0;
+	FILE* f = _wfopen(path.GetString(), L"rt, ccs=UNICODE");
+	if (!f) { MessageBoxW(L"Failed to open hook sequence file.", L"HookSeq", MB_ICONERROR | MB_OK); return; }
+	wchar_t line[1024]; bool inHook = false; std::wstring module, offset, dllPath, exportFn;
+	while (fgetws(line, _countof(line), f)) {
+		// Trim
+		std::wstring s(line); 
+		while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) 
+			s.pop_back();
+		auto ltrim = [&](std::wstring &x) { 
+			size_t i = 0;
+			while (i < x.size() && iswspace(x[i])) 
+				++i; 
+			x.erase(0, i); 
+		};
+		auto rtrim = [&](std::wstring &x) { 
+			while (!x.empty() && iswspace(x.back())) 
+				x.pop_back();
+		};
+		ltrim(s); rtrim(s); 
+		if (s.empty()) 
+			continue;
+		if (s[0] == L'#' || (s.size() >= 2 && s[0] == L'/' && s[1] == L'/')) 
+			continue;
+		if (s == L"[hook]") {
+			if (!module.empty() || !offset.empty() || !dllPath.empty() || !exportFn.empty())
+			{
+				entries.emplace_back(module, offset, dllPath, exportFn);
+				module.clear();
+				offset.clear();
+				dllPath.clear();
+				exportFn.clear();
+			}
+			inHook = true;
+			continue;
+		}
+		size_t eq = s.find(L'='); 
+		if (eq == std::wstring::npos)
+			continue;
+		std::wstring key = s.substr(0, eq), val = s.substr(eq + 1); 
+		ltrim(key); 
+		rtrim(key); 
+		ltrim(val); 
+		rtrim(val);
+		if (_wcsicmp(key.c_str(), L"targetPid") == 0) {
+			pidFromFile = (DWORD)_wtol(val.c_str());
+		}
+		else if (_wcsicmp(key.c_str(), L"module") == 0) module = val;
+		else if (_wcsicmp(key.c_str(), L"offset") == 0) offset = val;
+		else if (_wcsicmp(key.c_str(), L"dllPath") == 0) dllPath = val;
+		else if (_wcsicmp(key.c_str(), L"export") == 0) exportFn = val;
+	}
+	fclose(f);
+	if (!module.empty() || !offset.empty() || !dllPath.empty() || !exportFn.empty()) 
+		entries.emplace_back(module, offset, dllPath, exportFn);
+	if (entries.empty()) {
+		MessageBoxW(L"No hooks found in sequence file.", L"HookSeq", MB_ICONWARNING | MB_OK);
+		return;
+	}
+	// Decide target PID: prefer file PID, else current dialog PID
+	DWORD targetPid = pidFromFile ? pidFromFile : m_pid;
+	// Ensure master/trampoline DLL arch matches; Validate exports
+	for (auto &e : entries) {
+		const std::wstring &mod = std::get<0>(e);
+		const std::wstring &off = std::get<1>(e);
+		const std::wstring &dll = std::get<2>(e);
+		const std::wstring &exp = std::get<3>(e);
+		if (mod.empty() || off.empty() || dll.empty() || exp.empty()) {
+			MessageBoxW(L"Invalid hook entry with missing fields.", L"HookSeq", MB_ICONERROR | MB_OK);
+			return;
+		}
+
+		bool is64 = false;
+		if (!m_services->IsProcess64(targetPid, is64)) {
+			MessageBoxW(L"Failed to query process arch.", L"HookSeq", MB_ICONERROR | MB_OK);
+			return;
+		}
+		bool dll64 = false;
+		if (!m_services->CheckPeArch(dll.c_str(), dll64)) {
+			MessageBoxW(L"DLL arch check failed.", L"HookSeq", MB_ICONERROR | MB_OK);
+			return;
+		}
+		if (dll64 != is64) {
+			MessageBoxW(L"DLL arch mismatches process arch.", L"HookSeq", MB_ICONERROR | MB_OK);
+			return;
+		}
+		DWORD funcOff = 0;
+		if (!m_services->CheckExportFromFile(dll.c_str(), std::string(CW2A(exp.c_str())).c_str(), &funcOff)) {
+			MessageBoxW(L"Export not found in DLL.", L"HookSeq", MB_ICONERROR | MB_OK);
+			return;
+		}
+	}
+	CString msg;
+	// Apply hooks
+	int applied = 0; 
+	for (auto &e : entries) {
+		const std::wstring &mod = std::get<0>(e);
+		const std::wstring &off = std::get<1>(e);
+		const std::wstring &dll = std::get<2>(e);
+		const std::wstring &exp = std::get<3>(e);
+		// Resolve module base
+		bool is64 = false; m_services->IsProcess64(targetPid, is64);
+		DWORD64 base = 0; 
+		if (!m_services->GetModuleBase( targetPid, mod.c_str(), &base)) { 
+			LOG_UI(m_services,L"HookSeq: module %s not loaded\n", mod.c_str()); 
+			continue; 
+		}
+		bool ok = true;
+		DWORD64 offVal = ParseAddressText(off, ok);
+		// apply hook
+		if (!HookCommonCode(base, (DWORD)offVal, dll, exp)) {
+			// if any fault detected, we need to roll back and abort
+			LOG_UI(m_services, L"fault detected when trying hooking at Addr=0x%p with hookcode Path=%s Func=%s\n", base + offVal,
+				dll.c_str(), exp.c_str());
+			LOG_UI(m_services, L"Rolling back\n");
+			
+			goto RollBack;
+		}
+		applied++;
+	}
+	 msg.Format(L"Applied %d hooks from sequence.", applied);
+	MessageBoxW(msg, L"HookSeq", MB_OK | MB_ICONINFORMATION);
+	return;
+RollBack:
+	{
+		for (int i = 0; i < m_HookList.GetItemCount(); ++i) {
+			HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
+			if (!hr) {
+				LOG_UI(m_services, L"weird, hr can not be NULL during iteration\n");
+				continue;
+			}
+		 
+			for (auto &e : entries) {
+				const std::wstring &mod = std::get<0>(e);
+				const std::wstring &off = std::get<1>(e);
+				const std::wstring &dll = std::get<2>(e);
+				const std::wstring &exp = std::get<3>(e);
+				// Resolve module base
+				bool is64 = false; m_services->IsProcess64(targetPid, is64);
+				DWORD64 base = 0;
+				if (!m_services->GetModuleBase( targetPid, mod.c_str(), &base)) {
+					LOG_UI(m_services, L"HookSeq: module %s not loaded\n", mod.c_str());
+					continue;
+				}
+				bool ok = true;
+				DWORD64 offVal = ParseAddressText(off, ok);
+				DWORD64 addr = offVal + base;
+
+				if (hr->address == addr) {
+					if (!HookCore::RemoveHook(m_pid, addr, m_services, hr->id,
+						hr->ori_asm_code_len, (PVOID)hr->trampoline_pit)) {
+						LOG_UI(m_services, L"failed to remove hook at Addr=0x%p\n", addr);
+						MessageBox(L"Failed to remove hook first before rehooking the same address", L"Hook",
+							MB_OK | MB_ICONERROR);
+						return;
+					}
+				}
+			}
+		}
+	}
+}
 HookProcDlg::HookProcDlg(DWORD pid, const std::wstring& name, IHookServices* services, CWnd* parent)
 	: CDialogEx(IDD_HOOKUI_PROC_DLG, parent), m_pid(pid), m_name(name), m_services(services) {}
 
@@ -546,7 +721,160 @@ ULONGLONG HookProcDlg::ParseAddressText(const std::wstring& input, bool& ok) con
 	}
 	wchar_t* end = nullptr; ULONGLONG v = wcstoull(stripped.c_str(), &end, 16); if (end && *end == 0) { ok = true; return v; } return 0ULL;
 }
+bool HookProcDlg::HookCommonCode(DWORD64 module_base, DWORD module_offset,std::wstring hook_code_path,std::wstring export_func_name) {
+	// check export exist
+	char ansi_exportToCheck[MAX_PATH] = { 0 };
+	DWORD hook_code_offset = 0;
+	if (!m_services->ConvertWcharToChar(export_func_name.c_str(), ansi_exportToCheck, MAX_PATH)) {
+		LOG_UI(m_services, L"failed to call ConvertWcharToChar\n");
+		MessageBox(L"failed to call ConvertWcharToChar", L"Hook", MB_OK | MB_ICONERROR);
+		return false;
+	}
+	if (!m_services->CheckExportFromFile(hook_code_path.c_str(), ansi_exportToCheck, &hook_code_offset)) {
+		LOG_UI(m_services, L"failed to call CheckExportFromFile, PE_Path=%s\n", hook_code_path.c_str());
+		MessageBox(L"failed to call CheckExportFromFile", L"Hook", MB_OK | MB_ICONERROR);
+		return false;
+	}
+	if (!hook_code_offset) {
+		LOG_UI(m_services, L"failed to get required export function: %s\n", export_func_name.c_str());
+		MessageBox(L"failed to get required export function from HookCode dll", L"Hook", MB_OK | MB_ICONERROR);
+		return false;
+	}
 
+
+	std::wstring pathToInject = hook_code_path;
+	size_t pos = hook_code_path.find_last_of(L'\\');
+
+	std::wstring hook_code_dll_name;
+	if (pos != std::wstring::npos)
+		hook_code_dll_name = hook_code_path.substr(pos + 1);
+	else
+		hook_code_dll_name = hook_code_path; // no backslash, take entire string
+	wchar_t* temp_hook_code_dll_name = 0;
+	{
+		wchar_t modPathBuf[MAX_PATH] = { 0 };
+		DWORD modLen = GetModuleFileNameW(AfxGetInstanceHandle(), modPathBuf, _countof(modPathBuf));
+		std::wstring folder;
+		if (modLen == 0) {
+			folder = L".\\" HOOK_CODE_TEMP_DIR_NAME;
+		}
+		else {
+			std::wstring modPath(modPathBuf);
+			size_t p = modPath.find_last_of(L"\\/");
+			if (p == std::wstring::npos) folder = L".\\" HOOK_CODE_TEMP_DIR_NAME;
+			else folder = modPath.substr(0, p) + L"\\" HOOK_CODE_TEMP_DIR_NAME;
+		}
+		// Ensure directory exists (CreateDirectoryW is fine if already exists)
+		if (!CreateDirectoryW(folder.c_str(), NULL)) {
+			DWORD err = GetLastError();
+			if (err != ERROR_ALREADY_EXISTS) {
+				LOG_UI(m_services, L"CreateDirectoryW failed for %s err=%u\n", folder.c_str(), err);
+			}
+		}
+		// Build timestamped filename
+		SYSTEMTIME st; GetLocalTime(&st);
+		wchar_t ts[64];
+		swprintf(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
+			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+		std::wstring new_dll_name = L"";
+		new_dll_name = new_dll_name + ts + L"_" + hook_code_dll_name;
+		temp_hook_code_dll_name = (wchar_t*)malloc(2 * (new_dll_name.length() + 1));
+		ZeroMemory(temp_hook_code_dll_name, 2 * (new_dll_name.length() + 1));
+		memcpy(temp_hook_code_dll_name, new_dll_name.c_str(), 2 * new_dll_name.length());
+		std::wstring dest = folder + L"\\" + ts + L"_" + hook_code_dll_name;
+		if (CopyFileW(hook_code_path.c_str(), dest.c_str(), FALSE)) {
+			pathToInject = dest; // use copied file
+			LOG_UI(m_services, L"Copied hook DLL to %s\n", dest.c_str());
+		}
+		else {
+			DWORD err = GetLastError();
+			LOG_UI(m_services, L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", hook_code_path.c_str(), dest.c_str(), err);
+			// keep pathToInject as original selectedPath
+		}
+	}
+	DWORD64 hook_code_dll_base = 0;
+	// Signal master DLL (via IHookServices) to load the selected DLL inside target process
+	if (m_services) {
+		if (!m_services->InjectTrampoline(m_pid, pathToInject.c_str())) {
+			LOG_UI(m_services, L"InjectTrampoline failed for pid=%u path=%s\n", m_pid, pathToInject.c_str());
+			MessageBox(L"Failed to request master DLL to load selected DLL. Check logs.", L"Hook", MB_OK | MB_ICONERROR);
+			return false;
+		}
+		LOG_UI(m_services, L"HookCode injection signaled pid=%u path=%s\n", m_pid, pathToInject.c_str());
+		// check if HookCode injected
+
+			// Poll up to 5 seconds (50 * 100ms) for trampoline module presence.
+		const int maxIterations = 50;
+	
+	
+		for (int iter = 0; iter < maxIterations && !hook_code_dll_base; ++iter) {
+			if(!m_services->GetModuleBase(m_pid, temp_hook_code_dll_name, &hook_code_dll_base)){
+				LOG_UI(m_services, L"faile to call GetModuleBase, Pid=%u, Module=%s\n", m_pid, temp_hook_code_dll_name);
+				MessageBox(L"faile to call GetModuleBase", L"Hook", MB_OK | MB_ICONERROR);
+				return false;
+			}
+			if (!hook_code_dll_base) Sleep(100);
+		}
+		if (!hook_code_dll_base) {
+			LOG_UI(m_services, L"faile to load hookcode dll: %s\n", hook_code_path.c_str());
+			MessageBox(L"faile to load hookcode dll", L"Hook", MB_OK | MB_ICONERROR);
+			return false;
+		}
+	}
+	DWORD64 addr = module_base + module_offset;
+	bool rehook = false;
+	// check if user is rehook before apply hook
+	for (int i = 0; i < m_HookList.GetItemCount(); ++i) {
+		HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
+		if (!hr) {
+			LOG_UI(m_services, L"weird, hr can not be NULL during iteration\n");
+			continue;
+		}
+		if (hr->address == addr) {
+			rehook = true;
+			LOG_UI(m_services, L"trying hook address that has already been hooked, recover to original code first\n");
+			if (!HookCore::RemoveHook(m_pid, addr, m_services, hr->id, hr->ori_asm_code_len, (PVOID)hr->trampoline_pit)) {
+				LOG_UI(m_services, L"failed to remove hook first before rehooking the same address\n");
+				MessageBox(L"Failed to remove hook first before rehooking the same address", L"Hook", MB_OK | MB_ICONERROR);
+				return false;
+			}
+		}
+	}
+
+	// Proceed with the existing hook attempt (ApplyHook) after requesting trampoline load
+	DWORD ori_asm_code_len = 0;
+	PVOID trampoline_pit = 0;
+	PVOID ori_asm_code_addr = 0;
+	int assignedHookId = m_nextHookId; // reserve id that will be used for this new hook
+	bool success = HookCore::ApplyHook(m_pid, module_base+module_offset, m_services, hook_code_dll_base + hook_code_offset, assignedHookId, &ori_asm_code_len,
+		&trampoline_pit, &ori_asm_code_addr);
+	if (success) {
+		if (m_services) 
+			LOG_UI(m_services, L"HookCore::ApplyHook succeeded at 0x%llX\n", addr);
+
+		//MessageBox(L"Hook succeed", L"Hook", MB_OK | MB_ICONINFORMATION);
+		// Add entry to hook list UI: resolve owning module and show module+offset as hook id
+		std::wstring moduleName = L"(unknown)";
+		ULONGLONG moduleBase = 0;
+		std::vector<HookCore::ModuleInfo> mods; HookCore::EnumerateModules(m_pid, mods);
+		for (auto &m : mods) {
+			if (addr >= m.base && addr < m.base + m.size) { moduleName = m.name; moduleBase = m.base; break; }
+		}
+		// Add numeric hook entry (auto-incrementing ID), only new hook addr will be added
+		if (!rehook) {
+			HookRow r; r.id = assignedHookId; r.address = addr; r.module = moduleName;
+			r.ori_asm_code_len = ori_asm_code_len; r.trampoline_pit = (unsigned long long)trampoline_pit;
+			r.ori_asm_code_addr = (DWORD64)ori_asm_code_addr;
+			AddHookEntry(r);
+		}
+		return true;
+	}
+	else {
+		if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook failed at 0x%llX\n", addr);
+		MessageBox(L"Hook failed", L"Hook", MB_OK | MB_ICONERROR);
+	}
+	return false;
+}
 void HookProcDlg::OnBnClickedApplyHook() {
 	// If the target process no longer exists, close this modeless dialog to avoid acting on a dead PID.
 	bool procFound = false;
@@ -624,7 +952,6 @@ void HookProcDlg::OnBnClickedApplyHook() {
 	// so they won't need write a lot dll with same export function but different logic code
 	// preferred export function name from user input (falls back to defaults if empty)
 	std::wstring preferredExport = exportFunc;
-	DWORD hook_code_offset = 0;
 	const wchar_t* exportToCheck = nullptr;
 	std::wstring exportWide;
 	if (!preferredExport.empty()) {
@@ -633,19 +960,7 @@ void HookProcDlg::OnBnClickedApplyHook() {
 	else {
 		exportToCheck = is64 ? L"" HOOK_CODE_EXPORT_X64 L"" : L"" HOOK_CODE_EXPORT_X86 L"";
 	}
-	std::wstring wexportToCheck = exportToCheck;
-	char ansi_exportToCheck[MAX_PATH] = { 0 };
-	m_services->ConvertWcharToChar(exportToCheck, ansi_exportToCheck, MAX_PATH);
-	if (!m_services->CheckExportFromFile(selectedPath.GetString(), ansi_exportToCheck, &hook_code_offset)) {
-		LOG_UI(m_services, L"failed to call CheckExportFromFile, PE_Path=%s, CPU=%s\n", selectedPath.GetString(), is64 ? L"x64" : L"x86");
-		MessageBox(L"failed to call CheckExportFromFile", L"Hook", MB_OK | MB_ICONERROR);
-		return;
-	}
-	if (!hook_code_offset) {
-		LOG_UI(m_services, L"failed to get required export function: %s\n", exportToCheck);
-		MessageBox(L"failed to get required export function from HookCode dll", L"Hook", MB_OK | MB_ICONERROR);
-		return;
-	}
+
 	// we also need to check hookcode.dll meet the arch of target process
 	bool is_pe_64;
 	if (!m_services->CheckPeArch(selectedPath.GetString(), is_pe_64)) {
@@ -658,131 +973,17 @@ void HookProcDlg::OnBnClickedApplyHook() {
 		return;
 	}
 
+	ULONGLONG moduleBase = 0;
+	std::vector<HookCore::ModuleInfo> mods; HookCore::EnumerateModules(m_pid, mods);
+	for (auto &m : mods) {
+		if (addr >= m.base && addr < m.base + m.size) { moduleBase = m.base; break; }
+	}
+
 	// Copy the selected DLL to a local temp folder beside this module so the
 	// master DLL can reliably open it. Use a timestamped filename to avoid
 	// collisions. If the copy fails, fall back to the original selected path.
 	std::wstring pathToInject = selectedPath.GetString();
-	wchar_t* temp_hook_code_dll_name = 0;
-	{
-		wchar_t modPathBuf[MAX_PATH] = { 0 };
-		DWORD modLen = GetModuleFileNameW(AfxGetInstanceHandle(), modPathBuf, _countof(modPathBuf));
-		std::wstring folder;
-		if (modLen == 0) {
-			folder = L".\\" HOOK_CODE_TEMP_DIR_NAME;
-		}
-		else {
-			std::wstring modPath(modPathBuf);
-			size_t p = modPath.find_last_of(L"\\/");
-			if (p == std::wstring::npos) folder = L".\\" HOOK_CODE_TEMP_DIR_NAME;
-			else folder = modPath.substr(0, p) + L"\\" HOOK_CODE_TEMP_DIR_NAME;
-		}
-		// Ensure directory exists (CreateDirectoryW is fine if already exists)
-		if (!CreateDirectoryW(folder.c_str(), NULL)) {
-			DWORD err = GetLastError();
-			if (err != ERROR_ALREADY_EXISTS) {
-				LOG_UI(m_services, L"CreateDirectoryW failed for %s err=%u\n", folder.c_str(), err);
-			}
-		}
-		// Build timestamped filename
-		SYSTEMTIME st; GetLocalTime(&st);
-		wchar_t ts[64];
-		swprintf(ts, _countof(ts), L"%04d%02d%02d_%02d%02d%02d_%03d",
-			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-		std::wstring new_dll_name = L"";
-		new_dll_name = new_dll_name + ts + L"_" + std::wstring(hook_code_dll_name.GetString());
-		temp_hook_code_dll_name = (wchar_t*)malloc(2 * (new_dll_name.length() + 1));
-		ZeroMemory(temp_hook_code_dll_name, 2 * (new_dll_name.length() + 1));
-		memcpy(temp_hook_code_dll_name, new_dll_name.c_str(), 2 * new_dll_name.length());
-		std::wstring dest = folder + L"\\" + ts + L"_" + std::wstring(hook_code_dll_name.GetString());
-		if (CopyFileW(selectedPath.GetString(), dest.c_str(), FALSE)) {
-			pathToInject = dest; // use copied file
-			LOG_UI(m_services, L"Copied hook DLL to %s\n", dest.c_str());
-		}
-		else {
-			DWORD err = GetLastError();
-			LOG_UI(m_services, L"CopyFileW failed src=%s dst=%s err=%u - falling back to original\n", selectedPath.GetString(), dest.c_str(), err);
-			// keep pathToInject as original selectedPath
-		}
-	}
-	DWORD64 hook_code_dll_base = 0;
-	// Signal master DLL (via IHookServices) to load the selected DLL inside target process
-	if (m_services) {
-		if (!m_services->InjectTrampoline(m_pid, pathToInject.c_str())) {
-			LOG_UI(m_services, L"InjectTrampoline failed for pid=%u path=%s\n", m_pid, pathToInject.c_str());
-			MessageBox(L"Failed to request master DLL to load selected DLL. Check logs.", L"Hook", MB_OK | MB_ICONERROR);
-			return;
-		}
-		LOG_UI(m_services, L"HookCode injection signaled pid=%u path=%s\n", m_pid, pathToInject.c_str());
-		// check if HookCode injected
-
-			// Poll up to 5 seconds (50 * 100ms) for trampoline module presence.
-		const int maxIterations = 50;
-		bool loaded = false;
-		for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
-			std::vector<HookCore::ModuleInfo> mods; HookCore::EnumerateModules(m_pid, mods);
-			for (auto &m : mods) {
-				if (_wcsicmp(m.name.c_str(), temp_hook_code_dll_name) == 0) {
-					hook_code_dll_base = m.base;
-					loaded = true;
-					break;
-				}
-			}
-			if (!loaded) Sleep(100);
-		}
-		if (!loaded) {
-			LOG_UI(m_services, L"faile to load hookcode dll: %s\n", selectedPath.GetString());
-			MessageBox(L"faile to load hookcode dll", L"Hook", MB_OK | MB_ICONERROR);
-			return;
-		}
-	}
-
-	// check if user is rehook before apply hook
-	for (int i = 0; i < m_HookList.GetItemCount(); ++i) {
-		HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
-		if (!hr) {
-			LOG_UI(m_services, L"weird, hr can not be NULL during iteration\n");
-			continue;
-		}
-		if (hr->address == addr) {
-			rehook = true;
-			LOG_UI(m_services, L"trying hook address that has already been hooked, recover to original code first\n");
-			if (!HookCore::RemoveHook(m_pid, addr, m_services, hr->id, hr->ori_asm_code_len, (PVOID)hr->trampoline_pit)) {
-				LOG_UI(m_services, L"failed to remove hook first before rehooking the same address\n");
-				MessageBox(L"Failed to remove hook first before rehooking the same address", L"Hook", MB_OK | MB_ICONERROR);
-				return;
-			}
-		}
-	}
-
-	// Proceed with the existing hook attempt (ApplyHook) after requesting trampoline load
-	DWORD ori_asm_code_len = 0;
-	PVOID trampoline_pit = 0;
-	PVOID ori_asm_code_addr = 0;
-	int assignedHookId = m_nextHookId; // reserve id that will be used for this new hook
-	bool success = HookCore::ApplyHook(m_pid, addr, m_services, hook_code_dll_base + hook_code_offset, assignedHookId, &ori_asm_code_len,
-		&trampoline_pit, &ori_asm_code_addr);
-	if (success) {
-		if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook succeeded at 0x%llX\n", addr);
-		MessageBox(L"Hook succeed", L"Hook", MB_OK | MB_ICONINFORMATION);
-		// Add entry to hook list UI: resolve owning module and show module+offset as hook id
-		std::wstring moduleName = L"(unknown)";
-		ULONGLONG moduleBase = 0;
-		std::vector<HookCore::ModuleInfo> mods; HookCore::EnumerateModules(m_pid, mods);
-		for (auto &m : mods) {
-			if (addr >= m.base && addr < m.base + m.size) { moduleName = m.name; moduleBase = m.base; break; }
-		}
-		// Add numeric hook entry (auto-incrementing ID), only new hook addr will be added
-		if (!rehook) {
-			HookRow r; r.id = assignedHookId; r.address = addr; r.module = moduleName;
-			r.ori_asm_code_len = ori_asm_code_len; r.trampoline_pit = (unsigned long long)trampoline_pit;
-			r.ori_asm_code_addr = (DWORD64)ori_asm_code_addr;
-			AddHookEntry(r);
-		}
-	}
-	else {
-		if (m_services) LOG_UI(m_services, L"HookCore::ApplyHook failed at 0x%llX\n", addr);
-		MessageBox(L"Hook failed", L"Hook", MB_OK | MB_ICONERROR);
-	}
+	HookCommonCode(moduleBase, (DWORD)(addr - moduleBase), pathToInject, exportToCheck);
 }
 
 void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
