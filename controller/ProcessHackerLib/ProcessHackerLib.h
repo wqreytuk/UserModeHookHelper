@@ -61,7 +61,9 @@ namespace PHLIB {
 		);
 	void SetHookServicesInternal(IHookServices* services);
 	void PHLog(const wchar_t* fmt, ...);
-
+	NTSTATUS IsProcessWow64Internal(
+		_In_ HANDLE hProc,
+		_Out_ PBOOLEAN IsWow64);
 	NTSTATUS PhGetProcessMappedFileName(
 		_In_ HANDLE ProcessHandle,
 		_In_ PVOID BaseAddress,

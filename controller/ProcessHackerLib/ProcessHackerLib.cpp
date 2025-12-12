@@ -18,8 +18,27 @@ namespace PHLIB {
 	void SetHookServicesInternal(IHookServices* services) {
 		g_hookServices = services;
 	}
+	inline bool wstrcasestr_check(const wchar_t* haystack, const wchar_t* needle) {
+		if (!haystack || !needle) return false;
+		if (*needle == L'\0') return true; // empty needle -> match
 
-#define PHLog(...) g_hookServices->LogPhlib(__VA_ARGS__);
+		for (; *haystack != L'\0'; ++haystack) {
+			const wchar_t *h = haystack;
+			const wchar_t *n = needle;
+			while (*n != L'\0' && towlower((wint_t)*h) == towlower((wint_t)*n)) {
+				++h; ++n;
+			}
+			if (*n == L'\0') return true; /* matched whole needle */
+			if (*h == L'\0') return false; /* haystack ended */
+		}
+		return false;
+	}
+#define PHLog(...) \
+    do { \
+        if (g_hookServices) { \
+            g_hookServices->LogPhlib(__VA_ARGS__); \
+        } \
+    } while (0)
 	NTSTATUS
 		PhGetProcessIsWow64Internal(
 			_In_ DWORD pid,
@@ -53,6 +72,24 @@ namespace PHLIB {
 			*IsWow64 = !!wow64;
 		}
 		CloseHandle(ProcessHandle);
+		return status;
+	}
+	NTSTATUS IsProcessWow64Internal(
+		_In_ HANDLE hProc,
+		_Out_ PBOOLEAN IsWow64){
+		ULONG_PTR wow64;
+		NTSTATUS status = NtQueryInformationProcess(
+			hProc,
+			ProcessWow64Information,
+			&wow64,
+			sizeof(ULONG_PTR),
+			NULL
+		);
+
+		if (NT_SUCCESS(status))
+		{
+			*IsWow64 = !!wow64;
+		}
 		return status;
 	}
 	 
@@ -361,7 +398,7 @@ namespace PHLIB {
 					PHLog(L"failed to call PhpEnumProcessModules32Callback\n");
 					break;
 				}
-				if (g_hookServices->wstrcasestr_check(mode_path, target_module)) {
+				if (wstrcasestr_check(mode_path, target_module)) {
 					*ModuleBase = currentEntry.DllBase;
 					PHLog(L"target module Path=%s Base=0x%p\n", mode_path, *ModuleBase);
 					break;
@@ -375,6 +412,7 @@ namespace PHLIB {
 		return status;
 	}
 
+	// I need to expose this function, so HookCodeLib can reuse it
 	NTSTATUS PhpEnumProcessModulesX64(
 		_In_ HANDLE ProcessHandle, wchar_t *target_module, DWORD64* ModuleBase
 	) {
@@ -469,7 +507,7 @@ namespace PHLIB {
 					PHLog(L"failed to call PhpEnumProcessModules64Callback\n");
 					break;
 				}
-				if (g_hookServices->wstrcasestr_check(mode_path, target_module)) {
+				if (wstrcasestr_check(mode_path, target_module)) {
 					*ModuleBase = (DWORD64)(ULONG_PTR)currentEntry.DllBase;
 					PHLog(L"target module Path=%s Base=0x%p\n", mode_path, *ModuleBase);
 					break;

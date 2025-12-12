@@ -9,4 +9,10 @@ namespace PHLIB {
 	 );
 	 void *PhGetProcessIsWow64(void* pid,
 		 void* IsWow64);
+	 void* IsProcessWow64(
+		 _In_ void* hProc,
+		 _Out_ void* IsWow64);
+	 void* PhpEnumProcessModules(void* is64,
+		 _In_ void* ProcessHandle, void* target_module, void* ModuleBase
+	 );
 }

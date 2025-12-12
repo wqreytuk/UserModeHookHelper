@@ -8,6 +8,7 @@
 #include <fltuser.h>
 #include "../../drivers/UserModeHookHelper/MacroDef.h"
 #include "../../drivers/UserModeHookHelper/UKShared.h"
+#include "../../controller/ProcessHackerLib/phlib_expose.h"
 
 #pragma comment(lib, "ntdll.lib")
 #pragma comment(lib, "fltlib.lib")
@@ -93,6 +94,18 @@ namespace HookCode {
 			}
 			CloseHandle(dup);
 			return name;
+		}
+		bool GetModuleBase(HANDLE hProc, const wchar_t* target_module, DWORD64* base) {
+			bool  isWow64 = false;
+			if (0 != PHLIB::IsProcessWow64((PVOID)(ULONG_PTR)hProc, &isWow64)) {
+				HKLog(L"failed to call PHLIB::IsProcessWow64\n");
+				return false;
+			}
+			if (0 != PHLIB::PhpEnumProcessModules((PVOID)(ULONG_PTR)(!isWow64), (PVOID)(ULONG_PTR)hProc, (PVOID)target_module, (PVOID)base)) {
+				HKLog(L"failed to call PHLIB::PhpEnumProcessModules\n");
+				return false;
+			}
+			return true;
 		}
 	}
 	namespace STRLIB {
