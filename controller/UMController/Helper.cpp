@@ -877,6 +877,11 @@ bool Helper::WriteProcessMemoryWrap(
 	_In_ SIZE_T nSize,
 	_Out_opt_ SIZE_T * lpNumberOfBytesWritten
 ) {
+	// try original win32 api first
+	if(WriteProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesWritten))
+		return true;
+
+
 	if (!m_filterInstance) return FALSE;
 	return m_filterInstance->FLTCOMM_WriteProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize, lpNumberOfBytesWritten) ? TRUE : FALSE;
 }

@@ -2004,10 +2004,11 @@ void CUMControllerDlg::OnMarkEarlyBreak()
 	if (!PM_GetEntryCopyByPid(pid, e, &idx)) return;
 	// If global hook mode is disabled, show a reminder and don't mark
 	bool gh = false; RegistryStore::ReadGlobalHookMode(gh);
-	if (!gh) {
-		MessageBox(L"Global Hook Mode is disabled. Please enable it before marking Early Break.", L"Enable Global Hook Mode", MB_ICONWARNING | MB_OK);
-		return;
-	}
+	// ignore global hook mode, just mark
+	// if (!gh) {
+	// 	MessageBox(L"Global Hook Mode is disabled. Please enable it before marking Early Break.", L"Enable Global Hook Mode", MB_ICONWARNING | MB_OK);
+	// 	return;
+	// }
 	// Ensure we have an NT path to persist
 	std::wstring ntpath = e.path;
 	if (ntpath.empty()) {

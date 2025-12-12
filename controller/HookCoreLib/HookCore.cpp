@@ -180,31 +180,38 @@ namespace HookCore {
 			WCHAR temp_tramp_name[MAX_PATH] = { 0 };
 			memcpy(temp_tramp_name, trampName.c_str(), trampName.size() * sizeof(WCHAR));
 			auto s = services->GetCurrentDirFilePath(temp_tramp_name);
+			// check trampoline dll first, if not exist, then we inject
+			services->GetModuleBase(is64, pid, trampName.c_str(), (DWORD64*)&trampoline_dll_base);
+			if (!trampoline_dll_base) {
+				// trampoline is not loaded, inject now
+				trampFullPath = s;
+				if (services)
+					services->LogCore(L"ApplyHook: requesting trampoline inject %s (path=%s).\n",
+						trampName.c_str(), trampFullPath.c_str());
+				bool signaled = services ? services->InjectTrampoline(pid, trampFullPath.c_str()) : false;
+				if (services) services->LogCore(L"ApplyHook: InjectTrampoline result: %s.\n", signaled ? L"success" : L"failure");
+				if (signaled) {
+					// Poll up to 5 seconds (50 * 100ms) for trampoline module presence.
+					const int maxIterations = 50; bool loaded = false;
+					for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
+						//  GetModuleBase(bool is64, HANDLE hProc, wchar_t* target_module, DWORD64* base) = 0;
+						services->GetModuleBase(is64, pid, trampName.c_str(), (DWORD64*)&trampoline_dll_base);
 
-			trampFullPath = s;
-			if (services) 
-				services->LogCore(L"ApplyHook: requesting trampoline inject %s (path=%s).\n",
-					trampName.c_str(), trampFullPath.c_str());
-			bool signaled = services ? services->InjectTrampoline(pid, trampFullPath.c_str()) : false;
-			if (services) services->LogCore(L"ApplyHook: InjectTrampoline result: %s.\n", signaled ? L"success" : L"failure");
-			if (signaled) {
-				// Poll up to 5 seconds (50 * 100ms) for trampoline module presence.
-				const int maxIterations = 50; bool loaded = false;
-				for (int iter = 0; iter < maxIterations && !loaded; ++iter) {
-					//  GetModuleBase(bool is64, HANDLE hProc, wchar_t* target_module, DWORD64* base) = 0;
-					services->GetModuleBase(is64, pid, trampName.c_str(), (DWORD64*)&trampoline_dll_base);
-
-					if (trampoline_dll_base != NULL) {
-						loaded = true;
-						break;
+						if (trampoline_dll_base != NULL) {
+							loaded = true;
+							break;
+						}
+						if (!loaded) Sleep(100);
 					}
-					if (!loaded) Sleep(100);
+					if (services) services->LogCore(L"ApplyHook: trampoline DLL %s %s after signaling.\n", trampName.c_str(), loaded ? L"detected" : L"NOT detected within 5s");
+					if (!loaded) {
+						LOG_CORE(services, L"ApplyHook: can not continue because trampoline DLL is not laoded");
+						return false;
+					}
 				}
-				if (services) services->LogCore(L"ApplyHook: trampoline DLL %s %s after signaling.\n", trampName.c_str(), loaded ? L"detected" : L"NOT detected within 5s");
-				if (!loaded) {
-					LOG_CORE(services, L"ApplyHook: can not continue because trampoline DLL is not laoded");
-					return false;
-				}
+			}
+			else {
+				services->LogCore(L"ApplyHook: trampoline DLL %s is already loaded\n", trampName.c_str());
 			}
 		}
 		// probe target process memory to locate a suitable near locate for allocating trampoline code addr

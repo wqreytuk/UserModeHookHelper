@@ -640,7 +640,7 @@ bool Filter::FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle) {
 		DUPLICATE_SAME_ACCESS
 	);
 	if (!ok) {
-		LOG_CTRL_ETW(L"DuplicateHandle failed; trying kernel duplication\n");
+		// LOG_CTRL_ETW(L"DuplicateHandle failed; trying kernel duplication\n");
 		HANDLE hDupKernel = NULL;
 		if (!FLTCOMM_DuplicateHandleKernel(hProc, &hDupKernel)) {
 			LOG_CTRL_ETW(L"Kernel duplicate failed\n");
