@@ -2,6 +2,7 @@
 //
 #include <windows.h>
 #include <afxres.h>
+#include "HookUIResource.h"
 #include "resource.h"
 /////////////////////////////////////////////////////////////////////////////
 // Chinese (Simplified, PRC) resources
@@ -30,7 +31,7 @@ BEGIN
     LTEXT           "Export Function:",IDC_HOOKUI_STATIC_EXPORT,270,84,75,8
     EDITTEXT        IDC_HOOKUI_EDIT_EXPORT,272,98,140,14,ES_AUTOHSCROLL
     DEFPUSHBUTTON   "Apply Hook",IDC_HOOKUI_BTN_APPLY,270,122,65,14
-    PUSHBUTTON      "Apply Hook Sequence...",IDCANCEL,345,122,95,14
+    PUSHBUTTON      "Apply Hook Sequence...",IDC_HOOKUI_BTN_APPLY_SEQ,345,122,95,14
 END
 
 

@@ -13,3 +13,5 @@
 // New input for export function name
 #define IDC_HOOKUI_STATIC_EXPORT    5111
 #define IDC_HOOKUI_EDIT_EXPORT      5112
+// Apply Hook Sequence button (replaces default IDCANCEL id to avoid close-icon conflicts)
+#define IDC_HOOKUI_BTN_APPLY_SEQ    5113

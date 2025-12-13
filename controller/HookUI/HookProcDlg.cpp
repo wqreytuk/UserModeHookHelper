@@ -47,7 +47,7 @@ const UINT HookProcDlg::kMsgHookDlgDestroyed = WM_APP + 0x701;
 
 BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_HOOKUI_BTN_APPLY, &HookProcDlg::OnBnClickedApplyHook)
-	ON_BN_CLICKED(IDCANCEL, &HookProcDlg::OnBnClickedApplyHookSequence)
+	ON_BN_CLICKED(IDC_HOOKUI_BTN_APPLY_SEQ, &HookProcDlg::OnBnClickedApplyHookSequence)
 	ON_WM_SIZE()
 	ON_WM_CONTEXTMENU()
 	ON_WM_LBUTTONDOWN()
@@ -407,9 +407,13 @@ void HookProcDlg::UpdateLayoutForSplitter(int cx, int cy) {
 	moveCtrl(IDC_HOOKUI_STATIC_EXPORT, panelX, 85, 140, 14);
 	moveCtrl(IDC_HOOKUI_EDIT_EXPORT, panelX, 97, 140, 18);
 	// Place Apply/Close buttons below Export field to avoid overlap
-	int applyY = 120; int btnW = 65; moveCtrl(IDC_HOOKUI_BTN_APPLY, panelX, applyY, btnW, 22); moveCtrl(IDCANCEL, panelX + btnW + 5, applyY, btnW, 22);
-	int hooksY = applyY + 24;
-	int hooksW = cx - panelX - margin; int hooksH = listTop + listHeight - hooksY; if (hooksH < 40) hooksH = 40;
+	// Keep original relative positions to other input controls
+	int hooksW = cx - panelX - margin;
+	int applyY = 120; int btnW = 65; int btnH = 22;
+	moveCtrl(IDC_HOOKUI_BTN_APPLY, panelX, applyY, btnW, btnH);
+	moveCtrl(IDC_HOOKUI_BTN_APPLY_SEQ, panelX + btnW + 5, applyY, btnW, btnH);
+	int hooksY = applyY + btnH + 2;
+	int hooksH = listTop + listHeight - hooksY; if (hooksH < 40) hooksH = 40;
 	moveCtrl(IDC_HOOKUI_LIST_HOOKS, panelX, hooksY, hooksW, hooksH);
 }
 
@@ -462,7 +466,12 @@ int HookProcDlg::AddHookEntry(const HookRow& row) {
 	if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
 	DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
 	std::vector<HookRow*> rows;
-
+	int count = m_HookList.GetItemCount();
+	for (int j = 0; j < count; ++j) {
+		HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(j));
+		if (!r) continue;
+		rows.push_back(r);
+	}
 	if (m_services) {
 		// Convert vector<HookRow*> to vector<HookRow> for service
 		std::vector<HookRow> outRows; outRows.reserve(rows.size());
