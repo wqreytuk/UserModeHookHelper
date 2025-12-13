@@ -211,6 +211,16 @@ void HookProcDlg::OnBnClickedApplyHookSequence() {
 			
 			goto RollBack;
 		}
+		// annotate ExpFunc for the created row by matching address
+		for (int iRow = 0; iRow < m_HookList.GetItemCount(); ++iRow) {
+			HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(iRow));
+			if (hr && hr->address == (base + offVal)) {
+				CString ef; ef.Format(L"%s!%s", dll.c_str(), exp.c_str());
+				hr->expFunc = ef.GetString();
+				m_HookList.SetItemText(iRow, 3, ef);
+				break;
+			}
+		}
 		applied++;
 	}
 	 msg.Format(L"Applied %d hooks from sequence.", applied);
@@ -269,24 +279,23 @@ RollBack:
 							MB_OK | MB_ICONERROR);
 						return;
 					}
+					// remove succeed, mark this hookid available
+					// its previous value should be 1
+					if (!_bittestandreset((LONG*)m_exp_num_tracker_bitfield, hr->id)) {
+						MessageBox(L"hookid should be set before reset", L"Hook", MB_OK | MB_ICONERROR);
+						return ;
+					}
 					delete hr;
 				}
 				m_HookList.DeleteItem(idx);
 			}
-
-			// Recompute nextHookId once from remaining items
-			m_nextHookId = 1;
-			for (int i = 0; i < m_HookList.GetItemCount(); ++i) {
-				HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
-				if (r && r->id >= m_nextHookId)
-					m_nextHookId = r->id + 1;
-			}
-
+			 
 		}
 	}
 }
 HookProcDlg::HookProcDlg(DWORD pid, const std::wstring& name, IHookServices* services, CWnd* parent)
-	: CDialogEx(IDD_HOOKUI_PROC_DLG, parent), m_pid(pid), m_name(name), m_services(services) {}
+	: CDialogEx(IDD_HOOKUI_PROC_DLG, parent), m_pid(pid), m_name(name), m_services(services) {
+}
 
 BOOL HookProcDlg::CreateModeless(CWnd* parent) { return Create(IDD_HOOKUI_PROC_DLG, parent); }
 
@@ -313,6 +322,7 @@ BOOL HookProcDlg::OnInitDialog() {
 	m_HookList.InsertColumn(0, L"Hook ID", LVCFMT_LEFT, 80);
 	m_HookList.InsertColumn(1, L"Address", LVCFMT_LEFT, 100);
 	m_HookList.InsertColumn(2, L"Module", LVCFMT_LEFT, 180);
+	m_HookList.InsertColumn(3, L"ExpFunc", LVCFMT_LEFT, 220);
 	m_HookList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
 	PopulateHookList();
 	// Load persisted hook rows for this PID (use PID + startTime key stored by controller)
@@ -346,8 +356,13 @@ BOOL HookProcDlg::OnInitDialog() {
 			int i = m_HookList.InsertItem(idx, idC);
 			m_HookList.SetItemText(i, 1, addrC);
 			m_HookList.SetItemText(i, 2, hr->module.c_str());
+			if (!hr->expFunc.empty()) m_HookList.SetItemText(i, 3, hr->expFunc.c_str());
 			m_HookList.SetItemData(i, (DWORD_PTR)hr);
-			if (hr->id >= m_nextHookId) m_nextHookId = hr->id + 1;
+			// mark unvaliable
+			if (_bittestandset((LONG*)m_exp_num_tracker_bitfield, hr->id)) {
+				MessageBox(L"OnInitDialog: hook id reuse deteced, abort!", L"Hook", MB_OK | MB_ICONERROR);
+				return FALSE;
+			}
 		}
 	}
 	// apply initial splitter
@@ -429,10 +444,9 @@ void HookProcDlg::PopulateHookList() {
 }
 
 int HookProcDlg::AddHookEntry(const HookRow& row) {
+	
 	int idx = m_HookList.GetItemCount();
 	int useId = row.id;
-	if (useId == -1) useId = m_nextHookId++;
-	CString idC; idC.Format(L"%d", useId);
 	CString addrC; addrC.Format(L"0x%llX", row.address);
 	CString useIdC; useIdC.Format(L"%d", useId);
 	int i = m_HookList.InsertItem(idx, useIdC);
@@ -440,7 +454,7 @@ int HookProcDlg::AddHookEntry(const HookRow& row) {
 	m_HookList.SetItemText(i, 2, row.module.c_str());
 	// Allocate a HookRow copy and attach to the list item so we can later locate by address
 	HookRow* hr = new HookRow(row);
-	hr->id = useId;
+	hr->id = row.id;
 	m_HookList.SetItemData(i, (DWORD_PTR)hr);
 	// Persist updated list for this PID using RegistryStore
 	// Build entries vector and write
@@ -448,13 +462,7 @@ int HookProcDlg::AddHookEntry(const HookRow& row) {
 	if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
 	DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
 	std::vector<HookRow*> rows;
-	int count = m_HookList.GetItemCount();
-	for (int j = 0; j < count; ++j) {
-		HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(j));
-		if (!r) continue;
-		rows.push_back(r);
-		if (r->id >= m_nextHookId) m_nextHookId = r->id + 1;
-	}
+
 	if (m_services) {
 		// Convert vector<HookRow*> to vector<HookRow> for service
 		std::vector<HookRow> outRows; outRows.reserve(rows.size());
@@ -642,13 +650,7 @@ void HookProcDlg::OnHookMenuDisable() {
 	if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
 	DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
 	std::vector<HookRow*> rows;
-	int count = m_HookList.GetItemCount();
-	for (int j = 0; j < count; ++j) {
-		HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(j));
-		if (!r) continue;
-		rows.push_back(r);
-		if (r->id >= m_nextHookId) m_nextHookId = r->id + 1;
-	}
+	
 	if (m_services) {
 		// Convert vector<HookRow*> to vector<HookRow> for service
 		std::vector<HookRow> outRows; outRows.reserve(rows.size());
@@ -678,13 +680,7 @@ void HookProcDlg::OnHookMenuEnable() {
 	if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
 	DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
 	std::vector<HookRow*> rows;
-	int count = m_HookList.GetItemCount();
-	for (int j = 0; j < count; ++j) {
-		HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(j));
-		if (!r) continue;
-		rows.push_back(r);
-		if (r->id >= m_nextHookId) m_nextHookId = r->id + 1;
-	}
+	
 	if (m_services) {
 		// Convert vector<HookRow*> to vector<HookRow> for service
 		std::vector<HookRow> outRows; outRows.reserve(rows.size());
@@ -717,13 +713,6 @@ void HookProcDlg::OnHookMenuRemove() {
 	m_HookList.DeleteItem(item);
 	delete hr;
 	 
-	int count = m_HookList.GetItemCount();
-	m_nextHookId = 1; // reset and recompute from existing rows
-	for (int i = 0; i < count; ++i) {
-		HookRow* r = reinterpret_cast<HookRow*>(m_HookList.GetItemData(i));
-
-		if (r && r->id >= m_nextHookId) m_nextHookId = r->id + 1;
-	}
 }
 
 void HookProcDlg::OnModuleItemChanged(NMHDR* pNMHDR, LRESULT* pResult) { if (pResult) *pResult = 0; }
@@ -884,6 +873,12 @@ bool HookProcDlg::HookCommonCode(DWORD64 module_base, DWORD module_offset,std::w
 				MessageBox(L"Failed to remove hook first before rehooking the same address", L"Hook", MB_OK | MB_ICONERROR);
 				return false;
 			}
+			// remove succeed, mark this hookid available
+			// its previous value should be 1
+			if (!_bittestandreset((LONG*)m_exp_num_tracker_bitfield, hr->id)) {
+				MessageBox(L"hookid should be set before reset", L"Hook", MB_OK | MB_ICONERROR);
+				return false;
+			}
 		}
 	}
 
@@ -891,10 +886,24 @@ bool HookProcDlg::HookCommonCode(DWORD64 module_base, DWORD module_offset,std::w
 	DWORD ori_asm_code_len = 0;
 	PVOID trampoline_pit = 0;
 	PVOID ori_asm_code_addr = 0;
-	int assignedHookId = m_nextHookId; // reserve id that will be used for this new hook
+	// this is where HookId generated, we use bittest to find a valiable id
+	int assignedHookId = 0;
+	for (size_t i = 0; i < TRAMPOLINE_EXP_NUM_MAX; i++) {
+		if (!_bittest((LONG*)m_exp_num_tracker_bitfield, i)) {
+			assignedHookId = i;
+			break;
+		}
+	}
+	
 	bool success = HookCore::ApplyHook(m_pid, module_base+module_offset, m_services, hook_code_dll_base + hook_code_offset, assignedHookId, &ori_asm_code_len,
 		&trampoline_pit, &ori_asm_code_addr);
 	if (success) {
+		// once hook succeed we need to mark hookid unvaliable
+		// mark current hookid unvaliable, and we need make sure it's previously available
+		if (_bittestandset((LONG*)m_exp_num_tracker_bitfield, assignedHookId)) {
+			MessageBox(L"hook id reuse deteced, abort!", L"Hook", MB_OK | MB_ICONERROR);
+			return 0;
+		}
 		if (m_services) 
 			LOG_UI(m_services, L"HookCore::ApplyHook succeeded at 0x%llX\n", addr);
 
@@ -911,6 +920,7 @@ bool HookProcDlg::HookCommonCode(DWORD64 module_base, DWORD module_offset,std::w
 			HookRow r; r.id = assignedHookId; r.address = addr; r.module = moduleName;
 			r.ori_asm_code_len = ori_asm_code_len; r.trampoline_pit = (unsigned long long)trampoline_pit;
 			r.ori_asm_code_addr = (DWORD64)ori_asm_code_addr;
+			
 			AddHookEntry(r);
 		}
 		return true;

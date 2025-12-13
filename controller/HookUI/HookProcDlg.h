@@ -54,5 +54,6 @@ private:
     int m_sortColumn=0; bool m_sortAscending=true; static int CALLBACK ModuleCompare(LPARAM, LPARAM, LPARAM);
     void PopulateHookList();
     int AddHookEntry(const HookRow& row);
-    int m_nextHookId = 1; // auto-incrementing hook id starting at 1
+	ULONG64 m_exp_num_tracker_bitfield[4] = {};
+
 };

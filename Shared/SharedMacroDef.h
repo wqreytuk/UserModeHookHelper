@@ -97,3 +97,6 @@ typedef struct _PH_MODULE_LIST_NODE {
 #define REG_WHITELIST_HASHES     L"WhitelistHashes"
 // Protected process names (final component, REG_MULTI_SZ)
 #define REG_PROTECTED_PROCESS_NAME L"ProtectedProcessName"
+
+
+#define TRAMPOLINE_EXP_NUM_MAX 0x100
