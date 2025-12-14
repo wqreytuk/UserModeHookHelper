@@ -432,13 +432,13 @@ public:
 		return Helper::IsProcess64(targetPid, outIs64);
 	}
 	bool SaveProcHookList(DWORD pid, DWORD hi, DWORD lo, const std::vector<HookRow>& entries) override {
-		// Convert HookRow vector to registry tuple shape. Use filetime hi/lo = 0
-		std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> out;
-		out.reserve(entries.size());
-		for (const auto &r : entries) {
-			out.emplace_back(pid, hi, lo, r.id, r.ori_asm_code_len, r.ori_asm_code_addr, r.trampoline_pit, r.address, r.module);
+		// Use stable HookRow-based API to avoid tuple churn
+		std::vector<HookRow*> ptrs; ptrs.reserve(entries.size());
+		for (auto const &r : entries) {
+			// const_cast is safe here since RegistryStore only reads the data
+			ptrs.push_back(const_cast<HookRow*>(&r));
 		}
-		return RegistryStore::WriteProcHookList(out);
+		return RegistryStore::WriteProcHookListRows(pid, hi, lo, ptrs);
 	}
 	 bool ForceInject(DWORD pid) override {
 		return  Helper::ForceInject(pid);
@@ -474,22 +474,8 @@ public:
 		return RegistryStore::RemoveProcHookList(pid, filetimeHi, filetimeLo);
 	}
 	 bool LoadProcHookList(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, std::vector<HookRow>& outEntries) override {
-		std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> tmp;
-		if (!RegistryStore::ReadProcHookList(tmp)) return false;
-		outEntries.clear(); outEntries.reserve(tmp.size());
-		for (auto &t : tmp) {
-			if ((pid != std::get<0>(t)) || (filetimeHi != std::get<1>(t)) || (filetimeLo != std::get<2>(t)))
-				continue;
-			HookRow r;
-			r.id = std::get<3>(t);
-			r.ori_asm_code_len = std::get<4>(t);
-			r.ori_asm_code_addr = std::get<5>(t);
-			r.trampoline_pit = std::get<6>(t);
-			r.address = std::get<7>(t);
-			r.module = std::get<8>(t);
-			outEntries.push_back(r);
-		}
-		return true;
+		// Use stable HookRow-based reader which fills expFunc when present
+		return RegistryStore::ReadProcHookListRows(pid, filetimeHi, filetimeLo, outEntries);
 	}
 	 bool WriteProcessMemoryWrap(
 		 _In_ HANDLE hProcess,

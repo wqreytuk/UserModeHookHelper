@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <tuple>
+#include "../../Shared/HookRow.h"
 
 namespace RegistryStore {
     // Read all persisted hook NT paths into out vector. Returns true on success
@@ -38,6 +39,9 @@ namespace RegistryStore {
     // If pid==0 and hi==0 and lo==0 the call behaves like the original (no filter).
     bool ReadProcHookList(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& outEntries);
     bool WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>>& entries);
+    // Optimized API: write/read using stable HookRow structures (future-proof for extra fields like ExpFunc)
+    bool WriteProcHookListRows(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, const std::vector<::HookRow*>& rows);
+    bool ReadProcHookListRows(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, std::vector<::HookRow>& outRows);
     // Remove a single persisted ProcHookList entry matching PID, FILETIME hi/lo and hook id.
     bool RemoveProcHookEntry(DWORD pid, DWORD filetimeHi, DWORD filetimeLo, int hookId);
     // Remove all hook entries for a specific PID+FILETIME key

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "RegistryStore.h"
+#include "../../Shared/HookRow.h"
 #include <windows.h>
 #include <vector>
 #include <tuple>
@@ -339,6 +340,51 @@ bool RegistryStore::WriteProcHookList(const std::vector<std::tuple<DWORD, DWORD,
 	LONG rr = RegSetValueExW(hKey, PROCHOOK_VALUE_NAME, 0, REG_MULTI_SZ, reinterpret_cast<const BYTE*>(buf.data()), (DWORD)(buf.size() * sizeof(wchar_t)));
 	RegCloseKey(hKey);
 	return rr == ERROR_SUCCESS;
+}
+
+// New stable APIs built around HookRow. To avoid churn when adding new columns, we encode
+// optional fields by extending the module field with a '|' suffix carrying ExpFunc.
+// Format remains REG_MULTI_SZ lines: PID:HIGH:LOW:HOOKID:ORI_LEN:ORI_ADDR:TRAMP_PIT:ADDR=MODULE[|EXPFUNC]
+// Existing readers parsing only MODULE still work; new readers can split by '|'.
+bool RegistryStore::WriteProcHookListRows(DWORD pid, DWORD hi, DWORD lo, const std::vector<::HookRow*>& rows) {
+	std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> tuples;
+	tuples.reserve(rows.size());
+	for (auto r : rows) {
+		if (!r) continue;
+		std::wstring modField = r->module;
+		if (!r->expFunc.empty()) {
+			modField.append(L"|");
+			modField.append(r->expFunc);
+		}
+		tuples.emplace_back(pid, hi, lo, r->id, r->ori_asm_code_len, r->ori_asm_code_addr, r->trampoline_pit, r->address, modField);
+	}
+	return WriteProcHookList(tuples);
+}
+
+bool RegistryStore::ReadProcHookListRows(DWORD filterPid, DWORD filterHi, DWORD filterLo, std::vector<::HookRow>& outRows) {
+	std::vector<std::tuple<DWORD, DWORD, DWORD, int, DWORD, unsigned long long, unsigned long long, unsigned long long, std::wstring>> tuples;
+	if (!ReadProcHookList(filterPid, filterHi, filterLo, tuples)) return false;
+	outRows.clear(); outRows.reserve(tuples.size());
+	for (auto &t : tuples) {
+		::HookRow r{};
+		r.id = std::get<3>(t);
+		r.ori_asm_code_len = std::get<4>(t);
+		r.ori_asm_code_addr = std::get<5>(t);
+		r.trampoline_pit = std::get<6>(t);
+		r.address = std::get<7>(t);
+		std::wstring mod = std::get<8>(t);
+		// Split MODULE[|EXPFUNC]
+		size_t bar = mod.find(L'|');
+		if (bar == std::wstring::npos) {
+			r.module = mod;
+			r.expFunc.clear();
+		} else {
+			r.module = mod.substr(0, bar);
+			r.expFunc = mod.substr(bar + 1);
+		}
+		outRows.push_back(std::move(r));
+	}
+	return true;
 }
 
 

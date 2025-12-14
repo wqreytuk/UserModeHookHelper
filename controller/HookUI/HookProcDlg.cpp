@@ -45,6 +45,13 @@ static void CopyTextToClipboard(const CString& text, HWND owner) {
 
 const UINT HookProcDlg::kMsgHookDlgDestroyed = WM_APP + 0x701;
 
+// OnSize: reposition controls when the dialog is resized
+void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
+	CDialogEx::OnSize(nType, cx, cy);
+	if (m_ModuleList.GetSafeHwnd() && m_HookList.GetSafeHwnd()) {
+		UpdateLayoutForSplitter(cx, cy);
+	}
+}
 BEGIN_MESSAGE_MAP(HookProcDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_HOOKUI_BTN_APPLY, &HookProcDlg::OnBnClickedApplyHook)
 	ON_BN_CLICKED(IDC_HOOKUI_BTN_APPLY_SEQ, &HookProcDlg::OnBnClickedApplyHookSequence)
@@ -212,12 +219,15 @@ void HookProcDlg::OnBnClickedApplyHookSequence() {
 			goto RollBack;
 		}
 		// annotate ExpFunc for the created row by matching address
+		auto GetFilename = [](const std::wstring& path) -> std::wstring {
+			size_t pos = path.find_last_of(L"\\/");
+			return (pos == std::wstring::npos) ? path : path.substr(pos + 1);
+		};
 		for (int iRow = 0; iRow < m_HookList.GetItemCount(); ++iRow) {
 			HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(iRow));
 			if (hr && hr->address == (base + offVal)) {
-				CString ef; ef.Format(L"%s!%s", dll.c_str(), exp.c_str());
-				hr->expFunc = ef.GetString();
-				m_HookList.SetItemText(iRow, 3, ef);
+				hr->expFunc = GetFilename(dll) + L"!" + exp;
+				m_HookList.SetItemText(iRow, 3, hr->expFunc.c_str());
 				break;
 			}
 		}
@@ -406,12 +416,21 @@ void HookProcDlg::UpdateLayoutForSplitter(int cx, int cy) {
 	// Export function label + edit directly under Direct Address
 	moveCtrl(IDC_HOOKUI_STATIC_EXPORT, panelX, 85, 140, 14);
 	moveCtrl(IDC_HOOKUI_EDIT_EXPORT, panelX, 97, 140, 18);
-	// Place Apply/Close buttons below Export field to avoid overlap
-	// Keep original relative positions to other input controls
+	// Place Apply/Sequence buttons directly below the Export edit dynamically
 	int hooksW = cx - panelX - margin;
-	int applyY = 120; int btnW = 65; int btnH = 22;
-	moveCtrl(IDC_HOOKUI_BTN_APPLY, panelX, applyY, btnW, btnH);
-	moveCtrl(IDC_HOOKUI_BTN_APPLY_SEQ, panelX + btnW + 5, applyY, btnW, btnH);
+	int btnW = 65; int btnH = 22;
+	int applyY = 120;
+	if (CWnd* exportEdit = GetDlgItem(IDC_HOOKUI_EDIT_EXPORT)) {
+		CRect rcExp; exportEdit->GetWindowRect(&rcExp); ScreenToClient(&rcExp);
+		applyY = rcExp.bottom + 5;
+	}
+	int applyX = panelX;
+	if (CWnd* exportEdit = GetDlgItem(IDC_HOOKUI_EDIT_EXPORT)) {
+		CRect rcExp; exportEdit->GetWindowRect(&rcExp); ScreenToClient(&rcExp);
+		applyX = rcExp.left;
+	}
+	moveCtrl(IDC_HOOKUI_BTN_APPLY, applyX, applyY, btnW, btnH);
+	moveCtrl(IDC_HOOKUI_BTN_APPLY_SEQ, applyX + btnW + 5, applyY, btnW, btnH);
 	int hooksY = applyY + btnH + 2;
 	int hooksH = listTop + listHeight - hooksY; if (hooksH < 40) hooksH = 40;
 	moveCtrl(IDC_HOOKUI_LIST_HOOKS, panelX, hooksY, hooksW, hooksH);
@@ -448,6 +467,16 @@ void HookProcDlg::PopulateHookList() {
 }
 
 int HookProcDlg::AddHookEntry(const HookRow& row) {
+	// remove duplicated hookentry by checking hookid
+	for (int j = 0; j < m_HookList.GetItemCount(); ++j) {
+		HookRow* existing = reinterpret_cast<HookRow*>(m_HookList.GetItemData(j));
+		if (existing && existing->id == row.id) {
+			// Remove old UI row and free it; keep bitfield state as-is since we reuse the same id
+			m_HookList.DeleteItem(j);
+			delete existing;
+			break; // there should be at most one
+		}
+	}
 	
 	int idx = m_HookList.GetItemCount();
 	int useId = row.id;
@@ -1064,107 +1093,4 @@ void HookProcDlg::OnBnClickedApplyHook() {
 	HookCommonCode(moduleBase, (DWORD)(addr - moduleBase), pathToInject, exportToCheck);
 }
 
-void HookProcDlg::OnSize(UINT nType, int cx, int cy) {
-	CDialogEx::OnSize(nType, cx, cy);
-	if (!m_ModuleList.GetSafeHwnd()) return;
-	const int margin = 7;
-	const int rightPanelMinW = 210;
-	const int interY = 12;
-	const int labelH = 14;
-	const int editH = 18;
-	const int btnH = 22;
-	int rightPanelW = 250;
-	int availW = cx - (margin * 2) - rightPanelW;
-	if (availW < 160) availW = 160;
-	if (cx < (margin * 2 + rightPanelW + 160)) {
-		rightPanelW = cx - (margin * 2) - 160;
-		if (rightPanelW < rightPanelMinW) rightPanelW = rightPanelMinW;
-	}
-	int listW = cx - (margin * 2) - rightPanelW;
-	// Compute list top based on actual Modules label position if available
-	int listTop = 7 + 11;
-	if (CWnd* modulesLabel = GetDlgItem(IDC_HOOKUI_STATIC_MODULE)) {
-		CRect rcLabel; modulesLabel->GetWindowRect(&rcLabel); ScreenToClient(&rcLabel);
-		listTop = rcLabel.bottom + 2;
-	}
-	// Keep module list bottom aligned with hook list bottom by using same bottom margin
-	int listH = cy - listTop - margin; if (listH < 80) listH = 80;
-	HDWP hdwp = BeginDeferWindowPos(10);
-	if (!hdwp) { m_ModuleList.MoveWindow(margin, listTop, listW, listH); }
-	int panelX = margin + listW + margin;
-	int y = listTop;
-	CWnd* wOffsetLabel = GetDlgItem(IDC_HOOKUI_STATIC_OFFSET);
-	CWnd* wOffsetEdit = GetDlgItem(IDC_HOOKUI_EDIT_OFFSET);
-	if (wOffsetLabel && wOffsetEdit) {
-		if (hdwp) {
-			hdwp = DeferWindowPos(hdwp, wOffsetLabel->GetSafeHwnd(), nullptr, panelX, y, rightPanelW - margin, labelH, SWP_NOZORDER | SWP_NOACTIVATE);
-			hdwp = DeferWindowPos(hdwp, wOffsetEdit->GetSafeHwnd(), nullptr, panelX, y + labelH + 2, rightPanelW - margin, editH, SWP_NOZORDER | SWP_NOACTIVATE);
-		}
-		else {
-			wOffsetLabel->MoveWindow(panelX, y, rightPanelW - margin, labelH);
-			wOffsetEdit->MoveWindow(panelX, y + labelH + 2, rightPanelW - margin, editH);
-		}
-		y += labelH + 2 + editH + interY;
-	}
-	CWnd* wDirectLabel = GetDlgItem(IDC_HOOKUI_STATIC_DIRECT);
-	CWnd* wDirectEdit = GetDlgItem(IDC_HOOKUI_EDIT_DIRECT);
-	if (wDirectLabel && wDirectEdit) {
-		if (hdwp) {
-			hdwp = DeferWindowPos(hdwp, wDirectLabel->GetSafeHwnd(), nullptr, panelX, y, rightPanelW - margin, labelH, SWP_NOZORDER | SWP_NOACTIVATE);
-			hdwp = DeferWindowPos(hdwp, wDirectEdit->GetSafeHwnd(), nullptr, panelX, y + labelH + 2, rightPanelW - margin, editH, SWP_NOZORDER | SWP_NOACTIVATE);
-		}
-		else {
-			wDirectLabel->MoveWindow(panelX, y, rightPanelW - margin, labelH);
-			wDirectEdit->MoveWindow(panelX, y + labelH + 2, rightPanelW - margin, editH);
-		}
-		y += labelH + 2 + editH + interY;
-	}
-	// Export Function label + edit should resize with right panel like other inputs
-	CWnd* wExportLabel = GetDlgItem(IDC_HOOKUI_STATIC_EXPORT);
-	CWnd* wExportEdit = GetDlgItem(IDC_HOOKUI_EDIT_EXPORT);
-	if (wExportLabel && wExportEdit) {
-		if (hdwp) {
-			hdwp = DeferWindowPos(hdwp, wExportLabel->GetSafeHwnd(), nullptr, panelX, y, rightPanelW - margin, labelH, SWP_NOZORDER | SWP_NOACTIVATE);
-			hdwp = DeferWindowPos(hdwp, wExportEdit->GetSafeHwnd(), nullptr, panelX, y + labelH + 2, rightPanelW - margin, editH, SWP_NOZORDER | SWP_NOACTIVATE);
-		}
-		else {
-			wExportLabel->MoveWindow(panelX, y, rightPanelW - margin, labelH);
-			wExportEdit->MoveWindow(panelX, y + labelH + 2, rightPanelW - margin, editH);
-		}
-		y += labelH + 2 + editH + interY;
-	}
-	CWnd* wApply = GetDlgItem(IDC_HOOKUI_BTN_APPLY);
-	CWnd* wClose = GetDlgItem(IDCANCEL);
-	int btnW = (rightPanelW - margin - 5) / 2; if (btnW < 60) btnW = 60;
-	if (wApply && wClose) {
-		if (hdwp) {
-			hdwp = DeferWindowPos(hdwp, wApply->GetSafeHwnd(), nullptr, panelX, y, btnW, btnH, SWP_NOZORDER | SWP_NOACTIVATE);
-			hdwp = DeferWindowPos(hdwp, wClose->GetSafeHwnd(), nullptr, panelX + btnW + 5, y, btnW, btnH, SWP_NOZORDER | SWP_NOACTIVATE);
-		}
-		else {
-			wApply->MoveWindow(panelX, y, btnW, btnH);
-			wClose->MoveWindow(panelX + btnW + 5, y, btnW, btnH);
-		}
-		y += btnH + interY;
-	}
-	// Position hook list on right side below buttons and stretch to bottom
-	CWnd* wHookList = GetDlgItem(IDC_HOOKUI_LIST_HOOKS);
-	if (wHookList && wHookList->GetSafeHwnd()) {
-		int hooksX = panelX;
-		int hooksY = y;
-		int hooksW = rightPanelW - margin;
-		int hooksH = cy - hooksY - margin;
-		if (hooksH < 40) hooksH = 40;
-		if (hdwp) hdwp = DeferWindowPos(hdwp, wHookList->GetSafeHwnd(), nullptr, hooksX, hooksY, hooksW, hooksH, SWP_NOZORDER | SWP_NOACTIVATE);
-		else wHookList->MoveWindow(hooksX, hooksY, hooksW, hooksH);
-		y += hooksH + interY;
-	}
-	CWnd* wHint = GetDlgItem(IDC_HOOKUI_STATIC_HINT);
-	if (wHint) {
-		int hintY = listTop + listH + 5; if (hintY + 16 > cy) hintY = cy - 20;
-		if (hdwp) { hdwp = DeferWindowPos(hdwp, wHint->GetSafeHwnd(), nullptr, margin, hintY, listW - margin, 16, SWP_NOZORDER | SWP_NOACTIVATE); }
-		else { wHint->MoveWindow(margin, hintY, listW - margin, 16); }
-	}
-	if (hdwp) { hdwp = DeferWindowPos(hdwp, m_ModuleList.GetSafeHwnd(), nullptr, margin, listTop, listW, listH, SWP_NOZORDER | SWP_NOACTIVATE); EndDeferWindowPos(hdwp); }
-	RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-}
+// (removed duplicate OnSize implementation)
