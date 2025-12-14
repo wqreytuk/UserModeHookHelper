@@ -11,9 +11,6 @@
 #include "../ProcessHackerLib/phlib_expose.h"
 
 namespace HookCore {
-#define E9_JMP_INSTRUCTION_SIZE 0x5
-#define E9_JMP_INSTRUCTION_OPCODE_SIZE 0x1
-#define E9_JMP_INSTRUCTION_OPRAND_SIZE 0x4
 	static const intptr_t MAX_DELTA = 0x7FFFFFFF; // ?GB
 	static IHookServices* g_hookServices = nullptr;
 	IHookServices* GetHookServices() {

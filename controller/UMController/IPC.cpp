@@ -9,6 +9,8 @@
 #include "../Shared/LogMacros.h"
 #include <sddl.h>
 #include "../Shared/SharedMacroDef.h"
+#include "../ProcessHackerLib/phlib_expose.h"
+#include "../../drivers/UserModeHookHelper/UKShared.h"
 
 
 // Helper to format named object name into buffer
@@ -24,89 +26,89 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 
 	LOG_CTRL_ETW(L"IPC_SendInject: pid=%u dll=%s\n", pid, dllPath);
 
-	// Build signal filename in Win32 form
-	WCHAR signalPath[MAX_PATH] = { 0 };
-	FormatObjectName(signalPath, RTL_NUMBER_OF(signalPath), USER_IPC_SIGNAL_FILE_FMT, (unsigned)pid);
-
-	// Convert wide DLL path to ANSI bytes because the injector widens bytes back
-	// to WCHAR on the target process side.
-	int asciiLen = WideCharToMultiByte(CP_ACP, 0, dllPath, -1, NULL, 0, NULL, NULL);
-	if (asciiLen <= 0) {
-		LOG_CTRL_ETW(L"IPC_SendInject: WideCharToMultiByte failed\n");
+	
+	// write target process memory export function 
+	/*
+		 void* IsProcessWow64(
+		 _In_ void* hProc,
+		 _Out_ void* IsWow64);
+	 void* PhpEnumProcessModules(void* is64,
+		 _In_ void* ProcessHandle, void* target_module, void* ModuleBase
+	 );
+	*/
+	HANDLE hProc = NULL;
+	if (Helper::GetFilterInstance()) {
+		Helper::GetFilterInstance()->FLTCOMM_GetProcessHandle(pid, &hProc);
+	}
+	else {
+		Helper::Fatal(L"helper filter instance NULL\n");
 		return FALSE;
 	}
-	char* asciiBuf = new char[asciiLen];
-	WideCharToMultiByte(CP_ACP, 0, dllPath, -1, asciiBuf, asciiLen, NULL, NULL);
-	// delete signal file first
-	DeleteFile(signalPath);
-	// Prepare payload: 4 bytes pid (little endian), '$', dll bytes (no null), '$'
-	// We'll write as binary file.
-
-
-
-
-	PSECURITY_DESCRIPTOR pSD = nullptr;
-
-	// SDDL: D: (DACL) (A;;GA;;;WD) => Allow Generic All to Everyone
-	LPCWSTR sddl = L"D:(A;;GA;;;WD)";
-
-	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-		sddl, SDDL_REVISION_1, &pSD, NULL)) {
-		LOG_CTRL_ETW(L"ConvertStringSecurityDescriptorToSecurityDescriptorW failed: 0x%x\n", GetLastError());
-		Helper::Fatal(L"ConvertStringSecurityDescriptorToSecurityDescriptorW function call failed\n");
+	if (!hProc) {
+		LOG_CTRL_ETW(L"failed to call FLTCOMM_GetProcessHandle, Pid=%u\n", pid);
 		return FALSE;
 	}
-
-	SECURITY_ATTRIBUTES sa = {};
-	sa.nLength = sizeof(sa);
-	sa.lpSecurityDescriptor = pSD;
-	sa.bInheritHandle = FALSE;
-
-
-
-	HANDLE hFile = CreateFile(signalPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (hFile == INVALID_HANDLE_VALUE) {
-		LOG_CTRL_ETW(L"IPC_SendInject: CreateFile %ws failed (%u)\n", signalPath, GetLastError());
-		LocalFree(pSD);
-
-		Helper::Fatal(L"create signal file failed\n");
+	bool IsWow64;
+	if (0!=(ULONG)(ULONG_PTR)PHLIB::IsProcessWow64((void*)(ULONG_PTR)hProc, (void*)(ULONG_PTR)&IsWow64)) {
+		LOG_CTRL_ETW(L"failed to call PHLIB::IsProcessWow64, Pid=%u\n", pid);
 		return FALSE;
 	}
-	LocalFree(pSD);
-	DWORD written = 0;
-	// write pid as 4 bytes little-endian
-	// pid is now obsolete, just write DWORD 0
-	DWORD pidValue = 0;
-	if (!WriteFile(hFile, &pidValue, sizeof(pidValue), &written, NULL) || written != sizeof(pidValue)) {
-		LOG_CTRL_ETW(L"IPC_SendInject: WriteFile(pid) failed (%u)\n", GetLastError());
-		CloseHandle(hFile);
+	bool is64 = !IsWow64;
+	std::wstring target_module = is64 ? X64_DLL : X86_DLL;
+	PVOID ModuleBase = NULL;
+	if (0 != (ULONG)(ULONG_PTR)PHLIB::PhpEnumProcessModules((void*)(ULONG_PTR)is64, (void*)(ULONG_PTR)hProc, (void*)(ULONG_PTR)target_module.c_str(), (void*)(ULONG_PTR)&ModuleBase)) {
+		LOG_CTRL_ETW(L"failed to call PHLIB::PhpEnumProcessModules, Pid=%u\n", pid);
 		return FALSE;
 	}
-	// write marker '$'
-	char marker = '$';
-	if (!WriteFile(hFile, &marker, 1, &written, NULL) || written != 1) {
-		LOG_CTRL_ETW(L"IPC_SendInject: WriteFile(marker1) failed (%u)\n", GetLastError());
-		CloseHandle(hFile);
-		return FALSE;
-	}
-	// write ascii dll path (without terminating null)
-	size_t dllBytes = (size_t)(asciiLen - 1); // exclude null
-	if (dllBytes > 0) {
-		if (!WriteFile(hFile, asciiBuf, (DWORD)dllBytes, &written, NULL) || written != dllBytes) {
-			LOG_CTRL_ETW(L"IPC_SendInject: WriteFile(dllPath) failed (%u)\n", GetLastError());
-			CloseHandle(hFile);
-			return FALSE;
-		}
-	}
-	// write trailing marker '$'
-	if (!WriteFile(hFile, &marker, 1, &written, NULL) || written != 1) {
-		LOG_CTRL_ETW(L"IPC_SendInject: WriteFile(marker2) failed (%u)\n", GetLastError());
-		CloseHandle(hFile);
+	// get export function offset of master dll base
+	auto s = Helper::GetCurrentDirFilePath((TCHAR*)target_module.c_str());
+	DWORD  out_func_offset = 0;
+	if (!Helper::CheckExportFromFile(s.c_str(), MASETER_EXP_FUNC_NAME_STR, &out_func_offset)) {
+		LOG_CTRL_ETW(L"can not locate export function Name=%s of module Path=%s\n", WIDEN(MASETER_EXP_FUNC_NAME_STR), s.c_str());
+		Helper::Fatal(L"IPC: can not locate export function\n");
 		return FALSE;
 	}
 
-	CloseHandle(hFile);
-	delete[] asciiBuf;
+	PVOID master_exp_addr = 0;
+	DWORD old_protect = 0;
+#ifdef _DEBUG
+	if (!::VirtualProtectEx(hProc, (LPVOID)((DWORD64)ModuleBase + out_func_offset + E9_JMP_INSTRUCTION_OPCODE_SIZE), E9_JMP_INSTRUCTION_OPRAND_SIZE, PAGE_EXECUTE_READWRITE, &old_protect)) {
+		LOG_CTRL_ETW( L"IPC VirtualProtectEx line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+		return FALSE;
+	}
+
+	DWORD e9_jmp_instruction_oprand = 0;
+	if (!::ReadProcessMemory(hProc, (LPVOID)((DWORD64)ModuleBase + out_func_offset + E9_JMP_INSTRUCTION_OPCODE_SIZE),
+		(LPVOID)&e9_jmp_instruction_oprand, E9_JMP_INSTRUCTION_OPRAND_SIZE, NULL)) {
+		
+		LOG_CTRL_ETW(L"failed to call ReadProcessMemory to get real export function addr, PID=%u\n", pid);
+		return FALSE;
+	}
+	master_exp_addr = (PVOID)((DWORD64)ModuleBase + out_func_offset + E9_JMP_INSTRUCTION_SIZE + e9_jmp_instruction_oprand);
+	if (!::VirtualProtectEx(hProc, (LPVOID)((DWORD64)ModuleBase + out_func_offset + E9_JMP_INSTRUCTION_OPCODE_SIZE), E9_JMP_INSTRUCTION_OPRAND_SIZE, old_protect, &old_protect)) {
+		LOG_CTRL_ETW(L"IPC VirtualProtectEx line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+		return FALSE;
+	}
+#endif
+
+
+	CHAR asci_dllpath[MAX_PATH] = { 0 };
+	Helper::ConvertWcharToChar(dllPath, asci_dllpath, MAX_PATH);
+	asci_dllpath[strlen(asci_dllpath)] = IPC_DLL_PATH_END_MARK;
+	// try write dll path into process memory
+	if (!::VirtualProtectEx(hProc, (LPVOID)master_exp_addr, MAX_PATH, PAGE_EXECUTE_READWRITE, &old_protect)) {
+		LOG_CTRL_ETW( L"IPC VirtualProtectEx line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+		return FALSE;
+	}
+	if(!Helper::WriteProcessMemoryWrap(hProc, master_exp_addr, asci_dllpath,MAX_PATH, NULL)) {
+		LOG_CTRL_ETW(L"IPC failed to call WriteProcessMemoryWrap, Pid=%u\n", pid);
+		return FALSE;
+	}
+	if (!::VirtualProtectEx(hProc, (LPVOID)master_exp_addr, MAX_PATH, old_protect, &old_protect)) {
+		LOG_CTRL_ETW( L"IPC VirtualProtectEx line number: %d, error code: 0x%x\n", __LINE__, GetLastError());
+		return FALSE;
+	}
+
 
 	WCHAR event_name[MAX_PATH] = { 0 };
 	FormatObjectName(event_name, RTL_NUMBER_OF(event_name), USER_MODE_INJECTION_SIGNAL_EVENT L"%d", (unsigned)pid);

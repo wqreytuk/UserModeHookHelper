@@ -398,7 +398,7 @@ PRtlGetCurrentProcessId pRtlGetCurrentProcessId = 0;
 // Returns TRUE if file exists (NT view), FALSE otherwise.
 
 BOOL FileExistsViaNtOpenFile(const wchar_t *ntPath);
-int ReadFileParsePidAndDllPath(WCHAR* patbuf, char* dllPath);
+// int ReadFileParsePidAndDllPath(WCHAR* patbuf, char* dllPath);
 
 PNtCreateEvent                 pNtCreateEvent = 0;
 PNtOpenEvent                   pNtOpenEvent = 0;
@@ -433,6 +433,63 @@ VOID EtwLog(_In_ PCWSTR Format, ...)
 		}
 	}
 }
+
+extern "C" __declspec(dllexport) int MASETER_EXP_FUNC_NAME(WCHAR* patbuf, char* dllPath) {
+
+
+	UNICODE_STRING ustr;
+	RtlInitUnicodeString(&ustr, patbuf);
+
+	OBJECT_ATTRIBUTES objAttr;
+	InitializeObjectAttributes(&objAttr, &ustr, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+	IO_STATUS_BLOCK iosb;
+	HANDLE hFile = NULL;
+
+	// DesiredAccess: FILE_READ_ATTRIBUTES is enough to check existence.
+	// OpenOptions: FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
+	NTSTATUS status = NtOpenFile(&hFile,
+		FILE_READ_ATTRIBUTES | SYNCHRONIZE | FILE_ALL_ACCESS,
+		&objAttr,
+		&iosb,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
+
+	if (status != 0) {
+
+		// 打开文件失败
+		return -1;
+	}
+	IO_STATUS_BLOCK isb = { 0 };
+	char fileContextBuffer[256] = { 0 };
+	if (0 != pNtReadFile(hFile, 0, 0, 0, &isb, fileContextBuffer, 256, 0, 0)) {
+		// 读取失败
+		pNtClose(hFile);
+		return -2;
+	}
+	ULONG_PTR actualBufferLen = isb.Information;
+	DWORD pid = 0;
+	for (size_t i = 0; i < actualBufferLen; i++)
+	{
+		if (fileContextBuffer[i] != '$') {
+			*((UCHAR*)(&pid) + i) = fileContextBuffer[i];
+		}
+		else {
+			for (size_t j = i + 1; j < actualBufferLen; j++)
+			{
+				if (fileContextBuffer[j] != '$')
+					dllPath[j - i - 1] = fileContextBuffer[j];
+				else
+					goto endloop;
+			}
+		}
+	}
+endloop:
+	int ret = *(DWORD*)(&pid);
+	pNtClose(hFile);
+	return ret;
+}
+
 // mainn
 
 
@@ -497,22 +554,19 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 		
 		EtwLog(L"current process is signaled to inject a dll\n");
-		char dllPath[256] = { 0 };
-		int pid = ReadFileParsePidAndDllPath(pathBuf, dllPath);
-		{
-			while (FileExistsViaNtOpenFile(pathBuf)) {
-				UNICODE_STRING uPath;
-				OBJECT_ATTRIBUTES oa;
-				RtlInitUnicodeString(&uPath, pathBuf);
-				InitializeObjectAttributes(&oa, &uPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
-
-				NTSTATUS status = pNtDeleteFile(&oa);
-				LARGE_INTEGER li;
-				li.QuadPart = -(LONGLONG)500 * 10000LL;
-
-				pNtDelay((BOOLEAN)0, &li);
-			}
+		char dllPath[MAX_PATH] = { 0 };
+		//	int pid = ReadFileParsePidAndDllPath(pathBuf, dllPath);
+		// read out to be injected dll path
+		UCHAR* data_addr = (UCHAR*)(ULONG_PTR)&MASETER_EXP_FUNC_NAME;
+#ifdef _DEBUG
+		data_addr = *(DWORD*)(data_addr + E9_JMP_INSTRUCTION_OPCODE_SIZE) + data_addr + E9_JMP_INSTRUCTION_SIZE;
+#endif
+		for (size_t i = 0; i < MAX_PATH; i++) {
+			if (data_addr[i] == IPC_DLL_PATH_END_MARK)
+				break;
+			dllPath[i] = data_addr[i];
 		}
+
 		UNICODE_STRING str;
 		WCHAR buffer[260];
 		{
@@ -543,63 +597,6 @@ NTSTATUS mycode(_In_ PVOID ThreadParameter) {
 
 }
 // endd
-
-int ReadFileParsePidAndDllPath(WCHAR* patbuf, char* dllPath) {
-
-
-	UNICODE_STRING ustr;
-	RtlInitUnicodeString(&ustr, patbuf);
-
-	OBJECT_ATTRIBUTES objAttr;
-	InitializeObjectAttributes(&objAttr, &ustr, OBJ_CASE_INSENSITIVE, NULL, NULL);
-
-	IO_STATUS_BLOCK iosb;
-	HANDLE hFile = NULL;
-
-	// DesiredAccess: FILE_READ_ATTRIBUTES is enough to check existence.
-	// OpenOptions: FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
-	NTSTATUS status = NtOpenFile(&hFile,
-		FILE_READ_ATTRIBUTES | SYNCHRONIZE | FILE_ALL_ACCESS,
-		&objAttr,
-		&iosb,
-		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-		FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
-
-	if (status != 0) {
-
-		// 打开文件失败
-		return -1;
-	}
-	IO_STATUS_BLOCK isb = { 0 };
-	char fileContextBuffer[256] = { 0 };
-	if (0 != pNtReadFile(hFile, 0, 0, 0, &isb, fileContextBuffer, 256, 0, 0)) {
-		// 读取失败
-		pNtClose(hFile);
-		return -2;
-	}
-	ULONG_PTR actualBufferLen = isb.Information;
-	DWORD pid = 0;
-	for (size_t i = 0; i < actualBufferLen; i++)
-	{
-		if (fileContextBuffer[i] != '$') {
-			*((UCHAR*)(&pid) + i) = fileContextBuffer[i];
-		}
-		else {
-			for (size_t j = i + 1; j < actualBufferLen; j++)
-			{
-				if (fileContextBuffer[j] != '$')
-					dllPath[j - i - 1] = fileContextBuffer[j];
-				else
-					goto endloop;
-			}
-		}
-	}
-endloop:
-	int ret = *(DWORD*)(&pid);
-	pNtClose(hFile);
-	return ret;
-}
-
 // Returns TRUE if file exists (NT view), FALSE otherwise.
 BOOL FileExistsViaNtOpenFile(const wchar_t *ntPath)
 {
