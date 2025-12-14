@@ -705,12 +705,6 @@ void HookProcDlg::OnHookMenuRemove() {
 	HookRow* hr = reinterpret_cast<HookRow*>(m_HookList.GetItemData(item));
 	if (!hr) return;
 	// Persist removal of this specific hook entry first to avoid stale records
-	if (m_services) {
-		FILETIME createTime{ 0,0 }; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
-		if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
-		DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
-		(void)m_services->RemoveProcHookEntry(m_pid, hi, lo, hr->id);
-	}
 	if (!HookCore::RemoveHook(m_pid, hr->address, m_services, hr->id, hr->ori_asm_code_len, (PVOID)hr->trampoline_pit)) {
 		if (m_services)
 			LOG_UI(m_services, L"failed to call HookCore::RemoveHook\n");
@@ -718,6 +712,12 @@ void HookProcDlg::OnHookMenuRemove() {
 		return;
 	}
 
+	if (m_services) {
+		FILETIME createTime{ 0,0 }; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
+		if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
+		DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
+		(void)m_services->RemoveProcHookEntry(m_pid, hi, lo, hr->id);
+	}
 	// UI-only: remove the item and free memory
 	m_HookList.DeleteItem(item);
 	delete hr;
@@ -888,6 +888,13 @@ bool HookProcDlg::HookCommonCode(DWORD64 module_base, DWORD module_offset,std::w
 				MessageBox(L"hookid should be set before reset", L"Hook", MB_OK | MB_ICONERROR);
 				return false;
 			}
+			// if we remove succeed, we delete corresponded registry entry, so we can always call add entry without checking rehook
+			{// remove from registry
+				FILETIME createTime{ 0,0 }; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
+				if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
+				DWORD hi = createTime.dwHighDateTime; DWORD lo = createTime.dwLowDateTime;
+				(void)m_services->RemoveProcHookEntry(m_pid, hi, lo, hr->id);
+			}
 		}
 	}
 
@@ -925,13 +932,19 @@ bool HookProcDlg::HookCommonCode(DWORD64 module_base, DWORD module_offset,std::w
 			if (addr >= m.base && addr < m.base + m.size) { moduleName = m.name; moduleBase = m.base; break; }
 		}
 		// Add numeric hook entry (auto-incrementing ID), only new hook addr will be added
-		if (!rehook) {
+		 // always add entry, because we remove entry when rehooking is detected
 			HookRow r; r.id = assignedHookId; r.address = addr; r.module = moduleName;
 			r.ori_asm_code_len = ori_asm_code_len; r.trampoline_pit = (unsigned long long)trampoline_pit;
 			r.ori_asm_code_addr = (DWORD64)ori_asm_code_addr;
+
+			auto GetFilename = [](const std::wstring& path) -> std::wstring {
+				size_t pos = path.find_last_of(L"\\/");
+				return (pos == std::wstring::npos) ? path : path.substr(pos + 1);
+			};
+			r.expFunc = GetFilename(hook_code_path )+L"!"+export_func_name;
 			
 			AddHookEntry(r);
-		}
+		 
 		return true;
 	}
 	else {
