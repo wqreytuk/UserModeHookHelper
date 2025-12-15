@@ -740,7 +740,12 @@ void HookProcDlg::OnHookMenuRemove() {
 		MessageBoxW(L"failed to call HookCore::RemoveHook\n", L"Hook", MB_OK | MB_ICONERROR);
 		return;
 	}
-
+	// remove succeed, mark this hookid available
+	// its previous value should be 1
+	if (!_bittestandreset((LONG*)m_exp_num_tracker_bitfield, hr->id)) {
+		MessageBox(L"hookid should be set before reset", L"Hook", MB_OK | MB_ICONERROR);
+		return;
+	}
 	if (m_services) {
 		FILETIME createTime{ 0,0 }; HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, m_pid);
 		if (h) { FILETIME et, k, u; if (GetProcessTimes(h, &createTime, &et, &k, &u)) {} CloseHandle(h); }
@@ -750,7 +755,6 @@ void HookProcDlg::OnHookMenuRemove() {
 	// UI-only: remove the item and free memory
 	m_HookList.DeleteItem(item);
 	delete hr;
-	 
 }
 
 void HookProcDlg::OnModuleItemChanged(NMHDR* pNMHDR, LRESULT* pResult) { if (pResult) *pResult = 0; }

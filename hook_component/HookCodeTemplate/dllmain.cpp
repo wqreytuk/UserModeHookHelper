@@ -20,6 +20,19 @@ void Log(_In_ PCWSTR Format, ...) {
 	Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
 	EventWriteString(g_ProviderHandle, 0, 0, Prefixed);
 }
+void DLog(_In_ PCWSTR Format, ...) {
+	WCHAR Buffer[1024];
+	va_list args;
+	va_start(args, Format);
+	_vsnwprintf_s(Buffer, RTL_NUMBER_OF(Buffer) - 1, Format, args);
+	va_end(args);
+	Buffer[RTL_NUMBER_OF(Buffer) - 1] = L'\0';
+
+	WCHAR Prefixed[1100];
+	_snwprintf_s(Prefixed, RTL_NUMBER_OF(Prefixed) - 1, L"[HookCode]   %s", Buffer);
+	Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
+	OutputDebugString(Prefixed);
+}
 class HookServicesAdapter : public IHookServices {
 	 VOID HKLog(const wchar_t* fmt, ...) override{
 		 WCHAR Buffer[1024];
