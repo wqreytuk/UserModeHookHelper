@@ -69,7 +69,7 @@ BOOL IPC_SendInject(DWORD pid, PCWSTR dllPath)
 		return FALSE;
 	}
 
-	PVOID master_exp_addr = 0;
+	PVOID master_exp_addr = (PVOID)(ULONG_PTR)((DWORD64)ModuleBase + out_func_offset);
 	DWORD old_protect = 0;
 #ifdef _DEBUG
 	if (!::VirtualProtectEx(hProc, (LPVOID)((DWORD64)ModuleBase + out_func_offset + E9_JMP_INSTRUCTION_OPCODE_SIZE), E9_JMP_INSTRUCTION_OPRAND_SIZE, PAGE_EXECUTE_READWRITE, &old_protect)) {

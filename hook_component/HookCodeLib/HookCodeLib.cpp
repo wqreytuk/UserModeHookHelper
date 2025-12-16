@@ -20,12 +20,6 @@ namespace HookCode {
 		g_services = services;
 	}
 	typedef  DWORD NTSTATUS;
-	typedef struct _UNICODE_STRING
-	{
-		USHORT Length;
-		USHORT MaximumLength;
-		_Field_size_bytes_part_(MaximumLength, Length) PWCH Buffer;
-	} UNICODE_STRING, *PUNICODE_STRING;
 	typedef struct _OBJECT_NAME_INFORMATION
 	{
 		UNICODE_STRING Name;
@@ -109,6 +103,18 @@ namespace HookCode {
 		}
 	}
 	namespace STRLIB {
+		VOID RtlInitUnicodeString(
+			_Out_ PUNICODE_STRING DestinationString,
+			_In_opt_ PCWSTR SourceString
+		)
+		{
+			if (SourceString)
+				DestinationString->MaximumLength = (DestinationString->Length = (USHORT)(wcslen(SourceString) * sizeof(WCHAR))) + sizeof(UNICODE_NULL);
+			else
+				DestinationString->MaximumLength = DestinationString->Length = 0;
+
+			DestinationString->Buffer = (PWCH)SourceString;
+		}
 		// Check suffix in std::wstring, optional case-insensitive
 		bool WStringEndsWith(const std::wstring& haystack, const std::wstring& suffix, bool ignoreCase) {
 			if (suffix.size() > haystack.size()) return false;
@@ -122,6 +128,60 @@ namespace HookCode {
 				if (towlower(a) != towlower(b)) return false;
 			}
 			return true;
+		}
+		static __forceinline WCHAR
+			RtlUpcaseUnicodeChar(WCHAR ch)
+		{
+			if (ch >= L'a' && ch <= L'z')
+				return ch - (L'a' - L'A');
+			return ch;
+		}
+
+		LONG
+			RtlCompareUnicodeStrings(
+				const WCHAR* String1,
+				SIZE_T Length1,
+				const WCHAR* String2,
+				SIZE_T Length2,
+				BOOLEAN CaseInSensitive
+			)
+		{
+			SIZE_T cch1 = Length1 / sizeof(WCHAR);
+			SIZE_T cch2 = Length2 / sizeof(WCHAR);
+			SIZE_T min = (cch1 < cch2) ? cch1 : cch2;
+
+			for (SIZE_T i = 0; i < min; i++) {
+				WCHAR c1 = String1[i];
+				WCHAR c2 = String2[i];
+
+				if (CaseInSensitive) {
+					c1 = RtlUpcaseUnicodeChar(c1);
+					c2 = RtlUpcaseUnicodeChar(c2);
+				}
+
+				if (c1 != c2)
+					return (LONG)c1 - (LONG)c2;
+			}
+
+			return (LONG)cch1 - (LONG)cch2;
+		}
+		BOOLEAN RtlSuffixUnicodeString(
+				_In_ PUNICODE_STRING Suffix,
+				_In_ PUNICODE_STRING String2,
+				_In_ BOOLEAN CaseInSensitive
+			)
+		{
+			//
+			// RtlSuffixUnicodeString is not exported by ntoskrnl until Win10.
+			//
+
+			return String2->Length >= Suffix->Length &&
+				RtlCompareUnicodeStrings(String2->Buffer + (String2->Length - Suffix->Length) / sizeof(WCHAR),
+					Suffix->Length / sizeof(WCHAR),
+					Suffix->Buffer,
+					Suffix->Length / sizeof(WCHAR),
+					CaseInSensitive) == 0;
+
 		}
 	}
 	namespace FILTER {

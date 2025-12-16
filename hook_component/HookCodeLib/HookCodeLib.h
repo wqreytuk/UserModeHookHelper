@@ -7,6 +7,13 @@ struct IHookServices {
 	virtual VOID HKLog(const wchar_t* fmt, ...) = 0;
 };
 namespace HookCode {
+
+	typedef struct _UNICODE_STRING
+	{
+		USHORT Length;
+		USHORT MaximumLength;
+		_Field_size_bytes_part_(MaximumLength, Length) PWCH Buffer;
+	} UNICODE_STRING, *PUNICODE_STRING;
 	// Install caller-provided hook services (logging and helpers).
 	void SetHookServices(IHookServices* services);
 	// Resolve a kernel/user handle to a display name for the caller.
@@ -19,7 +26,17 @@ namespace HookCode {
 	}
 	// Check whether wide string `haystack` ends with `suffix`.
 	// If ignoreCase is true, comparison is case-insensitive.
-	namespace STRLIB { bool WStringEndsWith(const std::wstring& haystack, const std::wstring& suffix, bool ignoreCase); }
+	namespace STRLIB { bool WStringEndsWith(const std::wstring& haystack, const std::wstring& suffix, bool ignoreCase);
+	BOOLEAN RtlSuffixUnicodeString(
+		_In_ PUNICODE_STRING Suffix,
+		_In_ PUNICODE_STRING String2,
+		_In_ BOOLEAN CaseInSensitive
+	);
+	VOID RtlInitUnicodeString(
+		_Out_ PUNICODE_STRING DestinationString,
+		_In_opt_ PCWSTR SourceString
+	);
+	}
 	namespace FILTER {
 		// connect to filter
 		HANDLE ConnectToFilter();
