@@ -26,7 +26,12 @@ namespace HookCode {
 	}
 	// Check whether wide string `haystack` ends with `suffix`.
 	// If ignoreCase is true, comparison is case-insensitive.
-	namespace STRLIB { bool WStringEndsWith(const std::wstring& haystack, const std::wstring& suffix, bool ignoreCase);
+	namespace STRLIB {
+		bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars);
+			
+		bool AnsiSubStrCheck(const char *haystack, const char *needle, BOOL CaseInsensitive);
+
+		bool WStringEndsWith(const std::wstring& haystack, const std::wstring& suffix, bool ignoreCase);
 	BOOLEAN RtlSuffixUnicodeString(
 		_In_ PUNICODE_STRING Suffix,
 		_In_ PUNICODE_STRING String2,

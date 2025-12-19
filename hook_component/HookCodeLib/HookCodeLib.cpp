@@ -115,6 +115,42 @@ namespace HookCode {
 
 			DestinationString->Buffer = (PWCH)SourceString;
 		}
+		bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars) {
+			if (!src || !dst || dstChars == 0) return false;
+			// Simple byte->word expansion: copy each input byte into the low
+			// 16 bits of a wchar_t and append a null terminator. This avoids
+			// calling Win32 APIs and ignores code pages as requested.
+			size_t i = 0;
+			for (; i + 1 < dstChars && src[i] != '\0'; ++i) {
+				dst[i] = (wchar_t)(unsigned char)src[i];
+			}
+			if (i >= dstChars) return false; // no room for null terminator
+			dst[i] = L'\0';
+			return true;
+		}
+		// check if needle is a substring of haystack
+		bool AnsiSubStrCheck(const char *haystack, const char *needle, BOOL CaseInsensitive) {
+			if (!haystack || !needle) return false;
+			if (*needle == '\0') return true; /* empty needle -> match */
+
+			for (; *haystack != '\0'; ++haystack) {
+				const char *h = haystack;
+				const char *n = needle;
+				while (*n != '\0') {
+					if (CaseInsensitive) {
+						if (tolower((unsigned char)*h) == tolower((unsigned char)*n))
+							++h; ++n;
+					}
+					else {
+						if ((unsigned char)*h == (unsigned char)*n)
+							++h; ++n;
+					}
+				}
+				if (*n == '\0') return true; /* matched whole needle */
+				if (*h == '\0') return false; /* haystack ended */
+			}
+			return false;
+		}
 		// Check suffix in std::wstring, optional case-insensitive
 		bool WStringEndsWith(const std::wstring& haystack, const std::wstring& suffix, bool ignoreCase) {
 			if (suffix.size() > haystack.size()) return false;
