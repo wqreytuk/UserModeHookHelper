@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <Windows.h>
+#include "HookCore.h"
 namespace HookCore {
 	enum class DecideResultType {
 		SUCCESS,                // preserveLen valid
@@ -21,6 +22,11 @@ namespace HookCore {
 	DecideResult DetermineCodeEdge_x86(const uint8_t* buffer, size_t bufSize, uint32_t codeAddr, size_t minNeeded = 6);
 	uint64_t ResolveRipRelativeTarget(
 		HANDLE hProcess,
+		uint64_t hookSiteBase,
+		const std::vector<uint8_t>& codeBytes
+	);
+	uint64_t ResolveKernelRipRelativeTarget(
+		IHookServices* services,
 		uint64_t hookSiteBase,
 		const std::vector<uint8_t>& codeBytes
 	);

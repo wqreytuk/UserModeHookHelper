@@ -112,6 +112,11 @@
     <ClCompile Include="HookCore.cpp" />
     <ClCompile Include="Trampoline.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ProcessHackerLib\ProcessHackerLib.vcxproj">
+      <Project>{74fd19a0-b533-46da-b591-b1ef4eef48b0}</Project>
+    </ProjectReference>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>

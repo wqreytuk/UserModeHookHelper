@@ -22,6 +22,8 @@ struct IHookServices {
 		_In_ SIZE_T nSize,
 		_Out_opt_ SIZE_T * lpNumberOfBytesWritten
 	) = 0;
+	virtual BOOLEAN ReadPrimitive(_In_ LPVOID target_addr, _Out_ LPVOID buffer, _In_ size_t size) = 0;
+	virtual BOOLEAN WritePrimitive(_In_ LPVOID target_addr, _In_ LPVOID buffer, _In_ size_t size) = 0;
 	virtual void* PhBuildModuleListWow64(void* hProc, void* head) = 0;
 	virtual bool ConvertCharToWchar(const char* src, wchar_t* dst, size_t dstChars) = 0;
 	virtual bool ConvertWcharToChar(const wchar_t* src, char* dst, size_t dstChars) = 0;

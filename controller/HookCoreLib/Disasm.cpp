@@ -374,6 +374,87 @@ namespace HookCore {
 
 		return target;
 	}
+
+	uint64_t ResolveKernelRipRelativeTarget(
+		IHookServices* services,
+		uint64_t hookSiteBase,
+		const std::vector<uint8_t>& codeBytes
+	) {
+		csh handle;
+		cs_insn* insn = nullptr;
+
+		if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
+			return 0;
+
+		cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
+
+		size_t count = cs_disasm(
+			handle,
+			codeBytes.data(),
+			codeBytes.size(),
+			hookSiteBase,
+			0,
+			&insn
+		);
+
+		if (count == 0) {
+			cs_close(&handle);
+			return 0;
+		}
+
+		const cs_insn& last = insn[count - 1];
+		const cs_detail* detail = last.detail;
+
+		uint64_t target = 0;
+
+		// --------------------------------------
+		// Case 1: Direct CALL / JMP / Jcc (imm)
+		// --------------------------------------
+		if (detail->x86.op_count == 1 &&
+			detail->x86.operands[0].type == X86_OP_IMM)
+		{
+			target = detail->x86.operands[0].imm;
+			cs_free(insn, count);
+			cs_close(&handle);
+			return target;
+		}
+
+		// ---------------------------------------------------
+		// Case 2: RIP-relative INDIRECT CALL/JMP (FF 15 / FF 25)
+		// This uses:   [RIP + displacement]
+		// ---------------------------------------------------
+		if (detail->x86.op_count == 1 &&
+			detail->x86.operands[0].type == X86_OP_MEM)
+		{
+			const cs_x86_op& op = detail->x86.operands[0];
+
+			// Only allow RIP-relative memory operands:
+			if (op.mem.base == X86_REG_RIP)
+			{
+				uint64_t rip_after = last.address + last.size;
+				uint64_t effective_addr = rip_after + op.mem.disp;
+
+				// Read 8-byte pointer from remote process
+				uint64_t resolved = 0;
+				SIZE_T bytesRead = 0;
+
+				if (services->ReadPrimitive(
+					 
+					(LPVOID)effective_addr,
+					&resolved,
+					sizeof(resolved))
+					&& (resolved!=0))
+				{
+					target = resolved;  // final resolved jump/call destination
+				}
+			}
+		}
+
+		cs_free(insn, count);
+		cs_close(&handle);
+
+		return target;
+	}
 	DecideResult  DetermineCodeEdge_x64(const uint8_t* buffer, size_t bufSize, uint64_t codeAddr, size_t minNeeded) {
 		DecideResult res;
 		res.type = DecideResultType::FAIL_CS_ERROR;

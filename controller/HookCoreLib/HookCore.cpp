@@ -471,6 +471,11 @@ namespace HookCore {
 
 		return true;
 	}
+	bool ConstructKernelTrampolineX64_Wrapper(IHookServices* services, PVOID hook_addr, PVOID target_base,
+		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset, DWORD64 hook_code_addr, DWORD* out_original_asm_len) {
+		return ConstructKernelTrampolineX64(services, hook_addr, target_base,
+			tramp_dll_base, stage_1_func_offset, stage_2_func_offset, hook_code_addr, out_original_asm_len);
+	}
 	bool EnableHook(DWORD pid, ULONGLONG hook_address, IHookServices* services, PVOID trampoline_pit) {
 		if (!services) {
 			MessageBoxW(NULL, L"Fatal Error! services is NULL!", L"Hook", MB_OK | MB_ICONERROR);

@@ -69,11 +69,13 @@ namespace HookCore {
 			_In_ SIZE_T nSize,
 			_Out_opt_ SIZE_T * lpNumberOfBytesWritten
 		);
-	bool	InstallHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_pit, PVOID trampoline_addr,bool is64);
+	bool	InstallHook(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_pit, PVOID trampoline_addr, bool is64);
 	bool RemoveHookInternal(IHookServices* services, HANDLE hProc, PVOID hook_addr, PVOID trampoline_dll_base,
 		DWORD64 stage_2_func_offset, DWORD original_asm_code_len);
 	bool ConstructTrampoline_x86(IHookServices* services, HANDLE hProcess, PVOID hook_addr, PVOID target_base,
 		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset, DWORD64 hook_code_addr, DWORD* out_original_asm_len);
 	bool ConstructTrampoline_x64(IHookServices* services, HANDLE hProcess, PVOID hook_addr, PVOID target_base,
+		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset, DWORD64 hook_code_addr, DWORD* out_original_asm_len);
+	bool ConstructKernelTrampolineX64(IHookServices* services, PVOID hook_addr, PVOID target_base,
 		PVOID tramp_dll_base, DWORD stage_1_func_offset, DWORD stage_2_func_offset, DWORD64 hook_code_addr, DWORD* out_original_asm_len);
 }

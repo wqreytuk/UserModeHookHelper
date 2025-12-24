@@ -364,6 +364,12 @@ END_MESSAGE_MAP()
 // Adapter implementing IHookServices for current process (bridges to ETW tracer)
 class HookServicesAdapter : public IHookServices {
 public:
+	BOOLEAN ReadPrimitive(_In_ LPVOID target_addr, _Out_ LPVOID buffer, _In_ size_t size) override {
+		return FALSE;
+	}
+	BOOLEAN WritePrimitive(_In_ LPVOID target_addr, _In_ LPVOID buffer, _In_ size_t size) override {
+		return FALSE;
+	}
 	void Log(const wchar_t* fmt, ...) override {
 		wchar_t buffer[1024];
 		va_list ap; va_start(ap, fmt);
