@@ -617,9 +617,9 @@ namespace {
 
 			// install hook
 			{
-				UCHAR ff25[0x6] = { 0xff,0x25,0,0,0,0 };
-				*(DWORD*)(ff25 + 2) = (DWORD)((DWORD64)trampoline_pit - ((DWORD64)hook_point + 0x6));
-				if (!KRNL::WritePrimitive(hook_point, (void*)(ff25), 0x6)) {
+				UCHAR ff25[ff25jmpsize] = { 0xff,0x25,0,0,0,0 };
+				*(DWORD*)(ff25 + ff25_opcode_size) = (DWORD)((DWORD64)trampoline_pit - ((DWORD64)hook_point + ff25jmpsize));
+				if (!KRNL::WritePrimitive(hook_point, (void*)(ff25), ff25jmpsize)) {
 					KMHHLog(L"InstallHook line number: %d\n", __LINE__);
 					return FALSE;
 				}

@@ -36,7 +36,10 @@
 #ifndef ff25jmpsize
 #define ff25jmpsize 6
 #endif
-
+#ifndef ff25_opcode_size
+#define ff25_opcode_size 2
+#endif
+ 
 #ifndef TRAMPOLINE_PIT_OFFSET_STAGE_2_FUNC
 #define TRAMPOLINE_PIT_OFFSET_STAGE_2_FUNC 0x110
 #endif
