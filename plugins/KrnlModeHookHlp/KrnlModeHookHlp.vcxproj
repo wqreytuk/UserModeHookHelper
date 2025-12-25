@@ -99,6 +99,7 @@
       <PreprocessorDefinitions>NDEBUG;KRNLMODEHOOKHLP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -133,6 +134,7 @@
       <PreprocessorDefinitions>_DEBUG;KRNLMODEHOOKHLP_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -162,6 +164,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="framework.h" />
+    <ClInclude Include="Helper.h" />
     <ClInclude Include="kernel.h" />
     <ClInclude Include="KmhhCtx.h" />
     <ClInclude Include="Log.h" />
@@ -172,6 +175,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="Helper.cpp" />
     <ClCompile Include="kernel.cpp" />
     <ClCompile Include="KmhhCtx.cpp" />
     <ClCompile Include="Log.cpp" />
@@ -184,6 +188,11 @@
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="KrnlModeHookHlp.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\controller\HookCoreLib\HookCoreLib.vcxproj">
+      <Project>{6c2e3e9c-1124-4f5e-9d6f-ac9a9b6e5e21}</Project>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

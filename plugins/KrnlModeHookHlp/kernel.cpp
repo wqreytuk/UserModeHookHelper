@@ -45,7 +45,7 @@ namespace KRNL {
 		return KmhhCtx_GetHookServices()->WritePrimitive(target_addr, buffer, size);
 	}
 
-	NTSTATUS GetDriverBase(
+	DWORD GetDriverBase(
 		_In_ PCSTR DriverName,
 		_Out_ PVOID* DriverBaseAddress
 	)
