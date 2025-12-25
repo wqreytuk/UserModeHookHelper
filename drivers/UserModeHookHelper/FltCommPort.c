@@ -36,6 +36,7 @@ static NTSTATUS Handle_QueryPplProtection(PUMHH_COMMAND_MESSAGE msg, ULONG Input
 static NTSTATUS Handle_RecoverPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_WriteProcessMemory(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_DuplicateHandleKernel(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_KernelReadWrite(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
 
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -348,6 +349,9 @@ Comm_MessageNotify(
 		break;
 	case CMD_DUPLICATE_HANDLE_KERNEL:
 		status = Handle_DuplicateHandleKernel(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_RW_KERNEL_MEMORY:
+		status = Handle_KernelReadWrite(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
 
 	default:
@@ -1666,5 +1670,72 @@ static NTSTATUS Handle_WriteProcessMemory(
 	}
 	NTSTATUS ok = STATUS_SUCCESS;
 	if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) RtlCopyMemory(OutputBuffer, &ok, sizeof(NTSTATUS));
+	return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+Handle_KernelReadWrite(
+	PUMHH_COMMAND_MESSAGE msg,
+	ULONG InputBufferSize,
+	PVOID OutputBuffer,
+	ULONG OutputBufferSize,
+	PULONG ReturnOutputBufferLength
+) {
+	ULONG minSize = (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(UMHH_KERNEL_RW_REQUEST));
+	if (InputBufferSize < minSize) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	UMHH_KERNEL_RW_REQUEST req = { 0 };
+	RtlCopyMemory(&req, msg->m_Data, sizeof(req));
+	if (req.Size == 0 || req.Size > UMHH_KERNEL_RW_MAX_TRANSFER) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_INVALID_PARAMETER;
+	}
+	SIZE_T transfer = (SIZE_T)req.Size;
+	PVOID target = (PVOID)(ULONG_PTR)req.Address;
+	if (!target) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_INVALID_PARAMETER;
+	}
+	BOOLEAN isWrite = (req.Flags & UMHH_KERNEL_RW_FLAG_WRITE) ? TRUE : FALSE;
+	ULONG requiredInput = minSize + (isWrite ? req.Size : 0);
+	if (InputBufferSize < requiredInput) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	if (isWrite) {
+		const UCHAR* payload = msg->m_Data + sizeof(req);
+		BOOLEAN okWrite = Mini_WriteKernelMemory(target, payload, transfer);
+		NTSTATUS stWrite = okWrite ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
+			RtlCopyMemory(OutputBuffer, &stWrite, sizeof(NTSTATUS));
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
+		} else if (ReturnOutputBufferLength) {
+			*ReturnOutputBufferLength = 0;
+		}
+		return stWrite;
+	}
+	if (!OutputBuffer || OutputBufferSize < req.Size) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = req.Size;
+		return STATUS_BUFFER_TOO_SMALL;
+	}
+	UCHAR scratch[UMHH_KERNEL_RW_MAX_TRANSFER];
+	RtlZeroMemory(scratch, transfer);
+	BOOLEAN okRead = Mini_ReadKernelMemory(target, scratch, transfer);
+	if (!okRead) {
+		NTSTATUS stRead = STATUS_UNSUCCESSFUL;
+		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
+			RtlCopyMemory(OutputBuffer, &stRead, sizeof(NTSTATUS));
+			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
+		} else if (ReturnOutputBufferLength) {
+			*ReturnOutputBufferLength = 0;
+		}
+		RtlZeroMemory(scratch, transfer);
+		return stRead;
+	}
+	RtlCopyMemory(OutputBuffer, scratch, transfer);
+	RtlZeroMemory(scratch, transfer);
+	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = (ULONG)transfer;
 	return STATUS_SUCCESS;
 }

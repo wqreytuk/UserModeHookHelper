@@ -63,6 +63,8 @@ public:
 	bool FLTCOMM_GetProcessHandle(DWORD pid, HANDLE* outHandle);
 
 	bool FLTCOMM_DuplicateHandleKernel(HANDLE sourceHandle, HANDLE* outDuplicated);
+	bool FLTCOMM_ReadKernelMemory(_In_ LPVOID target_addr, _Out_ LPVOID buffer, _In_ size_t size);
+	bool FLTCOMM_WriteKernelMemory(_In_ LPVOID target_addr, _Out_ LPVOID buffer, _In_ size_t size);
 	// Write memory into target process using an existing handle
 	bool FLTCOMM_WriteProcessMemory(HANDLE hProcess, LPVOID lpBaseAddress, LPCVOID lpBuffer, SIZE_T nSize, SIZE_T* lpNumberOfBytesWritten);
 	// Request kernel to elevate a process to PPL protection (driver-defined semantics).

@@ -6,6 +6,7 @@
 #include <CommCtrl.h>
 #include "resource.h"
 #include "HookServices.h"
+#include "KmhhCtx.h"
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -128,6 +129,7 @@ namespace {
 }
 
 extern "C" __declspec(dllexport) void PluginMain(HWND parentHwnd, IHookServices* services) {
+	KmhhCtx_SetHookServices(services);
     EnsureCommonControls();
     if (g_hDialog && IsWindow(g_hDialog)) {
         ShowWindow(g_hDialog, SW_SHOWNORMAL);

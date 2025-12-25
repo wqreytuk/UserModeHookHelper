@@ -677,6 +677,80 @@ bool Filter::FLTCOMM_DuplicateHandleKernel(HANDLE sourceHandle, HANDLE* outDupli
 	return true;
 }
 
+bool Filter::FLTCOMM_ReadKernelMemory(_In_ LPVOID target_addr, _Out_ LPVOID buffer, _In_ size_t size) {
+	if (!target_addr || !buffer || size == 0 || size > UMHH_KERNEL_RW_MAX_TRANSFER) {
+		return false;
+	}
+	const size_t msgSize = UMHH_MSG_HEADER_SIZE + sizeof(UMHH_KERNEL_RW_REQUEST);
+	std::unique_ptr<BYTE[]> msgBuf(new BYTE[msgSize]);
+	if (!msgBuf) return false;
+	memset(msgBuf.get(), 0, msgSize);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)msgBuf.get();
+	msg->m_Cmd = CMD_RW_KERNEL_MEMORY;
+	UMHH_KERNEL_RW_REQUEST req = {};
+	req.Address = (ULONGLONG)(ULONG_PTR)target_addr;
+	req.Size = (ULONG)size;
+	req.Flags = 0;
+	memcpy(msg->m_Data, &req, sizeof(req));
+
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port,
+		msg,
+		(DWORD)msgSize,
+		buffer,
+		(DWORD)size,
+		&bytesOut);
+	if (hr != S_OK) {
+		LOG_CTRL_ETW(L"FLTCOMM_ReadKernelMemory: FilterSendMessage failed hr=0x%08x\n", hr);
+		return false;
+	}
+	if (bytesOut != size) {
+		LOG_CTRL_ETW(L"FLTCOMM_ReadKernelMemory: bytesOut=%u expected=%u\n", bytesOut, (ULONG)size);
+		return false;
+	}
+	return true;
+}
+
+bool Filter::FLTCOMM_WriteKernelMemory(_In_ LPVOID target_addr, _Out_ LPVOID buffer, _In_ size_t size) {
+	if (!target_addr || !buffer || size == 0 || size > UMHH_KERNEL_RW_MAX_TRANSFER) {
+		return false;
+	}
+	const size_t msgSize = UMHH_MSG_HEADER_SIZE + sizeof(UMHH_KERNEL_RW_REQUEST) + size;
+	std::unique_ptr<BYTE[]> msgBuf(new BYTE[msgSize]);
+	if (!msgBuf) return false;
+	memset(msgBuf.get(), 0, msgSize);
+	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)msgBuf.get();
+	msg->m_Cmd = CMD_RW_KERNEL_MEMORY;
+	UMHH_KERNEL_RW_REQUEST req = {};
+	req.Address = (ULONGLONG)(ULONG_PTR)target_addr;
+	req.Size = (ULONG)size;
+	req.Flags = UMHH_KERNEL_RW_FLAG_WRITE;
+	memcpy(msg->m_Data, &req, sizeof(req));
+	memcpy(msg->m_Data + sizeof(req), buffer, size);
+
+	NTSTATUS ntstatus = STATUS_UNSUCCESSFUL;
+	DWORD bytesOut = 0;
+	HRESULT hr = FilterSendMessage(m_Port,
+		msg,
+		(DWORD)msgSize,
+		&ntstatus,
+		(DWORD)sizeof(ntstatus),
+		&bytesOut);
+	if (hr != S_OK) {
+		LOG_CTRL_ETW(L"FLTCOMM_WriteKernelMemory: FilterSendMessage failed hr=0x%08x\n", hr);
+		return false;
+	}
+	if (bytesOut != sizeof(ntstatus)) {
+		LOG_CTRL_ETW(L"FLTCOMM_WriteKernelMemory: unexpected reply size=%u\n", bytesOut);
+		return false;
+	}
+	if (!NT_SUCCESS(ntstatus)) {
+		LOG_CTRL_ETW(L"FLTCOMM_WriteKernelMemory: driver returned NTSTATUS=0x%08x\n", ntstatus);
+		return false;
+	}
+	return true;
+}
+
 bool Filter::QueryCreationTime(HANDLE hProc, ULONGLONG& outCreationTime) {
 	outCreationTime = 0;
 	if (!hProc) return false;

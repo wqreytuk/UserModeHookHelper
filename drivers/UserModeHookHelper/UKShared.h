@@ -70,12 +70,25 @@
 // Request kernel to duplicate a handle into the caller process.
 // Payload: HANDLE sourceHandle. Reply: HANDLE duplicatedHandle (duplicated into caller).
 #define CMD_DUPLICATE_HANDLE_KERNEL 25
+// Read or write arbitrary kernel virtual memory. Payload: UMHH_KERNEL_RW_REQUEST
+// followed by optional inline data (for write). Reply is raw bytes (read) or
+// NTSTATUS (write/failure).
+#define CMD_RW_KERNEL_MEMORY 26
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
 
 typedef struct _UMHH_COMMAND_MESSAGE {
 	DWORD m_Cmd;
 	unsigned char m_Data[1];
 }UMHH_COMMAND_MESSAGE, *PUMHH_COMMAND_MESSAGE;
+
+typedef struct _UMHH_KERNEL_RW_REQUEST {
+	ULONGLONG Address;   // Kernel virtual address to access
+	ULONG Size;          // Number of bytes to transfer (capped in driver)
+	ULONG Flags;         // UMHH_KERNEL_RW_FLAG_* values
+} UMHH_KERNEL_RW_REQUEST, *PUMHH_KERNEL_RW_REQUEST;
+
+#define UMHH_KERNEL_RW_FLAG_WRITE 0x1
+#define UMHH_KERNEL_RW_MAX_TRANSFER 0x1000u
 
 #define UMHH_MSG_HEADER_SIZE FIELD_OFFSET(UMHH_COMMAND_MESSAGE, m_Data)
 #define DLL_PREFIX L"umhh.dll"

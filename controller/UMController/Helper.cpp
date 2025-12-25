@@ -1359,6 +1359,33 @@ Filter* Helper::GetFilterInstance() {
 	return Helper::m_filterInstance;
 }
 
+BOOLEAN Helper::ReadPrimitive(_In_ LPVOID target_addr, _Out_ LPVOID buffer, _In_ size_t size)  {
+	if (Helper::m_filterInstance) {
+		if (!Helper::m_filterInstance->FLTCOMM_ReadKernelMemory(target_addr,   buffer,   size)) {
+			LOG_CTRL_ETW(L"failed to call FLTCOMM_ReadKernelMemory\n");
+			return false;
+		}
+	}
+	else {
+		Helper::Fatal(L"Helper::m_filterInstance can NOT be NULL\n");
+		return FALSE;
+	}
+	return FALSE;
+}
+BOOLEAN Helper::WritePrimitive(_In_ LPVOID target_addr, _In_ LPVOID buffer, _In_ size_t size){
+	if (Helper::m_filterInstance) {
+		if (!Helper::m_filterInstance->FLTCOMM_WriteKernelMemory(target_addr, buffer, size)) {
+			LOG_CTRL_ETW(L"failed to call FLTCOMM_WriteKernelMemory\n");
+			return false;
+		}
+	}
+	else {
+		Helper::Fatal(L"Helper::m_filterInstance can NOT be NULL\n");
+		return FALSE;
+	}
+	return FALSE;
+
+} 
 // Determine whether a PE file on disk is PE32 (x86) or PE32+ (x64).
 // Returns true on success and sets outIs64 accordingly.
 bool Helper::IsPeFile64(const std::wstring& filePath, bool& outIs64) {

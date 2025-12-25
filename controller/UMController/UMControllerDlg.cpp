@@ -389,6 +389,15 @@ public:
 	bool CheckPeArch(const wchar_t* dllPath, bool& is64) override {
 		return Helper::IsPeFile64(dllPath, is64);
 	}
+
+	 BOOLEAN ReadPrimitive(_In_ LPVOID target_addr, _Out_ LPVOID buffer, _In_ size_t size) override {
+		 return Helper::ReadPrimitive(target_addr, buffer, size);
+
+	 }
+	 BOOLEAN WritePrimitive(_In_ LPVOID target_addr, _In_ LPVOID buffer, _In_ size_t size) override {
+		 return Helper::WritePrimitive(target_addr, buffer, size);
+
+	 }
 	void LogPhlib(const wchar_t* fmt, ...) override {
 		wchar_t buffer[1024];
 		va_list ap; va_start(ap, fmt);

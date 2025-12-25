@@ -101,6 +101,12 @@ public:
 	// If DesiredEnabled==false: stop the service if running and set Start to disabled.
 	static bool ConfigureBootStartService(bool DesiredEnabled);
 	static Filter* GetFilterInstance();
+
+	static BOOLEAN ReadPrimitive(_In_ LPVOID target_addr, _Out_ LPVOID buffer, _In_ size_t size);
+
+	static BOOLEAN WritePrimitive(_In_ LPVOID target_addr, _In_ LPVOID buffer, _In_ size_t size);
+
+
 	// Check whether a PE file on disk is PE32 (x86) or PE32+ (x64).
 	// Returns true on success and sets outIs64 to true for PE32+ (64-bit),
 	// false for PE32 (32-bit). Returns false on I/O or format errors.
