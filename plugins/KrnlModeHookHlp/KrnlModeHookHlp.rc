@@ -1,0 +1,14 @@
+#include "resource.h"
+#include <windows.h>
+
+IDD_KMHH_DIALOG DIALOGEX 0, 0, 420, 320
+STYLE DS_SETFONT | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
+EXSTYLE WS_EX_APPWINDOW
+CAPTION "Kernel Mode Hook Helper"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "Kernel Hook List", IDC_STATIC, 12, 12, 150, 12
+    CONTROL "", IDC_KMHH_LIST_HOOKS, "SysListView32", LVS_REPORT | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL, 12, 26, 396, 230
+    PUSHBUTTON "Apply Hook Sequence...", IDC_KMHH_BTN_APPLY_SEQ, 12, 268, 150, 24
+    LTEXT "Use the button to load and apply a kernel hook sequence.", IDC_KMHH_STATIC_HINT, 172, 274, 236, 16
+END
