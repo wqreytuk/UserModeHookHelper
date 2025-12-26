@@ -180,7 +180,7 @@ NTSTATUS HookList_DuplicateSectionHandle(PEPROCESS TargetProcess, PHANDLE OutHan
     return STATUS_SUCCESS;
 }
 
-NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath, SIZE_T PathBytes) {
+NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath, SIZE_T PathBytes, ULONGLONG ModuleBase, ULONGLONG Offset) {
     // First, do a shared scan to quickly detect duplicates without allocating.
     ExAcquireResourceSharedLite(&s_HookListLock, TRUE);
     PLIST_ENTRY entry = s_HookList.Flink;
@@ -203,6 +203,8 @@ NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath, SIZE_T PathBytes) {
     p->NtPath.Buffer = NULL;
     p->NtPath.Length = 0;
     p->NtPath.MaximumLength = 0;
+    p->ModuleBase = ModuleBase;
+    p->Offset = Offset;
 
     PWCHAR buf = NULL;
     if (NtPath && PathBytes > 0) {

@@ -35,13 +35,13 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{593C9F50-1039-4027-BC99-ED30ADD7EDCE}</ProjectGuid>
+    <ProjectGuid>{241F09B4-FFF7-43C6-A2F6-379F4375CBDC}</ProjectGuid>
     <TemplateGuid>{1bc93793-694f-48fe-9372-81e2b05556fd}</TemplateGuid>
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
     <Configuration>Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">Win32</Platform>
-    <RootNamespace>DriverHookTest</RootNamespace>
+    <RootNamespace>DriverHookCodeTemplate</RootNamespace>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -140,18 +140,8 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
   </PropertyGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <ClCompile>
-      <TreatWarningAsError>false</TreatWarningAsError>
-    </ClCompile>
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <ClCompile>
-      <TreatWarningAsError>false</TreatWarningAsError>
-    </ClCompile>
-  </ItemDefinitionGroup>
   <ItemGroup>
-    <Inf Include="DriverHookTest.inf" />
+    <Inf Include="DriverHookCodeTemplate.inf" />
   </ItemGroup>
   <ItemGroup>
     <FilesToPackage Include="$(TargetPath)" />

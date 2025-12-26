@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <unordered_map>
 #include <CommCtrl.h>
 #include <commdlg.h>
 #include <TlHelp32.h>
@@ -66,17 +67,46 @@ namespace {
 			SHDeleteKeyW(HKEY_LOCAL_MACHINE, path.c_str());
 		}
 	}
+	typedef DWORD(NTAPI *NtQuerySystemInformation_t)(
+		DWORD,
+		PVOID,
+		ULONG,
+		PULONG
+		);
+	typedef struct _SYSTEM_TIMEOFDAY_INFORMATION {
+		LARGE_INTEGER BootTime;
+		LARGE_INTEGER CurrentTime;
+		LARGE_INTEGER TimeZoneBias;
+		ULONG         TimeZoneId;
+		ULONG         Reserved;
+	} SYSTEM_TIMEOFDAY_INFORMATION, *PSYSTEM_TIMEOFDAY_INFORMATION;
 
 	bool QueryBootFileTime(ULONGLONG& outFt) {
-		FILETIME ftNow{};
-		GetSystemTimeAsFileTime(&ftNow);
-		ULARGE_INTEGER now{};
-		now.LowPart = ftNow.dwLowDateTime;
-		now.HighPart = ftNow.dwHighDateTime;
-		const ULONGLONG ticksPerMs = 10000ULL;
-		ULONGLONG uptimeMs = GetTickCount64();
-		outFt = now.QuadPart - (uptimeMs * ticksPerMs);
-		return true;
+		NtQuerySystemInformation_t NtQuerySystemInformation =
+			(NtQuerySystemInformation_t)GetProcAddress(
+				GetModuleHandleW(L"ntdll.dll"),
+				"NtQuerySystemInformation"
+			);
+		SYSTEM_TIMEOFDAY_INFORMATION sti = { 0 };
+
+		if (NtQuerySystemInformation(
+			3,
+			&sti,
+			sizeof(sti),
+			NULL) == 0)
+		{
+			// sti.BootTime is the boot timestamp
+			FILETIME ft = {
+				(DWORD)sti.BootTime.LowPart,
+				(DWORD)sti.BootTime.HighPart
+			};
+			ULARGE_INTEGER now{};
+			now.LowPart = ft.dwLowDateTime;
+			now.HighPart = ft.dwHighDateTime;
+			outFt = now.QuadPart;
+			return true;
+		}
+		return false;
 	}
 
 	bool ParseHookValue(const std::wstring& value, HookRow& outRow) {
@@ -171,25 +201,111 @@ namespace {
 
 	bool SavePersistedHookRows(DWORD pid, const std::vector<HookRow>& rows) {
 		UNREFERENCED_PARAMETER(pid);
-		DeletePluginKey(std::wstring(kPluginBaseKey));
-		if (rows.empty()) return true;
-		HKEY hBase = nullptr; DWORD disp = 0;
-		LONG rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, kPluginBaseKey, 0, nullptr, REG_OPTION_NON_VOLATILE,
-			KEY_WRITE | KEY_ENUMERATE_SUB_KEYS | KEY_WOW64_64KEY, nullptr, &hBase, &disp);
-		if (rc != ERROR_SUCCESS) {
-			KMHHLog(L"Failed to create plugin cache root (%ld)", rc);
-			return false;
-		}
 		ULONGLONG bootFt = 0;
 		QueryBootFileTime(bootFt);
+
+		HKEY hBase = nullptr; DWORD disp = 0;
+		LONG rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, kPluginBaseKey, 0, nullptr, REG_OPTION_NON_VOLATILE,
+			KEY_READ | KEY_WRITE | KEY_ENUMERATE_SUB_KEYS | KEY_WOW64_64KEY, nullptr, &hBase, &disp);
+		if (rc != ERROR_SUCCESS) {
+			KMHHLog(L"Failed to open plugin cache root (%ld)", rc);
+			return false;
+		}
+
+		ULONGLONG storedBoot = 0;
+		DWORD type = 0, size = sizeof(storedBoot);
+		bool bootMismatch = (RegQueryValueExW(hBase, kPluginBootValue, nullptr, &type, reinterpret_cast<LPBYTE>(&storedBoot), &size) != ERROR_SUCCESS) ||
+			type != REG_QWORD || storedBoot != bootFt;
+
+		if (bootMismatch) {
+			RegCloseKey(hBase);
+			DeletePluginKey(kPluginBaseKey);
+			rc = RegCreateKeyExW(HKEY_LOCAL_MACHINE, kPluginBaseKey, 0, nullptr, REG_OPTION_NON_VOLATILE,
+				KEY_READ | KEY_WRITE | KEY_ENUMERATE_SUB_KEYS | KEY_WOW64_64KEY, nullptr, &hBase, &disp);
+			if (rc != ERROR_SUCCESS) {
+				KMHHLog(L"Failed to recreate plugin cache root (%ld)", rc);
+				return false;
+			}
+		}
+
 		RegSetValueExW(hBase, kPluginBootValue, 0, REG_QWORD, reinterpret_cast<const BYTE*>(&bootFt), sizeof(bootFt));
+
+		std::unordered_map<int, const HookRow*> activeById;
+		activeById.reserve(rows.size());
+		for (const auto& row : rows) {
+			activeById[row.id] = &row;
+		}
+
+		if (!bootMismatch) {
+			std::vector<std::wstring> deleteList;
+			DWORD index = 0;
+			while (true) {
+				wchar_t subName[64];
+				DWORD subLen = _countof(subName);
+				FILETIME lastWrite{};
+				LONG enumRc = RegEnumKeyExW(hBase, index, subName, &subLen, nullptr, nullptr, nullptr, &lastWrite);
+				if (enumRc == ERROR_NO_MORE_ITEMS) break;
+				if (enumRc != ERROR_SUCCESS) {
+					++index;
+					continue;
+				}
+				bool deleteSub = false;
+				ULONGLONG address = 0;
+				if (swscanf_s(subName, L"Hook_%llx", &address) != 1) {
+					deleteSub = true;
+				}
+				HKEY hSub = nullptr;
+				if (!deleteSub && RegOpenKeyExW(hBase, subName, 0, KEY_READ | KEY_WOW64_64KEY, &hSub) == ERROR_SUCCESS) {
+					DWORD valType = 0, valSize = 0;
+					if (RegQueryValueExW(hSub, kPluginHookValue, nullptr, &valType, nullptr, &valSize) == ERROR_SUCCESS &&
+						valType == REG_SZ && valSize >= sizeof(wchar_t)) {
+						std::vector<wchar_t> buffer(valSize / sizeof(wchar_t));
+						if (RegQueryValueExW(hSub, kPluginHookValue, nullptr, nullptr, reinterpret_cast<LPBYTE>(buffer.data()), &valSize) == ERROR_SUCCESS) {
+							std::wstring value(buffer.data());
+							HookRow existing{};
+							if (ParseHookValue(value, existing)) {
+								existing.address = address;
+								auto it = activeById.find(existing.id);
+								if (it == activeById.end()) {
+									deleteSub = true;
+								}
+								else if (it->second->address != existing.address) {
+									deleteSub = true;
+								}
+							}
+							else {
+								deleteSub = true;
+							}
+						}
+						else {
+							deleteSub = true;
+						}
+					}
+					else {
+						deleteSub = true;
+					}
+					if (hSub) RegCloseKey(hSub);
+				}
+				if (deleteSub) {
+					deleteList.emplace_back(subName);
+				}
+				++index;
+			}
+			for (const auto& subName : deleteList) {
+				LONG delRc = RegDeleteTreeW(hBase, subName.c_str());
+				if (delRc != ERROR_SUCCESS && delRc != ERROR_FILE_NOT_FOUND) {
+					KMHHLog(L"Failed to delete stale hook cache %s (%ld)", subName.c_str(), delRc);
+				}
+			}
+		}
+
 		for (const auto& row : rows) {
 			if (row.address == 0 || row.module.empty()) continue;
 			std::wstring subName = BuildAddressSubKeyName(row.address);
 			HKEY hSub = nullptr; DWORD dispSub = 0;
 			rc = RegCreateKeyExW(hBase, subName.c_str(), 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_WOW64_64KEY, nullptr, &hSub, &dispSub);
 			if (rc != ERROR_SUCCESS) {
-				KMHHLog(L"Failed to create subkey %s (%ld)", subName.c_str(), rc);
+				KMHHLog(L"Failed to create/update subkey %s (%ld)", subName.c_str(), rc);
 				continue;
 			}
 			wchar_t header[256];
@@ -208,6 +324,7 @@ namespace {
 			}
 			RegCloseKey(hSub);
 		}
+
 		RegCloseKey(hBase);
 		return true;
 	}
@@ -256,8 +373,10 @@ namespace {
 		ListView_InsertColumn(list, 1, &col);
 		col.pszText = const_cast<LPWSTR>(L"Target"); col.cx = 150; col.iSubItem = 2;
 		ListView_InsertColumn(list, 2, &col);
-		col.pszText = const_cast<LPWSTR>(L"State"); col.cx = 80; col.iSubItem = 3;
+		col.pszText = const_cast<LPWSTR>(L"Module+Offset"); col.cx = 180; col.iSubItem = 3;
 		ListView_InsertColumn(list, 3, &col);
+		col.pszText = const_cast<LPWSTR>(L"State"); col.cx = 80; col.iSubItem = 4;
+		ListView_InsertColumn(list, 4, &col);
 	}
 
 	void Trim(std::wstring& s) {
@@ -579,10 +698,11 @@ namespace {
 
 			{
 				// remove hook first
-				UCHAR* ori_asm_code = (UCHAR*)malloc(0xa);
-				KRNL::ReadPrimitive((LPVOID)((DWORD64)LdrCtx_GetToDeskBase() + TO_DESK_TRAMPOLINE_CODE_STAGE_2_OFFSET + OFFSET_FOR_ORIGINAL_ASM_CODE_SAVE),
-					ori_asm_code, 0xa);
-				KRNL::WritePrimitive((LPVOID)hook_point, ori_asm_code, 0xa);
+#define TEMP_LEN 0xa
+				UCHAR* ori_asm_code = (UCHAR*)malloc(TEMP_LEN);
+				KRNL::ReadPrimitive((LPVOID)oriAsmAddr,
+					ori_asm_code, TEMP_LEN);
+				KRNL::WritePrimitive((LPVOID)hook_point, ori_asm_code, TEMP_LEN);
 			}
 #endif //  DEBUG
 
@@ -666,13 +786,21 @@ namespace {
 			ULONGLONG addr = res.success ? res.row.address : res.address;
 			if (addr) swprintf(addrBuf, _countof(addrBuf), L"0x%llX", addr);
 			std::wstring targetText = res.success ? res.row.expFunc : (res.entry.module + L"+" + res.entry.offset);
+			PVOID module_base = NULL;
+			CHAR a[MAX_PATH] = { 0 };
+			Helper::ConvertWcharToChar(res.row.module.c_str(), a, MAX_PATH);
+			KRNL::GetDriverBase(a, &module_base);
+			wchar_t b[MAX_PATH] = { 0 };
+			swprintf(b, _countof(b), L"0x%x", (DWORD)(addr - (DWORD64)module_base));
+			std::wstring modoffText = res.row.module + L"+" + b;
 			LVITEMW item{};
 			item.mask = LVIF_TEXT;
 			item.pszText = const_cast<LPWSTR>(idText.c_str());
 			int rowIndex = ListView_InsertItem(list, &item);
 			ListView_SetItemText(list, rowIndex, 1, addrBuf);
 			ListView_SetItemText(list, rowIndex, 2, const_cast<LPWSTR>(targetText.c_str()));
-			ListView_SetItemText(list, rowIndex, 3, const_cast<LPWSTR>(res.status.c_str()));
+			ListView_SetItemText(list, rowIndex, 3, const_cast<LPWSTR>(modoffText.c_str()));
+			ListView_SetItemText(list, rowIndex, 4, const_cast<LPWSTR>(res.status.c_str()));
 		}
 	}
 
@@ -762,6 +890,18 @@ namespace {
 			HWND hList = GetDlgItem(hDlg, IDC_KMHH_LIST_HOOKS);
 			SetupHookListColumns(hList);
 			g_hHookList = hList;
+			// Populate hook list from cache
+			std::vector<HookRow> cachedRows;
+			LoadPersistedHookRows(0, cachedRows);
+			std::vector<HookSequenceResult> results;
+			for (const auto& row : cachedRows) {
+				HookSequenceResult res;
+				res.row = row;
+				res.success = true;
+				res.status = L"Persisted";
+				results.push_back(res);
+			}
+			UpdateHookList(hList, results);
 			CenterRelativeToParent(hDlg, ctx ? ctx->parent : nullptr);
 			return TRUE;
 		}

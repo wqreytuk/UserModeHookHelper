@@ -38,6 +38,8 @@ typedef struct _HOOK_ENTRY {
 	LIST_ENTRY ListEntry;
 	ULONGLONG Hash;
 	UNICODE_STRING NtPath;
+	ULONGLONG ModuleBase; // New: module base address
+	ULONGLONG Offset;     // New: offset from module base
 } HOOK_ENTRY, *PHOOK_ENTRY;
 
 
@@ -56,7 +58,7 @@ NTSTATUS HookList_CreateOrUpdateSection(VOID);
 // that is already duplicated into the caller's process (caller-visible).
 NTSTATUS HookList_DuplicateSectionHandle(PEPROCESS TargetProcess, PHANDLE OutHandle);
 // Add entry with optional UTF-16LE path buffer. If PathBytes == 0, no path is stored.
-NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath, SIZE_T PathBytes);
+NTSTATUS HookList_AddEntry(ULONGLONG hash, PCWSTR NtPath, SIZE_T PathBytes, ULONGLONG ModuleBase, ULONGLONG Offset);
 BOOLEAN HookList_RemoveEntry(ULONGLONG hash);
 BOOLEAN HookList_ContainsHash(ULONGLONG hash);
 

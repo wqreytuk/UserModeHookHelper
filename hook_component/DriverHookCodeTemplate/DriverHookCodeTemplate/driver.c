@@ -35,7 +35,7 @@ void Log(_In_ PCWSTR Format, ...) {
 	RtlStringCchPrintfW(
 		Prefixed,
 		RTL_NUMBER_OF(Prefixed),
-		L"[HookCode] %s",
+		L"[KrnlHC]   %s",
 		Buffer
 	);
 	Prefixed[RTL_NUMBER_OF(Prefixed) - 1] = L'\0';
@@ -44,7 +44,7 @@ void Log(_In_ PCWSTR Format, ...) {
 		&data[0],
 		Prefixed,
 		1100
-	); 
+	);
 	EtwWrite(
 		g_ProviderHandle,
 		&g_LogEventDescriptor,
@@ -70,7 +70,8 @@ void Log(_In_ PCWSTR Format, ...) {
     PVOID rdi = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)(rsp) + 0x48);         \
     PVOID rsi = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)(rsp) + 0x50);         \
     PVOID rbx = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)(rsp) + 0x68);         \
-    PVOID rax = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)(rsp) + 0x70);
+    PVOID rax = (PVOID)*(DWORD64*)((UCHAR*)(ULONG_PTR)(rsp) + 0x70);		 \
+	(r15);(r14);(r13);(r12);(r11);(r10);(r9);(r8);(rdx);(rcx);(rbp);(rdi);(rsi);(rbx);(rax);(original_rsp);
 
 VOID __declspec(dllexport) HookCodeX64(PVOID rcx, PVOID rdx, PVOID r8, PVOID r9, PVOID rsp) {
 
@@ -92,12 +93,12 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 	UNREFERENCED_PARAMETER(DriverObject);
 	NTSTATUS status = EtwRegister(
 		&ProviderGUID,
-		NULL, 
+		NULL,
 		NULL,
 		&g_ProviderHandle
 	);
 	if (0 != status) {
-		DbgPrint(L"failed to register ETW, abort\n");
+		DbgPrint("failed to register ETW, abort\n");
 		return STATUS_UNSUCCESSFUL;
 	}
 	return STATUS_SUCCESS;

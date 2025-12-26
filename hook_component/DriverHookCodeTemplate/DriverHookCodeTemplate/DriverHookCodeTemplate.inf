@@ -1,5 +1,5 @@
 ;
-; DriverHookTest.inf
+; DriverHookCodeTemplate.inf
 ;
 
 [Version]
@@ -7,12 +7,12 @@ Signature="$WINDOWS NT$"
 Class=Sample ; TODO: edit Class
 ClassGuid={78A1C341-4539-11d3-B88D-00C04FAD5171} ; TODO: edit ClassGuid
 Provider=%ManufacturerName%
-CatalogFile=DriverHookTest.cat
+CatalogFile=DriverHookCodeTemplate.cat
 DriverVer= ; TODO: set DriverVer in stampinf property pages
 
 [DestinationDirs]
 DefaultDestDir = 12
-DriverHookTest_Device_CoInstaller_CopyFiles = 11
+DriverHookCodeTemplate_Device_CoInstaller_CopyFiles = 11
 
 ; ================= Class section =====================
 
@@ -27,7 +27,7 @@ HKR,,Icon,,-5
 1 = %DiskName%,,,""
 
 [SourceDisksFiles]
-DriverHookTest.sys  = 1,,
+DriverHookCodeTemplate.sys  = 1,,
 WdfCoInstaller$KMDFCOINSTALLERVERSION$.dll=1 ; make sure the number matches with SourceDisksNames
 
 ;*****************************************
@@ -38,49 +38,49 @@ WdfCoInstaller$KMDFCOINSTALLERVERSION$.dll=1 ; make sure the number matches with
 %ManufacturerName%=Standard,NT$ARCH$
 
 [Standard.NT$ARCH$]
-%DriverHookTest.DeviceDesc%=DriverHookTest_Device, Root\DriverHookTest ; TODO: edit hw-id
+%DriverHookCodeTemplate.DeviceDesc%=DriverHookCodeTemplate_Device, Root\DriverHookCodeTemplate ; TODO: edit hw-id
 
-[DriverHookTest_Device.NT]
+[DriverHookCodeTemplate_Device.NT]
 CopyFiles=Drivers_Dir
 
 [Drivers_Dir]
-DriverHookTest.sys
+DriverHookCodeTemplate.sys
 
 ;-------------- Service installation
-[DriverHookTest_Device.NT.Services]
-AddService = DriverHookTest,%SPSVCINST_ASSOCSERVICE%, DriverHookTest_Service_Inst
+[DriverHookCodeTemplate_Device.NT.Services]
+AddService = DriverHookCodeTemplate,%SPSVCINST_ASSOCSERVICE%, DriverHookCodeTemplate_Service_Inst
 
-; -------------- DriverHookTest driver install sections
-[DriverHookTest_Service_Inst]
-DisplayName    = %DriverHookTest.SVCDESC%
+; -------------- DriverHookCodeTemplate driver install sections
+[DriverHookCodeTemplate_Service_Inst]
+DisplayName    = %DriverHookCodeTemplate.SVCDESC%
 ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
 StartType      = 3               ; SERVICE_DEMAND_START
 ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
-ServiceBinary  = %12%\DriverHookTest.sys
+ServiceBinary  = %12%\DriverHookCodeTemplate.sys
 
 ;
-;--- DriverHookTest_Device Coinstaller installation ------
+;--- DriverHookCodeTemplate_Device Coinstaller installation ------
 ;
 
-[DriverHookTest_Device.NT.CoInstallers]
-AddReg=DriverHookTest_Device_CoInstaller_AddReg
-CopyFiles=DriverHookTest_Device_CoInstaller_CopyFiles
+[DriverHookCodeTemplate_Device.NT.CoInstallers]
+AddReg=DriverHookCodeTemplate_Device_CoInstaller_AddReg
+CopyFiles=DriverHookCodeTemplate_Device_CoInstaller_CopyFiles
 
-[DriverHookTest_Device_CoInstaller_AddReg]
+[DriverHookCodeTemplate_Device_CoInstaller_AddReg]
 HKR,,CoInstallers32,0x00010000, "WdfCoInstaller$KMDFCOINSTALLERVERSION$.dll,WdfCoInstaller"
 
-[DriverHookTest_Device_CoInstaller_CopyFiles]
+[DriverHookCodeTemplate_Device_CoInstaller_CopyFiles]
 WdfCoInstaller$KMDFCOINSTALLERVERSION$.dll
 
-[DriverHookTest_Device.NT.Wdf]
-KmdfService =  DriverHookTest, DriverHookTest_wdfsect
-[DriverHookTest_wdfsect]
+[DriverHookCodeTemplate_Device.NT.Wdf]
+KmdfService =  DriverHookCodeTemplate, DriverHookCodeTemplate_wdfsect
+[DriverHookCodeTemplate_wdfsect]
 KmdfLibraryVersion = $KMDFVERSION$
 
 [Strings]
 SPSVCINST_ASSOCSERVICE= 0x00000002
 ManufacturerName="<Your manufacturer name>" ;TODO: Replace with your manufacturer name
 ClassName="Samples" ; TODO: edit ClassName
-DiskName = "DriverHookTest Installation Disk"
-DriverHookTest.DeviceDesc = "DriverHookTest Device"
-DriverHookTest.SVCDESC = "DriverHookTest Service"
+DiskName = "DriverHookCodeTemplate Installation Disk"
+DriverHookCodeTemplate.DeviceDesc = "DriverHookCodeTemplate Device"
+DriverHookCodeTemplate.SVCDESC = "DriverHookCodeTemplate Service"

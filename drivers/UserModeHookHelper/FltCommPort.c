@@ -849,14 +849,27 @@ Handle_AddHook(
 		return STATUS_BUFFER_TOO_SMALL;
 	}
 	ULONGLONG hash = 0;
+	ULONGLONG moduleBase = 0;
+	ULONGLONG offset = 0;
 	RtlCopyMemory(&hash, msg->m_Data, sizeof(ULONGLONG));
+	SIZE_T offsetInMsg = sizeof(ULONGLONG);
+	if (InputBufferSize >= (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(ULONGLONG) * 3)) {
+		RtlCopyMemory(&moduleBase, msg->m_Data + offsetInMsg, sizeof(ULONGLONG));
+		offsetInMsg += sizeof(ULONGLONG);
+		RtlCopyMemory(&offset, msg->m_Data + offsetInMsg, sizeof(ULONGLONG));
+		offsetInMsg += sizeof(ULONGLONG);
+	} else {
+		moduleBase = 0;
+		offset = 0;
+		offsetInMsg = sizeof(ULONGLONG);
+	}
 	PCWSTR path = NULL;
 	SIZE_T pathBytes = 0;
-	if (InputBufferSize > ((ULONG)UMHH_MSG_HEADER_SIZE + (ULONG)sizeof(ULONGLONG))) {
-		pathBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE - sizeof(ULONGLONG);
-		if (pathBytes >= sizeof(WCHAR)) path = (PCWSTR)(msg->m_Data + sizeof(ULONGLONG));
+	if (InputBufferSize > (ULONG)(UMHH_MSG_HEADER_SIZE + offsetInMsg)) {
+		pathBytes = InputBufferSize - UMHH_MSG_HEADER_SIZE - offsetInMsg;
+		if (pathBytes >= sizeof(WCHAR)) path = (PCWSTR)(msg->m_Data + offsetInMsg);
 	}
-	NTSTATUS st = HookList_AddEntry(hash, path, pathBytes);
+	NTSTATUS st = HookList_AddEntry(hash, path, pathBytes, moduleBase, offset);
 	// If we successfully added an entry, update the anonymous section so
 	// connected clients can MapViewOfFile and see the new snapshot.
 	if (NT_SUCCESS(st)) {

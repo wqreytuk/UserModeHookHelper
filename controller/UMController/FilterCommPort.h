@@ -27,7 +27,7 @@ public:
 	bool FLTCOMM_EnumHookPaths(std::vector<std::wstring>& outPaths);
 	// (Path resolution moved to Helper::ResolveDosPathToNtPath)
 	// Add or remove hook entries in kernel (NT path is passed as UTF-16LE)
-	bool FLTCOMM_AddHook(const std::wstring& ntPath);
+	bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath);
 	bool FLTCOMM_RemoveHookByHash(ULONGLONG hash);
 	~Filter();
 	// Register a callback that will be invoked when the kernel sends

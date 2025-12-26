@@ -472,6 +472,7 @@ bool Filter::FLTCOMM_AddHook(const std::wstring& ntPath) {
 	return false;
 }
 
+
 bool Filter::FLTCOMM_GetHookSection(HANDLE& outHandle) {
 	outHandle = NULL;
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)malloc(sizeof(UMHH_COMMAND_MESSAGE));

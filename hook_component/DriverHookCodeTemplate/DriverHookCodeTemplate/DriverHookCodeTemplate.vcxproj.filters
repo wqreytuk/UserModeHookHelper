@@ -19,7 +19,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <Inf Include="DriverHookTest.inf">
+    <Inf Include="DriverHookCodeTemplate.inf">
       <Filter>Driver Files</Filter>
     </Inf>
   </ItemGroup>
