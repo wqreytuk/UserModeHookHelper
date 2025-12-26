@@ -681,31 +681,57 @@ bool Filter::FLTCOMM_ReadKernelMemory(_In_ LPVOID target_addr, _Out_ LPVOID buff
 	if (!target_addr || !buffer || size == 0 || size > UMHH_KERNEL_RW_MAX_TRANSFER) {
 		return false;
 	}
-	const size_t msgSize = UMHH_MSG_HEADER_SIZE + sizeof(UMHH_KERNEL_RW_REQUEST);
+	// 1. Map kernel memory to user
+	UMHH_MAP_KERNEL_TO_USER_REQUEST req = {};
+	req.KernelVa = (ULONGLONG)(ULONG_PTR)target_addr;
+	req.Length = (ULONG)size;
+	req.CacheType = 1; // MmCached
+
+	const size_t msgSize = UMHH_MSG_HEADER_SIZE + sizeof(req);
 	std::unique_ptr<BYTE[]> msgBuf(new BYTE[msgSize]);
 	if (!msgBuf) return false;
 	memset(msgBuf.get(), 0, msgSize);
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)msgBuf.get();
-	msg->m_Cmd = CMD_RW_KERNEL_MEMORY;
-	UMHH_KERNEL_RW_REQUEST req = {};
-	req.Address = (ULONGLONG)(ULONG_PTR)target_addr;
-	req.Size = (ULONG)size;
-	req.Flags = 0;
+	msg->m_Cmd = CMD_MAP_KERNEL_TO_USER;
 	memcpy(msg->m_Data, &req, sizeof(req));
 
+	UMHH_MAP_KERNEL_TO_USER_REPLY reply = {};
 	DWORD bytesOut = 0;
 	HRESULT hr = FilterSendMessage(m_Port,
 		msg,
 		(DWORD)msgSize,
-		buffer,
-		(DWORD)size,
+		&reply,
+		(DWORD)sizeof(reply),
 		&bytesOut);
-	if (hr != S_OK) {
-		LOG_CTRL_ETW(L"FLTCOMM_ReadKernelMemory: FilterSendMessage failed hr=0x%08x\n", hr);
+	if (hr != S_OK || bytesOut != sizeof(reply) || !reply.UserVa) {
+		LOG_CTRL_ETW(L"FLTCOMM_ReadKernelMemory: map failed hr=0x%08x\n", hr);
 		return false;
 	}
-	if (bytesOut != size) {
-		LOG_CTRL_ETW(L"FLTCOMM_ReadKernelMemory: bytesOut=%u expected=%u\n", bytesOut, (ULONG)size);
+
+	// 2. Copy from mapped user VA
+	memcpy(buffer, (void*)(ULONG_PTR)reply.UserVa, size);
+
+	// 3. Free the mapping
+	UMHH_FREE_MDL_REQUEST freeReq = {};
+	freeReq.UserVa = reply.UserVa;
+	freeReq.Mdl = reply.Mdl;
+	size_t freeMsgSize = UMHH_MSG_HEADER_SIZE + sizeof(freeReq);
+	std::unique_ptr<BYTE[]> freeMsgBuf(new BYTE[freeMsgSize]);
+	if (!freeMsgBuf) return false;
+	memset(freeMsgBuf.get(), 0, freeMsgSize);
+	PUMHH_COMMAND_MESSAGE freeMsg = (PUMHH_COMMAND_MESSAGE)freeMsgBuf.get();
+	freeMsg->m_Cmd = CMD_FREE_MDL;
+	memcpy(freeMsg->m_Data, &freeReq, sizeof(freeReq));
+	DWORD freeBytesOut = 0;
+	NTSTATUS freeStatus = STATUS_UNSUCCESSFUL;
+	hr = FilterSendMessage(m_Port,
+		freeMsg,
+		(DWORD)freeMsgSize,
+		&freeStatus,
+		(DWORD)sizeof(freeStatus),
+		&freeBytesOut);
+	if (hr != S_OK || !NT_SUCCESS(freeStatus)) {
+		LOG_CTRL_ETW(L"FLTCOMM_ReadKernelMemory: free_mdl failed hr=0x%08x status=0x%08x\n", hr, freeStatus);
 		return false;
 	}
 	return true;
@@ -715,37 +741,57 @@ bool Filter::FLTCOMM_WriteKernelMemory(_In_ LPVOID target_addr, _Out_ LPVOID buf
 	if (!target_addr || !buffer || size == 0 || size > UMHH_KERNEL_RW_MAX_TRANSFER) {
 		return false;
 	}
-	const size_t msgSize = UMHH_MSG_HEADER_SIZE + sizeof(UMHH_KERNEL_RW_REQUEST) + size;
+	// 1. Map kernel memory to user
+	UMHH_MAP_KERNEL_TO_USER_REQUEST req = {};
+	req.KernelVa = (ULONGLONG)(ULONG_PTR)target_addr;
+	req.Length = (ULONG)size;
+	req.CacheType = 1; // MmCached
+
+	const size_t msgSize = UMHH_MSG_HEADER_SIZE + sizeof(req);
 	std::unique_ptr<BYTE[]> msgBuf(new BYTE[msgSize]);
 	if (!msgBuf) return false;
 	memset(msgBuf.get(), 0, msgSize);
 	PUMHH_COMMAND_MESSAGE msg = (PUMHH_COMMAND_MESSAGE)msgBuf.get();
-	msg->m_Cmd = CMD_RW_KERNEL_MEMORY;
-	UMHH_KERNEL_RW_REQUEST req = {};
-	req.Address = (ULONGLONG)(ULONG_PTR)target_addr;
-	req.Size = (ULONG)size;
-	req.Flags = UMHH_KERNEL_RW_FLAG_WRITE;
+	msg->m_Cmd = CMD_MAP_KERNEL_TO_USER;
 	memcpy(msg->m_Data, &req, sizeof(req));
-	memcpy(msg->m_Data + sizeof(req), buffer, size);
 
-	NTSTATUS ntstatus = STATUS_UNSUCCESSFUL;
+	UMHH_MAP_KERNEL_TO_USER_REPLY reply = {};
 	DWORD bytesOut = 0;
 	HRESULT hr = FilterSendMessage(m_Port,
 		msg,
 		(DWORD)msgSize,
-		&ntstatus,
-		(DWORD)sizeof(ntstatus),
+		&reply,
+		(DWORD)sizeof(reply),
 		&bytesOut);
-	if (hr != S_OK) {
-		LOG_CTRL_ETW(L"FLTCOMM_WriteKernelMemory: FilterSendMessage failed hr=0x%08x\n", hr);
+	if (hr != S_OK || bytesOut != sizeof(reply) || !reply.UserVa) {
+		LOG_CTRL_ETW(L"FLTCOMM_WriteKernelMemory: map failed hr=0x%08x\n", hr);
 		return false;
 	}
-	if (bytesOut != sizeof(ntstatus)) {
-		LOG_CTRL_ETW(L"FLTCOMM_WriteKernelMemory: unexpected reply size=%u\n", bytesOut);
-		return false;
-	}
-	if (!NT_SUCCESS(ntstatus)) {
-		LOG_CTRL_ETW(L"FLTCOMM_WriteKernelMemory: driver returned NTSTATUS=0x%08x\n", ntstatus);
+
+	// 2. Copy to mapped user VA
+	memcpy((void*)(ULONG_PTR)reply.UserVa, buffer, size);
+
+	// 3. Free the mapping
+	UMHH_FREE_MDL_REQUEST freeReq = {};
+	freeReq.UserVa = reply.UserVa;
+	freeReq.Mdl = reply.Mdl;
+	size_t freeMsgSize = UMHH_MSG_HEADER_SIZE + sizeof(freeReq);
+	std::unique_ptr<BYTE[]> freeMsgBuf(new BYTE[freeMsgSize]);
+	if (!freeMsgBuf) return false;
+	memset(freeMsgBuf.get(), 0, freeMsgSize);
+	PUMHH_COMMAND_MESSAGE freeMsg = (PUMHH_COMMAND_MESSAGE)freeMsgBuf.get();
+	freeMsg->m_Cmd = CMD_FREE_MDL;
+	memcpy(freeMsg->m_Data, &freeReq, sizeof(freeReq));
+	DWORD freeBytesOut = 0;
+	NTSTATUS freeStatus = STATUS_UNSUCCESSFUL;
+	hr = FilterSendMessage(m_Port,
+		freeMsg,
+		(DWORD)freeMsgSize,
+		&freeStatus,
+		(DWORD)sizeof(freeStatus),
+		&freeBytesOut);
+	if (hr != S_OK || !NT_SUCCESS(freeStatus)) {
+		LOG_CTRL_ETW(L"FLTCOMM_WriteKernelMemory: free_mdl failed hr=0x%08x status=0x%08x\n", hr, freeStatus);
 		return false;
 	}
 	return true;

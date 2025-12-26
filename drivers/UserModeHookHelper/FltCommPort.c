@@ -20,6 +20,23 @@ extern NTSTATUS NTAPI MmCopyVirtualMemory
 	KPROCESSOR_MODE PreviousMode,
 	PSIZE_T ReturnSize
 );
+
+// Context for kernel-to-user memory mapping (used by KmhhMapKernelRegionToUser and KmhhFreeMappedRegion)
+typedef struct _KMHH_MAP_CONTEXT {
+	PVOID KernelVa;              // Kernel virtual address being mapped
+	ULONG Length;                // Length of region
+	PMDL KernelMdl;              // MDL allocated for mapping
+	PVOID UserVa;                // User-mode virtual address (result of mapping)
+	PVOID UserAliasVa;           // Alias for user mapping (mirrored slot)
+	BOOLEAN HasUserAlias;        // Indicates if alias is valid
+	BOOLEAN KernelVaWasIoMapped; // If KernelVa was mapped via MmMapIoSpace
+	SIZE_T IoMappingLength;      // Length of IO mapping
+	PVOID ContiguousVa;          // If allocated via MmAllocateContiguousMemory
+	SIZE_T ContiguousSize;       // Size of contiguous allocation
+	MEMORY_CACHING_TYPE ContiguousCacheType; // Cache type for contiguous allocation
+	NTSTATUS Status;             // Last operation status
+	UCHAR BackingRecord[32];     // Reserved for future use or bookkeeping
+} KMHH_MAP_CONTEXT, *PKMHH_MAP_CONTEXT;
 // Forward declarations for modular command handlers (defined below)
 static NTSTATUS Handle_SetUserDir(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_AddHook(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -36,9 +53,15 @@ static NTSTATUS Handle_QueryPplProtection(PUMHH_COMMAND_MESSAGE msg, ULONG Input
 static NTSTATUS Handle_RecoverPpl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_WriteProcessMemory(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_DuplicateHandleKernel(PCOMM_CONTEXT CallerCtx, PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
-static NTSTATUS Handle_KernelReadWrite(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_MapKernelToUser(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
+static NTSTATUS Handle_FreeMdl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 
 
+VOID KmhhFreeMappedRegion(KMHH_MAP_CONTEXT* ctx);
+BOOLEAN KmhhMapKernelRegionToUser(KMHH_MAP_CONTEXT* ctx,
+	PVOID kernelVa,
+	SIZE_T length,
+	MEMORY_CACHING_TYPE cacheType);
 static NTSTATUS Handle_IsProcessWow64(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_IsProtectedProcess(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
 static NTSTATUS Handle_SetGlobalHookMode(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength);
@@ -350,8 +373,12 @@ Comm_MessageNotify(
 	case CMD_DUPLICATE_HANDLE_KERNEL:
 		status = Handle_DuplicateHandleKernel(pPortCtxCallerRef, msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
-	case CMD_RW_KERNEL_MEMORY:
-		status = Handle_KernelReadWrite(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+
+	case CMD_MAP_KERNEL_TO_USER:
+		status = Handle_MapKernelToUser(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
+		break;
+	case CMD_FREE_MDL:
+		status = Handle_FreeMdl(msg, InputBufferSize, OutputBuffer, OutputBufferSize, ReturnOutputBufferLength);
 		break;
 
 	default:
@@ -1673,69 +1700,104 @@ static NTSTATUS Handle_WriteProcessMemory(
 	return STATUS_SUCCESS;
 }
 
-static NTSTATUS
-Handle_KernelReadWrite(
-	PUMHH_COMMAND_MESSAGE msg,
-	ULONG InputBufferSize,
-	PVOID OutputBuffer,
-	ULONG OutputBufferSize,
-	PULONG ReturnOutputBufferLength
-) {
-	ULONG minSize = (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(UMHH_KERNEL_RW_REQUEST));
-	if (InputBufferSize < minSize) {
-		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-		return STATUS_BUFFER_TOO_SMALL;
+
+static NTSTATUS Handle_MapKernelToUser(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
+	ULONG minSize = (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(UMHH_MAP_KERNEL_TO_USER_REQUEST));
+	if (InputBufferSize < minSize || !OutputBuffer || OutputBufferSize < sizeof(UMHH_MAP_KERNEL_TO_USER_REPLY)) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
+		NTSTATUS status = STATUS_BUFFER_TOO_SMALL;
+		RtlCopyMemory(OutputBuffer, &status, sizeof(status));
+		return status;
 	}
-	UMHH_KERNEL_RW_REQUEST req = { 0 };
+	UMHH_MAP_KERNEL_TO_USER_REQUEST req = { 0 };
 	RtlCopyMemory(&req, msg->m_Data, sizeof(req));
-	if (req.Size == 0 || req.Size > UMHH_KERNEL_RW_MAX_TRANSFER) {
-		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-		return STATUS_INVALID_PARAMETER;
+	KMHH_MAP_CONTEXT ctx = { 0 };
+	BOOLEAN ok = KmhhMapKernelRegionToUser(&ctx, (PVOID)(ULONG_PTR)req.KernelVa, req.Length, (MEMORY_CACHING_TYPE)req.CacheType);
+	UMHH_MAP_KERNEL_TO_USER_REPLY reply = { 0 };
+	if (ok) {
+		reply.UserVa = (ULONGLONG)(ULONG_PTR)ctx.UserVa;
+		reply.Mdl = (ULONGLONG)(ULONG_PTR)ctx.KernelMdl;
 	}
-	SIZE_T transfer = (SIZE_T)req.Size;
-	PVOID target = (PVOID)(ULONG_PTR)req.Address;
-	if (!target) {
-		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
-		return STATUS_INVALID_PARAMETER;
+	RtlCopyMemory(OutputBuffer, &reply, sizeof(reply));
+	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(reply);
+	NTSTATUS status = ok ?  STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+	if (!NT_SUCCESS(status)) {
+		RtlCopyMemory(OutputBuffer, &status, sizeof(status));
 	}
-	BOOLEAN isWrite = (req.Flags & UMHH_KERNEL_RW_FLAG_WRITE) ? TRUE : FALSE;
-	ULONG requiredInput = minSize + (isWrite ? req.Size : 0);
-	if (InputBufferSize < requiredInput) {
-		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = 0;
+	return status;
+}
+
+static NTSTATUS Handle_FreeMdl(PUMHH_COMMAND_MESSAGE msg, ULONG InputBufferSize, PVOID OutputBuffer, ULONG OutputBufferSize, PULONG ReturnOutputBufferLength) {
+	ULONG minSize = (ULONG)(UMHH_MSG_HEADER_SIZE + sizeof(UMHH_FREE_MDL_REQUEST));
+	if (InputBufferSize < minSize) {
+		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
 		return STATUS_BUFFER_TOO_SMALL;
 	}
-	if (isWrite) {
-		const UCHAR* payload = msg->m_Data + sizeof(req);
-		BOOLEAN okWrite = Mini_WriteKernelMemory(target, payload, transfer);
-		NTSTATUS stWrite = okWrite ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
-		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
-			RtlCopyMemory(OutputBuffer, &stWrite, sizeof(NTSTATUS));
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
-		} else if (ReturnOutputBufferLength) {
-			*ReturnOutputBufferLength = 0;
-		}
-		return stWrite;
-	}
-	if (!OutputBuffer || OutputBufferSize < req.Size) {
-		if (ReturnOutputBufferLength) *ReturnOutputBufferLength = req.Size;
-		return STATUS_BUFFER_TOO_SMALL;
-	}
-	UCHAR scratch[UMHH_KERNEL_RW_MAX_TRANSFER];
-	RtlZeroMemory(scratch, transfer);
-	BOOLEAN okRead = Mini_ReadKernelMemory(target, scratch, transfer);
-	if (!okRead) {
-		NTSTATUS stRead = STATUS_UNSUCCESSFUL;
-		if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS)) {
-			RtlCopyMemory(OutputBuffer, &stRead, sizeof(NTSTATUS));
-			if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
-		} else if (ReturnOutputBufferLength) {
-			*ReturnOutputBufferLength = 0;
-		}
-		RtlZeroMemory(scratch, transfer);
-		return stRead;
-	}
-	RtlCopyMemory(OutputBuffer, scratch, transfer);
-	RtlZeroMemory(scratch, transfer);
-	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = (ULONG)transfer;
+	UMHH_FREE_MDL_REQUEST req = { 0 };
+	RtlCopyMemory(&req, msg->m_Data, sizeof(req));
+	KMHH_MAP_CONTEXT ctx = { 0 };
+	ctx.UserVa = (PVOID)(ULONG_PTR)req.UserVa;
+	ctx.KernelMdl = (PMDL)(ULONG_PTR)req.Mdl;
+	KmhhFreeMappedRegion(&ctx);
+	NTSTATUS st = STATUS_SUCCESS;
+	if (OutputBuffer && OutputBufferSize >= sizeof(NTSTATUS))
+		RtlCopyMemory(OutputBuffer, &st, sizeof(NTSTATUS));
+	if (ReturnOutputBufferLength) *ReturnOutputBufferLength = sizeof(NTSTATUS);
 	return STATUS_SUCCESS;
+} 
+BOOLEAN KmhhMapKernelRegionToUser(KMHH_MAP_CONTEXT* ctx,
+	PVOID kernelVa,
+	SIZE_T length,
+	MEMORY_CACHING_TYPE cacheType)
+{
+	ctx->KernelVa = kernelVa;
+	ctx->Length = (ULONG)length;
+
+	ctx->KernelMdl = IoAllocateMdl(kernelVa, (ULONG)length, FALSE, FALSE, NULL);
+	if (!ctx->KernelMdl)
+		return FALSE;
+
+	MmBuildMdlForNonPagedPool(ctx->KernelMdl);
+
+	ctx->UserVa = MmMapLockedPagesSpecifyCache(ctx->KernelMdl,
+		UserMode,
+		cacheType,
+		NULL,
+		FALSE,
+		MdlMappingNoExecute);
+	if (!ctx->UserVa) {
+		IoFreeMdl(ctx->KernelMdl);
+		ctx->KernelMdl = NULL;
+		return FALSE;
+	}
+
+	ctx->UserAliasVa = ctx->UserVa;   // driver mirrors this in two slots
+	ctx->HasUserAlias = TRUE;
+	return TRUE;
+}
+
+VOID KmhhFreeMappedRegion(KMHH_MAP_CONTEXT* ctx)
+{
+	if (ctx->UserVa && ctx->KernelMdl) {
+		MmUnmapLockedPages(ctx->UserVa, ctx->KernelMdl);
+		ctx->UserVa = ctx->UserAliasVa = NULL;
+	}
+
+	if (ctx->KernelMdl) {
+		IoFreeMdl(ctx->KernelMdl);
+		ctx->KernelMdl = NULL;
+	}
+
+	if (ctx->KernelVa && ctx->KernelVaWasIoMapped)
+		MmUnmapIoSpace(ctx->KernelVa, ctx->IoMappingLength);
+
+	if (ctx->ContiguousVa) {
+		MmFreeContiguousMemorySpecifyCache(ctx->ContiguousVa,
+			ctx->ContiguousSize,
+			ctx->ContiguousCacheType);
+		ctx->ContiguousVa = NULL;
+	}
+
+	RtlZeroMemory(&ctx->BackingRecord, sizeof(ctx->BackingRecord));
+	ctx->Status = STATUS_SUCCESS;
 }

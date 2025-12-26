@@ -146,7 +146,7 @@ static void PrintUsage() {
 		L"  blman prot -c                           Clear protected process names\n"
 		L"  blman prot -l                           List protected process names\n";
 	std::wcout << L"\nExtra:\n"
-		L"  UmhhMan hookseq -o path\\out.hooseq \n"
+		L"  UmhhMan hookseq -o path\\out.hookseq \n"
 		L"    -add module,offsetHex,dllPath,export [-add ...]\n"
 		L"\nNotes:\n"
 		L"  - The hookseq file omits PID; HookUI applies to its current target.\n"

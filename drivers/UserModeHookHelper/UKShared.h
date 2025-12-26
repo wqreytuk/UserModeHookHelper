@@ -73,8 +73,26 @@
 // Read or write arbitrary kernel virtual memory. Payload: UMHH_KERNEL_RW_REQUEST
 // followed by optional inline data (for write). Reply is raw bytes (read) or
 // NTSTATUS (write/failure).
-#define CMD_RW_KERNEL_MEMORY 26
+
+#define CMD_MAP_KERNEL_TO_USER 27
+#define CMD_FREE_MDL 28
 // (CMD_RESOLVE_NT_PATH removed - NT path resolution is performed in user-mode)
+
+typedef struct _UMHH_MAP_KERNEL_TO_USER_REQUEST {
+	ULONGLONG KernelVa;
+	ULONG     Length;
+	ULONG     CacheType;
+} UMHH_MAP_KERNEL_TO_USER_REQUEST, *PUMHH_MAP_KERNEL_TO_USER_REQUEST;
+
+typedef struct _UMHH_MAP_KERNEL_TO_USER_REPLY {
+	ULONGLONG UserVa;
+	ULONGLONG Mdl;
+} UMHH_MAP_KERNEL_TO_USER_REPLY, *PUMHH_MAP_KERNEL_TO_USER_REPLY;
+
+typedef struct _UMHH_FREE_MDL_REQUEST {
+	ULONGLONG UserVa;
+	ULONGLONG Mdl;
+} UMHH_FREE_MDL_REQUEST, *PUMHH_FREE_MDL_REQUEST;
 
 typedef struct _UMHH_COMMAND_MESSAGE {
 	DWORD m_Cmd;
@@ -98,4 +116,5 @@ typedef struct _UMHH_KERNEL_RW_REQUEST {
 // the master injected DLL to load the trampoline export container.
 #define TRAMP_X64_DLL L"umhh.trampoline.dll.x64.dll"
 #define TRAMP_X86_DLL L"umhh.trampoline.dll.Win32.dll"
+
 #endif
