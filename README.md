@@ -2,8 +2,6 @@
 
 
 
-[下载链接](https://github.com/wqreytuk/UMHH_Release)
-
 **special thanks to these great open source projects:**
 
 - [https://github.com/wbenny/injdrv](https://github.com/wbenny/injdrv)
