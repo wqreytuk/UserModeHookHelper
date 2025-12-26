@@ -1,5 +1,7 @@
 ![image-20251205141938656](README.assets/image-20251205141938656.png)
 
+
+
 [下载链接](https://github.com/wqreytuk/UMHH_Release)
 
 **special thanks to these great open source projects:**
@@ -16,6 +18,26 @@ shutdown /g /t 1 /f
 ```
 
 **本工具使用inline hook，因此hook点位至少需要有6字节才能进行hook**
+
+# 更新
+
+## 2025-12-26
+
+增加hooksequence文件支持，可批量hook
+
+![image-20251226172349919](README.assets/image-20251226172349919.png)
+
+```cmd
+UmhhMan.exe hookseq -o C:\users\public\driver.hookseq -add ntoskrnl.exe,60b820,C:\Users\Public\driver\DriverHookCodeTemplate.sys,HookCodeX64
+```
+
+
+
+<hr>
+
+增加[KernelModeHookHelper](https://github.com/wqreytuk/UserModeHookHelper/tree/main/plugins/KrnlModeHookHlp)插件
+
+![image-20251226172110339](README.assets/image-20251226172110339.png)
 
 # 基本用法
 
@@ -98,3 +120,6 @@ hook成功后会出现在hooklist列表中
   - 该列表中的进程尝试访问白名单进程时权限降低为0x1000（PROCESS_QUERY_LIMITED_INFORMATION）
 - Blocked DLL管理
   - 该列表中的dll将被禁止加载到受保护进程
+
+
+
